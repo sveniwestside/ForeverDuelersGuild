@@ -1,0 +1,51 @@
+ForeverDuelersGuild
+
+Local rated 1v1 duels for WoW: Forever.
+
+Beta release for wider player feedback. Version 0.4.5 targets Forever 1.60.1 (interface 16001). Both players must install 0.4.5. Compatibility with other WoW clients is not established.
+
+Start an ordinary duel and choose whether to make it rated. ForeverDuelersGuild requires explicit agreement from both players before rated play. Completed, mutually confirmed results update your character's saved rating and history. Ordinary duels remain available.
+
+FEATURES
+
+- Find recently discovered ForeverDuelersGuild players on your current map. Search names, select from the nine Classic classes in dropdowns, choose a rating window (All, +/-100, +/-200, or +/-400), and show only rated-eligible opponents.
+- Sort by name, highest rating within a mode, or closest rating to yours. Rating comparisons use the same mode and level cap.
+- Track separate Leveling and Max level ratings, each with wins, losses, win rate, best rating, and current streak.
+- View a progression chart for the latest 40 duels in each mode, including the rating before the first displayed duel.
+- Browse paged match history and details: opponents, saved levels, class/spec when available, result, duration, and rating changes. Opponent after-ratings are calculated from saved snapshots.
+- Open the movable overview through a draggable minimap button. Fresh, matching player announcements can also add ratings to unit tooltips.
+
+RATED RULES
+
+Both players must share the same level cap and rating mode, with a maximum difference of five levels. Leveling applies below the cap; Max level applies at the cap. With a cap of 60, levels 30 and 35 are eligible; 30 and 36 are not. Level 59 versus 60 remains unrated because the modes differ.
+
+Each mode starts independently at 1500. Reaching max level does not transfer your leveling rating. Elo uses K=32 and adds 20 effective strength points per level when calculating the expected outcome. At equal ratings and levels, a win transfers 16 points. With equal ratings and a five-level gap, the lower-level winner gains 20; the higher-level winner gains 12. The loser loses the same amount.
+
+GETTING STARTED
+
+1. The installation folder remains named ForeverDuel for update compatibility. Extract it into your client's Interface/AddOns directory. The manifest must be at Interface/AddOns/ForeverDuel/ForeverDuel.toc, without an extra nested folder.
+2. Install 0.4.5 on both clients, enable the addon, and log in. Updating from 0.4.3 or 0.4.4 requires /reload on both clients; fully restart when upgrading from an earlier version to load the discovery module.
+3. Use the normal player-menu Duel action, then have both players select the rated option.
+
+Useful commands:
+- /duelrating: open or close the overview.
+- /duelrating zone: browse discovered players on your map.
+- /duelrating summary: show all available rating modes and five recent matches from your current mode in chat.
+- /duelrating history: show up to 20 recent matches from your current mode.
+- /duelrating status: show connection and discovery diagnostics.
+
+UPGRADING AND TEST STATUS
+
+Back up your character's SavedVariables/ForeverDuel.lua before upgrading. Valid older records remain in a read-only Legacy archive; migration from before 0.4.0 starts both new ratings at 1500. Updating from 0.4.0 through 0.4.4 preserves both ratings. Update both players to 0.4.5; the rated-duel protocol remains compatible with 0.4.0.
+
+Version 0.4.5 adds bounded recovery for repeated requests and delayed discovery messages, while retaining incoming identity recovery. Both players still explicitly consent; debug logging is optional. Testing of the current 0.4.5 build was reported complete by the project owner on October 4, 2026. This is a general report without individual test-case results or paired diagnostic logs. The earlier intermittent missing-dialog issue has candidate fixes in this version; its exact live cause and any debug dependency remain unconfirmed. If the issue recurs, capture /duelrating status on both clients before another request or reload. This release remains a beta for wider player feedback; locally stored ratings are not authoritative competition results.
+
+LOCAL DATA AND DISCOVERY
+
+Ratings and history are stored per character. There is no backend or central rating authority, and players can edit local data. Discovery automatically joins the ForeverDuel channel as a member directory and exchanges character identity, rating, map, class, level, and level cap through invisible addon whispers. The directory refreshes every 30 seconds; profile requests are limited to once every 45 seconds per player and outgoing discovery whispers to one per second. The directory route was introduced in 0.4.3 and is retained in 0.4.5. Discovery remains subject to native channel and whisper delivery restrictions. The browser lists recently discovered addon users on your current map; it is not a complete zone roster, and matching maps do not guarantee shared phase or duel range. Connection failures can prevent recording or leave client histories inconsistent.
+
+ROADMAP TO 1.0
+
+For the planned 1.0 release, we aim to add a backend for shared match records and centrally managed ratings, together with an online ladder and leaderboards. This is a roadmap for future development; the current beta uses local character data. Scope and release timing may change.
+
+Branding: original AI-generated crossed swords; not an in-game screenshot.

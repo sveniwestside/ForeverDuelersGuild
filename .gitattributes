@@ -1,0 +1,8 @@
+* text=auto
+# Keep installable source and its matching license byte-identical across runners.
+/ForeverDuel/** -text
+/LICENSE -text
+*.png binary
+*.jpg binary
+*.tga binary
+*.blp binary

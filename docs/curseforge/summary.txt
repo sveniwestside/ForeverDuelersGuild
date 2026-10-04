@@ -1,0 +1,1 @@
+ForeverDuelersGuild adds opt-in rated duels to WoW: Forever, with leveling/max-level ratings, opponent search, and match history.

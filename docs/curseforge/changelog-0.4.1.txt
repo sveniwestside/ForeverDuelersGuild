@@ -1,0 +1,14 @@
+ForeverDuel 0.4.1 - Experimental beta / testing release
+Target client: WoW: Forever 1.60.1 (interface 16001)
+
+- Added direct addon discovery through target, focus, group members, and player nameplates. Queries and replies use addon whispers when the shared discovery channel is unavailable or does not deliver messages.
+- Channel join support is now optional. Direct discovery remains available without it, with paced requests, bounded retries, and no response loops.
+- Replaced cycling filter buttons with dropdown menus for class, rating window, sorting, and rated eligibility.
+- Removed Death Knight, Monk, Demon Hunter, and Evoker from zone filters and discovery profiles. The nine Classic classes remain.
+- Improved empty-list guidance and /duelrating status whisper diagnostics.
+
+Install 0.4.1 on both clients for direct discovery. If the list stays empty, target the other character once or enable player nameplates. The addon cannot enumerate arbitrary nearby players without a native unit or a received announcement.
+
+Ratings, saved data, and rated-duel protocol are unchanged from 0.4.0. Earlier 0.4.0 clients can still exchange channel announcements and rated-duel messages, but do not answer the new direct-discovery queries.
+
+Automated Lua regressions cover the changes. Native discovery and dropdown rendering still require a focused two-client in-game check; the exact cause of the reported channel delivery failure has not been confirmed from client diagnostics.

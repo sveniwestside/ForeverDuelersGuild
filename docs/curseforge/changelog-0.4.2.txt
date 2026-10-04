@@ -1,0 +1,13 @@
+ForeverDuel 0.4.2 - Experimental beta / testing release
+Target client: WoW: Forever 1.60.1 (interface 16001)
+
+- Automatic discovery now sends invisible addon announcements to nearby players through YELL instead of relying on a custom chat channel. No target, group, or enabled nameplate is required for this route.
+- Announcements use a small printable ASCII profile every 15 seconds. Changes and retries remain paced at least five seconds apart. Ordinary chat is never used.
+- Handles SAY, YELL, and Classic's historical UNKNOWN label for received local-area addon messages. Broadcasts never trigger replies or rated-duel consent.
+- Retains the working direct-whisper fallback and dropdown filters with the nine Classic classes.
+
+Install 0.4.2 on both clients, clear targets and focus, reload, and allow about 15 seconds. Discovery reaches the surrounding area supported by the client; it is not a complete zone roster. Faction, phase, server restrictions, or throttling may limit delivery.
+
+The 0.4.1 target-based whisper exchange was confirmed by the user and a status screenshot. The screenshot showed local channel submission but actual reception via WHISPER. Classic's documented channel restrictions motivate this change; local submission is not proof of delivery in Forever. Native YELL delivery still needs the two-client in-game check.
+
+Saved data, ratings, rated-duel protocol, and the explicit consent flow are unchanged from 0.4.1. There is no external server or upload.

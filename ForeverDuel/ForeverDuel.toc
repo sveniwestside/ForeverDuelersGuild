@@ -1,0 +1,26 @@
+## Interface: 16001
+## Title: ForeverDuelersGuild
+## Notes: Explicitly agreed local rated duels for WoW: Forever.
+## Author: ForeverDuelersGuild contributors
+## Version: 0.4.5
+## IconTexture: Interface\AddOns\ForeverDuel\Media\Icon.tga
+## SavedVariablesPerCharacter: ForeverDuelDB
+
+Constants.lua
+Debug.lua
+Rating.lua
+Database.lua
+History.lua
+Protocol.lua
+Results.lua
+Duel.lua
+Comms.lua
+UI.lua
+Profile.lua
+Minimap.lua
+Presence.lua
+Roster.lua
+Zone.lua
+Tooltip.lua
+Wow.lua
+Core.lua

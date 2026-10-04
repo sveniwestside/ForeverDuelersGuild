@@ -1,0 +1,13 @@
+.test-deps/
+__pycache__/
+*.pyc
+*.zip
+dist/
+docs/curseforge/*.jpg
+.env
+.env.*
+!.env.example
+web/data/
+web/.env
+web/node_modules/
+web/exports/

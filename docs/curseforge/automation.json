@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "apiBaseUrl": "https://wow.curseforge.com",
+  "gameVersionTypeId": 88568,
+  "publishAutomaticallyAfterApproval": true,
+  "repository": "sveniwestside/ForeverDuelersGuild"
+}

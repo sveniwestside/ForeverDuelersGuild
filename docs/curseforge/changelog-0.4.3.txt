@@ -1,0 +1,24 @@
+ForeverDuel 0.4.3 - Experimental beta / testing release
+Target client: WoW: Forever 1.60.1 (interface 16001)
+
+FIXED IN 0.4.3
+
+- Reworked automatic player discovery for Forever clients that reject addon YELL messages. ForeverDuel joins its custom channel solely as a native member directory, then requests player profiles through paced addon whispers.
+- Added an asynchronous directory reader. It resolves the channel's displayed roster row, temporarily selects it, waits for member data, reads available names and GUIDs, and restores the previous selection while keeping the channel UI hidden.
+- Refreshes the directory every 30 seconds. Profile requests are limited to once every 45 seconds per player; outgoing discovery whispers are limited to one per second.
+- Disables further addon YELL attempts for the current session after an InvalidChatType rejection. A live Forever client returned result code 4 for this route.
+- Retains dropdown selection for class, rating window, sorting, and rated eligibility, with only the nine Classic classes. Rating rules, saved ratings, match history, and rated consent are unchanged.
+
+UPGRADING
+
+Back up your character's SavedVariables/ForeverDuel.lua before installing. Update both players to 0.4.3. Fully close both game clients before replacing the addon folder, then restart them: the manifest now includes the new Roster.lua module.
+
+Updating from 0.4.0, 0.4.1, or 0.4.2 preserves both rating modes and history. The rated-duel protocol remains compatible with 0.4.0; both clients need 0.4.3 for the new automatic discovery directory.
+
+TEST STATUS
+
+Automated integration tests cover the directory and profile exchange. In an earlier live client check, channel 6 corresponded to display row 9. Its member entry was initially unavailable; selecting row 9 and waiting two seconds exposed Tester B and the member GUID, confirming the native roster-loading behavior.
+
+On October 4, 2026, the user reported that automatic discovery immediately found the test characters after installing 0.4.3. This establishes the reported happy path for that test pair. No exact discovery timing was measured, and detailed pacing and failure cases remain unverified in-game.
+
+This release remains Beta. Focused checks of dropdown filtering, an explicitly agreed rated duel, level rules, migration, and chart behavior remain outstanding. Discovery remains subject to native channel and whisper restrictions; a matching map does not guarantee shared phase or duel range.

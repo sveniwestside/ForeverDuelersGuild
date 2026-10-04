@@ -1,0 +1,23 @@
+ForeverDuel 0.4.0 - Experimental beta / testing release
+Target client: WoW: Forever 1.60.1 (interface 16001)
+
+NEW IN 0.4.0
+
+- Expanded Players in zone with name search, class filters, rating windows (All, +/-100, +/-200, +/-400), and a rated-eligible-only filter. Sort by name, highest rating within a mode, or closest rating to yours.
+- Added independent Leveling and Max level ratings and win/loss records. Each starts at 1500; reaching the cap selects your max-level rating without transferring the leveling rating.
+- Limited rated duels to players with the same level cap and rating mode, no more than five levels apart. Ordinary duels remain available.
+- Added level weighting to Elo: 20 effective strength points per level, with K=32. At equal ratings, a lower-level winner across a five-level gap gains 20 points; a higher-level winner gains 12. With equal ratings and levels, wins transfer 16 points. Losses mirror the winner's gain.
+- Added a progression chart covering the latest 40 duels in the selected mode, with the correct starting baseline.
+- Added Leveling, Max level, and optional Legacy views to the overview, plus saved levels and mode information in match details.
+- Updated zone listings and tooltip ratings to include level and rating mode. Rating comparisons use the same mode and cap.
+- Preserved validated pre-0.4.0 ratings and match history in a read-only Legacy archive.
+
+UPGRADING
+
+Back up your character's SavedVariables/ForeverDuel.lua before installing. Both players must update to 0.4.0: the new rated-duel and zone-discovery protocols are incompatible with older releases.
+
+The two new ratings each start at 1500. Historical levels are not guessed, so old results stay in Legacy with their original rating calculations. Existing settings are retained. Data that cannot be validated is preserved with rating disabled instead of being silently reset.
+
+TEST STATUS
+
+The new rules, data migration, filters, chart, and discovery behavior still require focused two-client in-game validation. Ratings remain local, editable records without a central authority. Connection failures can prevent recording or leave client histories inconsistent.

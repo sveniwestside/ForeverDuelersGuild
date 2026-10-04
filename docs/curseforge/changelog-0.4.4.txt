@@ -1,0 +1,22 @@
+ForeverDuel 0.4.4 - Experimental beta / testing release
+Target client: WoW: Forever 1.60.1 (interface 16001)
+
+FIXED IN 0.4.4
+
+- Retry incoming player identification when the challenger was not exposed as a native unit at the initial request. The ordinary WoW dialog remains available, with a chat hint to target the challenger.
+- Retry every half-second only while the same native request popup remains visibly open and within the original 50-second pending limit. Missing popup API support preserves ordinary play.
+- Stop recovery after native acceptance, decline/cancellation, countdown, completion, expiry, replacement, combat, world transitions, or errors. Observed identity ambiguity remains terminal for that request.
+- Show incoming-request recovery in /duelrating status even with debug logging disabled. Debug remains optional and does not control consent, discovery, or rating.
+- Preserve rating rules, saved data, automatic discovery, schema 2, and rated protocol 2. Both players must still explicitly consent.
+
+UPGRADING
+
+Back up your character's SavedVariables/ForeverDuel.lua before installing. Update both players to 0.4.4. When upgrading from 0.4.3, /reload on both clients loads the change; this update adds no manifest module. Fully restart clients when upgrading from before 0.4.3 to load its Roster.lua module.
+
+Updating from 0.4.0 through 0.4.3 preserves both rating modes and history. The rated protocol remains compatible with 0.4.0.
+
+TEST STATUS
+
+33 Lua files compile; 14 suites and 4,102 assertions pass under Lua 5.1. The delayed incoming-identity regression failed before the fix. Simulated clients complete a rated duel with debug switched off after having been enabled, including a receiver whose challenger identity appears after the initial request. Guards cover ordinary acceptance/decline, stale callbacks, expiry, lifecycle changes, and ambiguity.
+
+After the update, the user reported 3/3 successful duels on October 4, 2026. This confirms the reported happy path; the exact debug setting, late-identification route, and paired saved records were not separately confirmed. No dependency on disabling debug was reproduced. The popup visibility helper is feature-detected; its matching Forever runtime behavior still needs live verification. The earlier user-confirmed 0.4.3 automatic-discovery happy path is retained as historical evidence, not validation of this change. Complete the focused two-client debug off/on and late-targeting checks to verify those specific recovery paths.

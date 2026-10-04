@@ -1,0 +1,90 @@
+name: CurseForge release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: curseforge-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out the selected version
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: '3.13'
+          cache: pip
+          cache-dependency-path: tests/requirements.txt
+
+      - name: Install the Lua 5.1 test runtime
+        run: python -m pip install -r tests/requirements.txt
+
+      - name: Test and build the release (offline)
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_EVENT: ${{ github.event_name }}
+        run: |
+          if [ "$RELEASE_EVENT" = "push" ]; then
+            python tools/release.py --tag "$RELEASE_TAG"
+          else
+            python tools/release.py
+          fi
+
+      - name: Retain the verified package and build report
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: curseforge-package-${{ github.ref_name }}
+          path: dist/curseforge-*/
+          if-no-files-found: error
+
+      - name: Validate CurseForge access and Forever mapping (read-only)
+        env:
+          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN || secrets.FOREVERDUELERSGUILD }}
+        run: |
+          version=$(python -c 'import json; print(json.load(open("docs/curseforge/project.json"))["file"]["version"])')
+          python tools/curseforge_upload.py --package-dir "dist/curseforge-$version" --check-api
+
+      - name: Prevent another upload after a previous attempt
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          count=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=curseforge-upload-$RELEASE_TAG" --jq '.total_count')
+          if [ "$count" -ne 0 ]; then
+            echo 'An upload attempt already exists for this tag. Check its receipt and the CurseForge file list before retrying.'
+            exit 1
+          fi
+
+      - name: Upload to CurseForge (automatic publication after approval)
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+        env:
+          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN || secrets.FOREVERDUELERSGUILD }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: python tools/curseforge_upload.py --package-dir "dist/curseforge-${RELEASE_TAG#v}" --upload
+
+      - name: Retain the upload attempt and receipt
+        if: always() && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: curseforge-upload-${{ github.ref_name }}
+          path: |
+            dist/curseforge-*/upload-attempt.json
+            dist/curseforge-*/upload-receipt.json
+          if-no-files-found: ignore
+          retention-days: 90

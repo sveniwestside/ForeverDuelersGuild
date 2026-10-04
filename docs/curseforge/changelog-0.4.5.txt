@@ -1,0 +1,24 @@
+ForeverDuelersGuild 0.4.5 - Beta release
+Target client: WoW: Forever 1.60.1 (interface 16001)
+
+CHANGED IN 0.4.5
+
+- Bind peer discovery identity, profile, and shared match ID only after HELLO_ACK echoes the current request's local nonce. Answering HELLO alone no longer lets a delayed packet from a previous duel occupy the new request.
+- Retry pending discovery after one second and then every two seconds, only while the same request is checking or waiting and within its original 50-second limit. Recovery stops on consent progression, ordinary acceptance, cancellation, replacement, or expiry.
+- When answering a discovery retry, resend an ACCEPT only if this player already explicitly consented for that same pending request. This covers a receiver consenting before the challenger finishes discovery; it never supplies new consent.
+- Retain timestamped outgoing-request diagnostics in /duelrating status with debug disabled. Confirmed native termination clears outgoing capture/quarantine; local accept/cancel and errors discard the candidate while retaining its original acknowledgment ambiguity window. Countdown and combat invalidate pending capture. Native acknowledgment remains required before outgoing rated discovery.
+- Preserve incoming identity recovery, rating rules, saved data, schema 2, rated protocol 2, and explicit bilateral consent.
+
+UPGRADING
+
+Back up your character's SavedVariables/ForeverDuel.lua before installing. Update both players to 0.4.5. When upgrading from 0.4.3 or 0.4.4, /reload on both clients loads the change; this update adds no manifest module. Fully restart clients when upgrading from before 0.4.3 to load its Roster.lua module.
+
+Updating from 0.4.0 through 0.4.4 preserves both rating modes and history. The rated protocol remains compatible with 0.4.0.
+
+TEST STATUS
+
+33 Lua files compile; 14 suites and 4,551 assertions pass under Lua 5.1, including 555 adapter and 1,580 duel assertions. Regressions cover bounded retries, delayed prior HELLO, early receiver consent, the local-action ambiguity barrier, and capture invalidation on native countdown/combat. These are automated simulations, not live validation.
+
+On October 4, 2026, the project owner reported testing of the current 0.4.5 build complete and authorized preparation of the first Beta release. This is a general user report; no individual test-case results or paired diagnostic logs were supplied. The current live-test release gate is therefore closed on that basis. The Beta is intended to gather wider player feedback, and does not establish compatibility with other clients or authoritative competition ratings.
+
+Earlier testing on October 4 found three successful duels with 0.4.4, followed by a fourth request where the receiver had the addon dialog but the challenger did not. A subsequent duel succeeded; status from the failed attempt was unavailable. Local reproduction identified a delayed prior HELLO binding the wrong peer nonce and loss of early acknowledgment traffic leaving the challenger waiting. These are candidate causes addressed by 0.4.5, not proof of the reported live cause or a dependency on debug logging. MANUAL_TESTING.md remains the reference for focused regression checks. If the issue recurs, capture /duelrating status on both clients before another request or reload.
