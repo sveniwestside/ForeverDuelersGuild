@@ -2,6 +2,8 @@
 
 Stand: 04.10.2026. Die Pipeline bereitet neue Dateien für **ForeverDuelersGuild**, CurseForge-Projekt **1726452**, vor und lädt sie nach bestandenen Prüfungen hoch. Ziel ist [sveniwestside/ForeverDuelersGuild](https://github.com/sveniwestside/ForeverDuelersGuild). Version **0.4.5** ist bereits veröffentlicht und wird nicht erneut eingereicht. Ein erfolgreicher automatischer Live-Upload einer neuen Version ist noch nicht belegt.
 
+Der [GitHub-Probelauf vom 04.10.2026](https://github.com/sveniwestside/ForeverDuelersGuild/actions/runs/37215915147) besteht: **48 Python-Tests**, **14 Lua-Suites / 4.551 Assertions**, Paketbau und echter lesender API-Zugriff. Die API liefert für **Forever 1.60.1** die Versions-ID **17053**. Das Paket bleibt bytegleich zum veröffentlichten ZIP. Ein separater lokaler Probelauf einer vorbereiteten 0.4.6 in einem temporären Verzeichnis prüfte außerdem den Versionswechsel und Uploadplan, ohne den tatsächlichen 0.4.5-Stand zu ändern oder eine Datei einzureichen.
+
 ## Eine neue Version vorbereiten
 
 Vom Repository-Hauptverzeichnis aus, beispielsweise für 0.4.6:
@@ -61,7 +63,7 @@ Neue Dateien werden nach erfolgreicher CurseForge-Freigabe automatisch veröffen
 
 Nach einem erfolgreichen Upload speichert die Pipeline den Empfangsnachweis mit Datei-ID. Das bestätigt die Einreichung, noch keine Freigabe oder öffentliche Verfügbarkeit. Den tatsächlichen Status im Autorenportal prüfen; nach Veröffentlichung den öffentlichen Download und die Installation prüfen. Diese Ergebnisse separat erfassen.
 
-Ein bereits veröffentlichter Stand oder ein lokal vermerkter früherer Uploadversuch wird gegen eine erneute Einreichung gesperrt. GitHub bewahrt Uploadversuche und Empfangsnachweise als Artefakte 90 Tage auf; ein vorhandenes Upload-Artefakt für denselben Tag sperrt einen weiteren Lauf vor dem Upload. Nach Ablauf dieser Aufbewahrung muss der tatsächliche CurseForge-Stand vor einer Wiederholung gesondert geprüft werden. Bei einem Netzwerkfehler kann CurseForge die Datei bereits erhalten haben: Erst im Autorenportal klären, ob eine Datei angelegt wurde, und den lokalen Nachweis mit dem Ergebnis abgleichen. Den Upload nicht blind erneut starten.
+Ein bereits veröffentlichter Stand oder ein lokal vermerkter früherer Uploadversuch wird gegen eine erneute Einreichung gesperrt. GitHub speichert schon **vor** dem POST einen Upload-Vorsatz mit dem Paketprüfbericht als `curseforge-upload-vX.Y.Z`; dieser sperrt einen weiteren Lauf desselben Tags auch bei einem späteren Runner-Abbruch. Versuchs- und Empfangsnachweise folgen separat als `curseforge-upload-result-vX.Y.Z`. Die Artefakte werden 90 Tage aufbewahrt; danach muss der tatsächliche CurseForge-Stand vor einer Wiederholung gesondert geprüft werden. Bei einem Netzwerkfehler kann CurseForge die Datei bereits erhalten haben: Erst im Autorenportal klären, ob eine Datei angelegt wurde, und den lokalen Nachweis mit dem Ergebnis abgleichen. Den Upload nicht blind erneut starten.
 
 ## Projektbeschreibung gesondert prüfen
 

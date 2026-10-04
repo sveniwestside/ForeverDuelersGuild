@@ -38,10 +38,12 @@ def run_pipeline(root: Path, tag: str | None = None, upload: bool = False) -> No
     subprocess.run([sys.executable, "-m", "unittest", "discover", "-s", "tests", "-p", "test_*.py"],
                    cwd=root, env=safe_env, check=True)
     lua = subprocess.run([sys.executable, "tests/run.py"], cwd=root, env=safe_env,
-                         check=True, capture_output=True, text=True, encoding="utf-8")
+                         check=False, capture_output=True, text=True, encoding="utf-8")
     print(lua.stdout, end="", flush=True)
     if lua.stderr:
         print(lua.stderr, end="", file=sys.stderr)
+    if lua.returncode:
+        raise subprocess.CalledProcessError(lua.returncode, lua.args)
     compiled = re.search(r"Lua 5\.1: compiled (\d+) files", lua.stdout)
     passed = re.search(r"PASS (\d+) suites, (\d+) assertions", lua.stdout)
     if not compiled or not passed:
