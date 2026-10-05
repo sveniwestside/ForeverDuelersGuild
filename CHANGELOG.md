@@ -18,7 +18,7 @@ _Review-driven rework. Simulated in the test suites; the live two-client run ([M
 
 - No separate negotiation timer: both players can use the whole native request window (50 s) to choose Rated.
 - Once both players have chosen Rated, the receiver's addon accepts the duel itself. The challenger needs no further confirmation round trip before the countdown.
-- Discovery messages back off (0, 1, 3, 7, 15, 31 s) and acknowledgments are rate-limited. A rated choice is re-sent until the duel starts. START and RESULT are repeated, and a client that has already finished answers late results.
+- Discovery messages back off (0, 1, 3, 7, 15, 31 s) and acknowledgments are rate-limited. A rated choice is sent at once and repeated 2, 5, 10 and 20 s after the click (until the countdown). START and RESULT are repeated, and a client that has already finished answers late results.
 - A new challenge made while the previous duel's result is still being exchanged waits for that result, so it uses the updated rating. The winner message of a later duel (for example an unrated rematch) is never taken as the previous duel's result, a duel that ended without a winner message no longer holds the next challenge, and the opponent's cancellation of the previous duel releases the next challenge at once.
 - A loading screen (portal, hearthstone, instance) after a rated duel has ended no longer cancels its result exchange; only logout and `/reload` do.
 - Challenging the same player again replaces the pending request, and an out-of-range failure allows an immediate retry. A Hardcore duel to the death is never rated. One chat line explains when rated tracking could not attach to a challenge.

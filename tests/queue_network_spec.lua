@@ -13,6 +13,7 @@ return function(_, equal)
         while w.now - start < 30 and not (a.FD.duel:State() == "READY" and b.FD.duel:State() == "READY") do w:advance(0.25) end
         eq(a.FD.duel:State(), "READY", "rated discovery completes for the requester")
         eq(b.FD.duel:State(), "READY", "rated discovery completes for the opponent")
+        local nonces = { a.FD.duel.active.nonce, b.FD.duel.active.nonce }
         eq(a.accepts + b.accepts, 0, "the queue never accepts a native duel")
         a.FD.duel:AcceptRated(); b.FD.duel:AcceptRated()
         start = w.now
@@ -28,6 +29,7 @@ return function(_, equal)
         eq(#b.FD.Database.data.matches, 1, "loser commits one record")
         eq(a.FD.Database:GetStats().rating, 1516, "winning rating from the duel engine")
         eq(b.FD.Database:GetStats().rating, 1484, "losing rating from the duel engine")
+        return nonces
     end
 
     scenario = "queue to rated duel at 10 s whisper latency with throttle and roster lag"
@@ -48,6 +50,9 @@ return function(_, equal)
     eq(a.waypoint ~= nil and b.waypoint ~= nil, true, "waypoint set automatically on both clients")
     eq(a.queueShown ~= nil and b.queueShown ~= nil, true, "queue window opened on both clients")
     w:reach("READY", 20, { a, b })
+    -- The real secrets of this match, checked against every saved diagnostic.
+    local secrets = { a.FD.queue.ticket.id, a.FD.queue.session, b.FD.queue.session }
+    eq(#secrets, 3, "ticket and both sessions captured")
     eq(#a.sounds > 0 and #b.sounds > 0, true, "sounds played for queue milestones")
     w:advance(30)
     eq(a.FD.queue.state, "READY", "READY is stable over time")
@@ -62,7 +67,7 @@ return function(_, equal)
     w:advance(2)
     eq(a.FD.queue.state, "DUEL", "outgoing request hands off to the duel engine")
     eq(b.FD.queue.state, "DUEL", "incoming request hands off to the duel engine")
-    rated(w, a, b)
+    for _, nonce in ipairs(rated(w, a, b)) do secrets[#secrets + 1] = nonce end
     w:advance(20)
     eq(a.FD.queue.state, "IDLE", "completed match ends on the requester")
     eq(b.FD.queue.state, "IDLE", "completed match ends on the opponent")
@@ -74,7 +79,21 @@ return function(_, equal)
         if entry.event == "queue state" then states[#states + 1] = entry.detail:match("^(%S+)") end
         if entry.event:find("^queue") then
             eq(entry.detail:find("Player%-") == nil, true, "queue diagnostics contain no GUIDs")
-            eq(entry.detail:find("%d+%.%d+%-%x") == nil, true, "queue diagnostics contain no session or ticket")
+        end
+    end
+    -- No session, ticket or rated nonce in any saved entry of either client.
+    eq(#secrets, 5, "both rated nonces captured")
+    for _, client in ipairs({ a, b }) do
+        local saved = client.FD.Debug:RequestTrace(200)
+        for _, failure in ipairs(client.FD.Debug:Errors()) do
+            saved[#saved + 1] = { event = "error", detail = (failure.message or "") .. " " .. (failure.stack or "") }
+        end
+        eq(#saved > 0, true, "diagnostics were recorded")
+        for _, entry in ipairs(saved) do
+            for _, secret in ipairs(secrets) do
+                eq(entry.detail:find(secret, 1, true), nil, "diagnostics never contain a session, ticket or nonce ("
+                    .. entry.event .. ")")
+            end
         end
     end
     local chain = table.concat(states, ">")

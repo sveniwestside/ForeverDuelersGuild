@@ -1048,35 +1048,35 @@ return function(_, equal)
     -- native acknowledgment arrives after five seconds, addon delivery is
     -- delayed by ten seconds, and the receiver identifies the challenger late.
     local alpha = { guid = "Player-1-00000001", name = "Alpha", surname = "Example", classFile = "MAGE" }
-    local tray = { guid = "Player-1-00000002", name = "Tray", surname = "Taylorr", classFile = "ROGUE" }
-    local net = Client.pair({ regionalNames = true, alpha = alpha, beta = tray })
+    local tess = { guid = "Player-1-00000002", name = "Tess", surname = "Sample", classFile = "ROGUE" }
+    local net = Client.pair({ regionalNames = true, alpha = alpha, beta = tess })
     local a, b = net.a, net.b
     net.delay = function() return math.max(0, 10.5 - net.clock.now) + 0.2 end
     local target = a.FD.Wow:Identity("target")
-    equal(target.fullName, "Tray Taylorr", "Forever uses exact native surname format")
-    equal(target.name, "Tray Taylorr", "result names retain the complete character name")
+    equal(target.fullName, "Tess Sample", "Forever uses exact native surname format")
+    equal(target.name, "Tess Sample", "result names retain the complete character name")
     equal(target.realm, "Forever", "surname does not replace realm metadata")
     equal(target.nameFormat, "surname", "name mode is captured in identity snapshot")
-    equal(a.FD.Wow:ResolveIncoming("Tray Taylorr").guid, tray.guid, "full surname resolves native request")
-    equal(a.FD.Wow:ResolveIncoming("Tray-Taylorr").guid, tray.guid, "observed legacy unit form remains native-event-only alias")
-    a.units.focus = { guid = "Player-1-00000003", name = "Tray", surname = "Other", classFile = "MAGE" }
-    equal(a.FD.Wow:ResolveIncoming("Tray"), nil, "ambiguous native first names do not select a GUID")
-    equal(a.FD.Wow:ResolveIncoming("Tray Taylorr").guid, tray.guid, "full surname distinguishes same first name")
+    equal(a.FD.Wow:ResolveIncoming("Tess Sample").guid, tess.guid, "full surname resolves native request")
+    equal(a.FD.Wow:ResolveIncoming("Tess-Sample").guid, tess.guid, "observed legacy unit form remains native-event-only alias")
+    a.units.focus = { guid = "Player-1-00000003", name = "Tess", surname = "Other", classFile = "MAGE" }
+    equal(a.FD.Wow:ResolveIncoming("Tess"), nil, "ambiguous native first names do not select a GUID")
+    equal(a.FD.Wow:ResolveIncoming("Tess Sample").guid, tess.guid, "full surname distinguishes same first name")
     a.units.focus = nil
     local callsBefore = a.nameHelperCalls
     local unmodified = a.env.UnitNameUnmodified
-    a.env.UnitNameUnmodified = function() return "Tray", a.secret end
+    a.env.UnitNameUnmodified = function() return "Tess", a.secret end
     equal(a.FD.Wow:Identity("target"), nil, "restricted surname rejected before native helper")
     equal(a.nameHelperCalls, callsBefore, "restricted surname is never concatenated by helper")
     a.env.UnitNameUnmodified = unmodified
     toggleDebugOff(a)
     toggleDebugOff(b)
-    a.env.StartDuel("Tray Taylorr")
+    a.env.StartDuel("Tess Sample")
     a.messageInfo = { [701] = "ERR_DUEL_REQUESTED" }
     b.units.target = nil
     b:incoming("Alpha Example")
     net:advance(5)
-    a:emit("UI_INFO_MESSAGE", 701, "Request sent to Tray Taylorr.")
+    a:emit("UI_INFO_MESSAGE", 701, "Request sent to Tess Sample.")
     equal(a.FD.duel.active.createdAt, 0, "live-order recovery keeps original captured request time")
     net:advance(5.5)
     equal(b.FD.duel.active, nil, "surname receiver initially lacks native challenger identity")
@@ -1086,9 +1086,9 @@ return function(_, equal)
     equal(b.FD.duel:State(), "CHECKING_ADDON", "incoming discovery survives delayed identity")
     equal(a.FD.UI.frame:IsShown(), false, "nothing shown before the peer is proven")
     equal(b.nativeVisible, true, "the receiver keeps Blizzard's popup throughout")
-    equal(a.sent[1].target, "Tray Taylorr", "whisper target is the canonical surname name")
+    equal(a.sent[1].target, "Tess Sample", "whisper target is the canonical surname name")
     local helloB = assert(b.FD.Protocol:Encode(b.FD.duel:Packet(b.FD.duel.active, "HELLO")))
-    for _, sender in ipairs({ "Tray", "Tray-Taylorr", "Tray Other", "Tray Taylorr-Forever" }) do
+    for _, sender in ipairs({ "Tess", "Tess-Sample", "Tess Other", "Tess Sample-Forever" }) do
         a:emit("CHAT_MSG_ADDON", a.FD.C.PREFIX, helloB, "WHISPER", sender)
         equal(a.FD.Comms.lastRejection:find("sender mismatch", 1, true) ~= nil, true,
             "unqualified or altered surname sender rejected: " .. sender)
@@ -1122,10 +1122,10 @@ return function(_, equal)
     equal(b.accepts, 0, "one surname peer's consent does not start native duel")
     b.FD.UI.rated.scripts.OnClick()
     equal(b.accepts, 1, "both explicit clicks complete the agreement through real surname transport")
-    local winner = a.FD.Results:Parse("Alpha Example has defeated Tray Taylorr in a duel",
+    local winner = a.FD.Results:Parse("Alpha Example has defeated Tess Sample in a duel",
         a.env.DUEL_WINNER_KNOCKOUT, a.env.DUEL_WINNER_RETREAT, match.player, match.opponent)
     equal(winner, alpha.guid, "full surnamed result resolves known participants")
-    winner = a.FD.Results:Parse("Alpha has defeated Tray in a duel",
+    winner = a.FD.Results:Parse("Alpha has defeated Tess in a duel",
         a.env.DUEL_WINNER_KNOCKOUT, a.env.DUEL_WINNER_RETREAT, match.player, match.opponent)
     equal(winner, nil, "native-request aliases never qualify result evidence")
 
@@ -1148,8 +1148,8 @@ return function(_, equal)
 
     -- Full loaded-addon integration: untargeted roster discovery -> row click -> the
     -- existing explicit consent/native evidence flow -> advertised new rating.
-    a = client({ presence = true, directory = { alpha, tray }, regionalNames = true, units = { player = alpha } })
-    b = client({ presence = true, directory = { alpha, tray }, regionalNames = true, units = { player = tray } })
+    a = client({ presence = true, directory = { alpha, tess }, regionalNames = true, units = { player = alpha } })
+    b = client({ presence = true, directory = { alpha, tess }, regionalNames = true, units = { player = tess } })
     local deliveredA, deliveredB = 0, 0
     local function exchangeWithPresence()
         for _ = 1, 8 do
@@ -1165,7 +1165,7 @@ return function(_, equal)
                 deliveredB = deliveredB + 1
                 local p = b.sent[deliveredB]
                 if p.result == 0 then
-                    a:emit("CHAT_MSG_ADDON", p.prefix, p.payload, p.channel, "Tray Taylorr", nil, 0,
+                    a:emit("CHAT_MSG_ADDON", p.prefix, p.payload, p.channel, "Tess Sample", nil, 0,
                         p.channel == "CHANNEL" and a.channelID or nil)
                 end
             end
@@ -1185,11 +1185,11 @@ return function(_, equal)
     equal(a.FD.duel.active, nil, "area presence cannot establish a rated session")
     equal(b.accepts, 0, "area presence cannot accept a native request")
     a.env.SlashCmdList.FOREVERDUEL("zone")
-    equal(a.FD.Zone.rows[1].name.text, "Tray Taylorr", "discovery populates visible browser")
+    equal(a.FD.Zone.rows[1].name.text, "Tess Sample", "discovery populates visible browser")
     -- Native duel initiation still resolves a visible unit, after discovery.
-    a.units.target, b.units.target = tray, alpha
+    a.units.target, b.units.target = tess, alpha
     a.FD.Zone.rows[1].duel.scripts.OnClick()
-    equal(a.FD.Wow.outgoing.opponent.guid, tray.guid, "row click reaches existing native identity hook")
+    equal(a.FD.Wow.outgoing.opponent.guid, tess.guid, "row click reaches existing native identity hook")
     equal(a.FD.duel.active, nil, "row click still awaits native acknowledgment")
     a:emit("UI_INFO_MESSAGE", 123, a.env.ERR_DUEL_REQUESTED)
     b:incoming("Alpha Example")
@@ -1209,8 +1209,8 @@ return function(_, equal)
     exchangeWithPresence()
     a:emit("DUEL_FINISHED")
     b:emit("DUEL_FINISHED")
-    a:emit("CHAT_MSG_SYSTEM", "Alpha Example has defeated Tray Taylorr in a duel")
-    b:emit("CHAT_MSG_SYSTEM", "Alpha Example has defeated Tray Taylorr in a duel")
+    a:emit("CHAT_MSG_SYSTEM", "Alpha Example has defeated Tess Sample in a duel")
+    b:emit("CHAT_MSG_SYSTEM", "Alpha Example has defeated Tess Sample in a duel")
     exchangeWithPresence()
     a:advance(50)
     b:advance(50)
@@ -1218,7 +1218,7 @@ return function(_, equal)
     equal(a.FD.Database:GetStats().rating, 1516, "presence-enabled duel commits winner rating")
     equal(b.FD.Database:GetStats().rating, 1484, "presence-enabled duel commits loser rating")
     equal(b.FD.Presence:GetPlayer(alpha.guid).rating, 1516, "commit advertises new winner rating to peer")
-    equal(a.FD.Presence:GetPlayer(tray.guid).rating, 1484, "commit advertises new loser rating to peer")
+    equal(a.FD.Presence:GetPlayer(tess.guid).rating, 1484, "commit advertises new loser rating to peer")
     equal(a.FD.Zone.rows[1].rating.text, "1484", "received rating refreshes browser without reopening")
     a.env.SlashCmdList.FOREVERDUEL("reset")
     a.env.SlashCmdList.FOREVERDUEL("reset confirm")

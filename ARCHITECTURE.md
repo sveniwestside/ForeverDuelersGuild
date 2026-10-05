@@ -73,7 +73,7 @@ All three prefixes go through `FD.Outbound`: `ForeverDuel2` (rated duel), `Forev
 - **Per item:** a `key` replaces a queued item with the same key, `isCurrent()` is checked at drain (obsolete packets are dropped), `route()` picks PARTY or WHISPER at drain time, and `ttl` bounds the wait. `onResult` reports `sent`, `failed`, `expired` or `dropped`.
 - **Results:** throttle results are retried with backoff until the TTL. `false`, `GeneralError` and `AddOnMessageLockdown` get up to three attempts. `InvalidChatType` or `NotInGroup` on a non-WHISPER route falls back to one WHISPER copy, unless the item forbids it (CHANNEL posts, ping). `InvalidChatType` also disables that route for the session.
 - `SendNow` submits at once without pacing or token checks. It carries the rated CANCEL on logout or `/reload`, and on a loading screen while a request or an unfinished duel is pending, and every terminal queue CANCEL (sent before the queue party is left). A loading screen after `DUEL_FINISHED` (or in `FINISHING`) keeps the match: the Lua state survives it, so the RESULT exchange, its retries and `RESULT_TIMEOUT` continue afterwards.
-- A rated packet marked mandatory (the first ACCEPT, the first RESULT) unrates the match when it fails or expires (`r=transport`). Redundant copies never do.
+- A rated packet marked mandatory unrates the match when it fails or expires. A failed or expired first ACCEPT unrates it and sends `CANCEL r=transport`. A failed or expired first RESULT unrates it locally only (reason `transport`, no CANCEL after the countdown); the peer then reaches its `RESULT_TIMEOUT`. Redundant copies never unrate.
 
 ## Rated duel (protocol 3)
 
@@ -244,7 +244,7 @@ Profiles (`FDP2|guid|rating|mapID|classFile|level|maxLevel`, queries `FDQ2|...`)
 1. A rated record requires both explicit rated clicks, each bound to both request nonces, before the native countdown. A peer packet alone never creates consent.
 2. Native identity (GUID, class, level, cap) comes from local unit APIs at the start of the request. Peer packets must match it and can never replace it.
 3. The addon never hides or changes Blizzard's duel popup before its own `AcceptDuel`, and never edits `StaticPopupDialogs`. Every other native accept makes the duel unrated.
-4. Unrating a match sends CANCEL with a reason to a bound peer (an outdated FD2 peer cannot read it and gets none), and START and RESULT are suppressed from then on. No timing CANCEL is sent after a countdown.
+4. Unrating a match sends CANCEL with a reason to a bound peer (an outdated FD2 peer cannot read it and gets none), and START and RESULT are suppressed from then on. No timing CANCEL is sent after a countdown, and none for a failed first RESULT (the peer's `RESULT_TIMEOUT` ends its match).
 5. Finalization needs the local countdown, start, finish and winner, the peer's START or RESULT, and agreement. Each match ID commits at most once.
 6. Discovery profiles, queue packets and diagnostics never supply consent, snapshots or results.
 7. Errors in discovery, the queue or the windows never enter `FD:Safe`. A rated-flow error ends the flow with a CANCEL and leaves Blizzard's popup usable.
