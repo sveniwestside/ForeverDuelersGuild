@@ -3,7 +3,8 @@ return function(_, equal)
         options = options or {}
         local env = setmetatable({}, { __index = _G })
         env._G = env
-        local state = { now = 1000, reads = 0, created = 0, captures = 0, calls = {}, prints = {}, logs = {}, secret = {} }
+        local state = { now = 1000, reads = 0, created = 0, captures = 0, calls = {}, prints = {}, logs = {}, secret = {},
+            timers = {} }
         local active = { state = "IN_PROGRESS", matchId = "preserve-duel" }
         local FD = {
             duel = { active = active }, Debug = {}, Wow = {},
@@ -89,15 +90,24 @@ return function(_, equal)
         env.UIParent = widget()
         env.UIParent:SetSize(options.width or 1920, options.height or 1080)
         env.GetServerTime = function() return state.now end
+        env.C_Timer = { After = function(_, callback) state.timers[#state.timers + 1] = callback end }
         env.UISpecialFrames = {}
         FD.Profile.frame, FD.Zone.frame = widget(), widget()
         function FD.Profile:Toggle() self.frame:Show() end
         if options.noQueue then FD.queue = nil end
-        local chunk = assert(loadfile("ForeverDuel/QueueUI.lua"))
-        setfenv(chunk, env)
-        chunk("ForeverDuel", FD)
+        for _, module in ipairs({ "Native", "Widgets", "QueueUI" }) do
+            local chunk = assert(loadfile("ForeverDuel/" .. module .. ".lua"))
+            setfenv(chunk, env)
+            chunk("ForeverDuel", FD)
+        end
         state.FD, state.env, state.active = FD, env, active
         function state:click(button) button.scripts.OnClick(button) end
+        -- Runs the one-second timers that are pending now.
+        function state:tick()
+            local pending = self.timers
+            self.timers = {}
+            for _, callback in ipairs(pending) do callback() end
+        end
         function state:select(control, index)
             self:click(control)
             equal(control.menu:IsShown(), true, "queue criteria menu opens")
@@ -146,9 +156,11 @@ return function(_, equal)
     equal(ui.frame:IsShown(), false, "toggle closes queue")
     local reads = c.reads
     ui:RefreshIfShown()
-    ui.frame.scripts.OnUpdate(ui.frame, 2)
+    c:tick()
     equal(c.reads, reads, "hidden queue performs no status reads")
+    equal(ui.frame.scripts.OnUpdate, nil, "the queue window has no per-frame refresh")
     ui:Toggle()
+    equal(#c.timers, 0, "an idle window without a countdown schedules no refresh")
 
     c.status.settings.ruleset, c.status.settings.rulesetReason = nil, "Native ruleset information is not available yet."
     ui:RefreshIfShown()
@@ -194,6 +206,19 @@ return function(_, equal)
     c.status.queuedAt, c.status.ratingWindow, c.status.discovered = c.now - 63, 200, 7
     ui:RefreshIfShown()
     equal(ui.timer.text, "Waiting: 1:03  /  Rating +/-200", "queue wait and current widened window use server time")
+    equal(#c.timers, 1, "a displayed countdown keeps one pending refresh")
+    reads, c.now = c.reads, c.now + 1
+    c:tick()
+    equal(c.reads, reads + 1, "the ticker refreshes once per second")
+    equal(ui.timer.text, "Waiting: 1:04  /  Rating +/-200", "the wait advances without a queue render")
+    ui:RefreshIfShown()
+    equal(#c.timers, 1, "queue renders never stack a second ticker")
+    ui.frame:Hide()
+    reads = c.reads
+    c:tick()
+    equal(c.reads, reads, "a hidden window ends the ticker without reading status")
+    equal(#c.timers, 0, "no refresh stays scheduled for a hidden window")
+    ui:Show()
     equal(ui.discovery.text, "Queue profiles found: 7", "discovery count does not claim queue position")
 
     c.status.state = "INVITED"

@@ -1,4 +1,5 @@
 return function(FD, equal, newNamespace)
+    assert(loadfile("ForeverDuel/Widgets.lua"))("ForeverDuel", FD)
     assert(loadfile("ForeverDuel/Profile.lua"))("ForeverDuel", FD)
     local profile = FD.Profile
     local function textRegion()
@@ -114,9 +115,11 @@ return function(FD, equal, newNamespace)
     env.UIParent:SetSize(1920, 1080)
     env.UISpecialFrames = {}
     env.date = os.date
-    local chunk = assert(loadfile("ForeverDuel/Profile.lua"))
-    setfenv(chunk, env)
-    chunk("ForeverDuel", ns)
+    for _, module in ipairs({ "Native", "Widgets", "Profile" }) do
+        local chunk = assert(loadfile("ForeverDuel/" .. module .. ".lua"))
+        setfenv(chunk, env)
+        chunk("ForeverDuel", ns)
+    end
     local printed, errors = {}, {}
     ns.Wow = { Readable = function() return true end }
     ns.Zone = {}

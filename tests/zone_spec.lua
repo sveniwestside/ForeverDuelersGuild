@@ -63,7 +63,7 @@ return function(FD, equal)
     env.UISpecialFrames = {}
     env.RAID_CLASS_COLORS = { MAGE = { r = 0.2, g = 0.7, b = 1 } }
     env.LOCALIZED_CLASS_NAMES_MALE = { MAGE = "Magier" }
-    for _, module in ipairs({ "Profile", "Zone" }) do
+    for _, module in ipairs({ "Native", "Widgets", "Profile", "Zone" }) do
         local chunk = assert(loadfile("ForeverDuel/" .. module .. ".lua"))
         setfenv(chunk, env)
         chunk("ForeverDuel", FD)

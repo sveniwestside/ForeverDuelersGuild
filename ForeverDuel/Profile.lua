@@ -1,12 +1,11 @@
 local _, FD = ...
 FD.Profile = { page = 1, pageSize = 8 }
 local Profile = FD.Profile
+local Native, Widgets = FD.Native, FD.Widgets
+local label, panel, plain = Widgets.Label, Widgets.Panel, Native.Plain
 local WIDTH, HEIGHT = 960, 812
-local GOLD = { 0.94, 0.75, 0.38 }
-local MUTED = { 0.61, 0.65, 0.70 }
-local WIN = { 0.36, 0.85, 0.61 }
+local GOLD, MUTED, WHITE, WIN = Widgets.GOLD, Widgets.MUTED, Widgets.WHITE, Widgets.GREEN
 local LOSS = { 0.96, 0.43, 0.43 }
-local WHITE = { 0.92, 0.94, 0.97 }
 -- English source strings; every display goes through FD.L.
 local BRACKET_NAMES = { LEVELING = "Leveling", MAX_LEVEL = "Max level", LEGACY = "Legacy" }
 local STREAKS = { WIN = { "Current streak: %d win", "Current streak: %d wins" },
@@ -28,10 +27,6 @@ local function bracketName(bracket)
     return FD.L[BRACKET_NAMES[bracket] or BRACKET_NAMES.LEGACY]
 end
 
-local function plain(value)
-    return (tostring(value or ""):gsub("|", "||"))
-end
-
 local function color(text, rgb)
     text:SetTextColor(rgb[1], rgb[2], rgb[3])
 end
@@ -43,11 +38,9 @@ end
 
 local function specialization(identity)
     if type(identity.specName) == "string" and identity.specName ~= "" then return identity.specName end
-    local id = identity.specId
-    if type(id) ~= "number" or id ~= id or id < 1 or id > 100000 or id % 1 ~= 0
-        or type(GetSpecializationNameForSpecID) ~= "function" then return nil end
-    local ok, name = pcall(GetSpecializationNameForSpecID, id)
-    if ok and FD.Wow:Readable(name) and type(name) == "string" and name ~= "" then return name end
+    if not Native.Integer(identity.specId, 1, 100000) then return nil end
+    local name = Native.Call(GetSpecializationNameForSpecID, identity.specId)
+    if type(name) == "string" and name ~= "" then return name end
 end
 
 local function description(identity)
@@ -55,33 +48,6 @@ local function description(identity)
     local spec = specialization(identity)
     local text = spec and plain(spec) .. " - " .. class or class
     return identity.level and format("Lvl %d - %s", identity.level, text) or text
-end
-
-local function surface(frame, fill, border)
-    frame:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8x8",
-        edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = 1 })
-    frame:SetBackdropColor(fill[1], fill[2], fill[3], fill[4] or 1)
-    border = border or { 0.20, 0.23, 0.28 }
-    frame:SetBackdropBorderColor(border[1], border[2], border[3], border[4] or 1)
-end
-
-local function label(parent, font, x, y, width, height, rgb)
-    local text = parent:CreateFontString(nil, "OVERLAY", font)
-    text:SetPoint("TOPLEFT", x, -y)
-    text:SetSize(width, height)
-    text:SetJustifyH("LEFT")
-    text:SetJustifyV("TOP")
-    text:SetWordWrap(false)
-    color(text, rgb or WHITE)
-    return text
-end
-
-local function panel(parent, x, y, width, height, fill, border)
-    local frame = CreateFrame("Frame", nil, parent, "BackdropTemplate")
-    frame:SetPoint("TOPLEFT", x, -y)
-    frame:SetSize(width, height)
-    surface(frame, fill, border)
-    return frame
 end
 
 -- Keep read-only presentation failures separate from duel error recovery,
@@ -117,27 +83,9 @@ end
 
 function Profile:Create()
     if self.frame then return end
-    local frame = CreateFrame("Frame", "ForeverDuelProfile", UIParent, "BackdropTemplate")
-    frame:SetSize(WIDTH, HEIGHT)
-    frame:SetPoint("CENTER")
-    frame:SetFrameStrata("HIGH")
-    surface(frame, { 0.055, 0.065, 0.085, 0.98 }, { 0.46, 0.36, 0.19 })
-    frame:SetMovable(true)
-    frame:EnableMouse(true)
-    frame:SetClampedToScreen(true)
-    frame:RegisterForDrag("LeftButton")
-    frame:SetScript("OnDragStart", function() frame:StartMoving() end)
-    frame:SetScript("OnDragStop", function() frame:StopMovingOrSizing() end)
-    frame:SetScript("OnHide", function() frame:StopMovingOrSizing() end)
-    frame:Hide()
-
+    local frame = Widgets.Window("ForeverDuelProfile", WIDTH, HEIGHT)
     local function button(text, width, x, y, handler)
-        local b = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
-        b:SetSize(width, 26)
-        b:SetPoint("TOPLEFT", x, -y)
-        b:SetText(text)
-        b:SetScript("OnClick", function() self:Run(handler) end)
-        return b
+        return Widgets.Button(frame, text, width, x, y, function() self:Run(handler) end)
     end
     label(frame, "GameFontNormalLarge", 24, 23, 600, 25, GOLD):SetText("ForeverDuelersGuild")
     label(frame, "GameFontHighlightSmall", 24, 51, 540, 18, MUTED):SetText(FD.L["YOUR DUEL RECORD  /  Local rated matches"])
@@ -163,7 +111,7 @@ function Profile:Create()
         self.stats[index] = label(card, "GameFontHighlightLarge", 16, 41, 184, 28, index == 1 and GOLD or WHITE)
     end
     self.record = label(frame, "GameFontHighlightSmall", 24, 215, 912, 18, MUTED)
-    self.chart = panel(frame, 24, 239, 912, 121, { 0.075, 0.09, 0.115 })
+    self.chart = panel(frame, 24, 239, 912, 121)
     label(self.chart, "GameFontHighlightSmall", 14, 10, 270, 16, GOLD):SetText(FD.L["RATING PROGRESSION"])
     self.chartSummary = label(self.chart, "GameFontHighlightSmall", 310, 10, 586, 16, MUTED)
     self.chartSummary:SetJustifyH("RIGHT")
@@ -200,7 +148,7 @@ function Profile:Create()
         local row = CreateFrame("Button", nil, frame, "BackdropTemplate")
         row:SetSize(552, 36)
         row:SetPoint("TOPLEFT", 24, -(422 + (index - 1) * 38))
-        surface(row, { 0.08, 0.095, 0.12 }, { 0.08, 0.095, 0.12 })
+        Widgets.Surface(row, { 0.08, 0.095, 0.12 }, { 0.08, 0.095, 0.12 })
         row:SetHighlightTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight", "ADD")
         row.cells = {}
         for col, column in ipairs(columns) do
@@ -222,7 +170,7 @@ function Profile:Create()
     self.empty:SetWordWrap(true)
     self.empty:SetText(FD.L["No rated duels yet.\n\nChallenge another ForeverDuelersGuild player through the normal Duel action, then both accept rated."])
 
-    self.detailPanel = panel(frame, 592, 368, 344, 408, { 0.075, 0.09, 0.115 })
+    self.detailPanel = panel(frame, 592, 368, 344, 408)
     label(self.detailPanel, "GameFontHighlightSmall", 16, 16, 312, 17, GOLD):SetText(FD.L["MATCH DETAILS"])
     self.detailResult = label(self.detailPanel, "GameFontHighlightLarge", 16, 44, 312, 27)
     self.details = label(self.detailPanel, "GameFontHighlightSmall", 16, 78, 312, 43, MUTED)
@@ -396,10 +344,7 @@ function Profile:Toggle()
     self:Run(function()
         self:Create()
         if self.frame:IsShown() then self.frame:Hide(); return end
-        -- UIParent dimensions are already in UI units; shrink the whole window
-        -- on smaller displays while leaving the player's UI scale untouched.
-        local scale = math.min(1, (UIParent:GetWidth() - 40) / WIDTH, (UIParent:GetHeight() - 40) / HEIGHT)
-        self.frame:SetScale(math.max(0.1, scale))
+        Widgets.Fit(self.frame, WIDTH, HEIGHT)
         self.page, self.selectedId = 1, nil
         self:Refresh()
         self.frame:Show()
@@ -407,6 +352,4 @@ function Profile:Toggle()
     end)
 end
 
-function Profile:RefreshIfShown()
-    if self.frame and self.frame:IsShown() then self:Run(function() self:Refresh() end) end
-end
+Profile.RefreshIfShown = Widgets.RefreshIfShown

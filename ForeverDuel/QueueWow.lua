@@ -5,46 +5,12 @@ local _, FD = ...
 FD.QueueWow = {}
 local Wow = FD.QueueWow
 local L = FD.L
+local Native = FD.Native
+local readable, finite, integer, text, call, now = Native.Readable, Native.Finite, Native.Integer, Native.Text,
+    Native.Call, Native.Now
 
-local function readable(...)
-    if FD.Wow and type(FD.Wow.Readable) == "function" then return FD.Wow:Readable(...) end
-    for i = 1, select("#", ...) do
-        if type(issecretvalue) == "function" and issecretvalue(select(i, ...)) then return false end
-    end
-    return true
-end
-
-local function finite(value, low, high)
-    return readable(value) and type(value) == "number" and value == value
-        and value ~= math.huge and value ~= -math.huge
-        and (not low or value >= low) and (not high or value <= high)
-end
-
-local function integer(value, low, high)
-    return finite(value, low, high) and value % 1 == 0
-end
-
-local function text(value, maximum)
-    return readable(value) and type(value) == "string" and #value > 0
-        and #value <= (maximum or 128) and not value:find("[%c|]")
-end
-
-local function call(callback, ...)
-    if type(callback) ~= "function" then return nil end
-    local ok, a, b, c, d = pcall(callback, ...)
-    if not ok or not readable(a, b, c, d) then return nil end
-    return a, b, c, d
-end
-
-local function now()
-    local value = call(GetTime)
-    return finite(value, 0) and value or 0
-end
-
-local function epoch()
-    local value = call(GetServerTime)
-    return integer(value, 0) and value or 0
-end
+-- The queue engine's clocks never fail: 0 stands for unavailable.
+local function epoch() return Native.Epoch() or 0 end
 
 local function vectorXY(vector)
     if not readable(vector) or type(vector) ~= "table" or type(vector.GetXY) ~= "function" then return nil end
