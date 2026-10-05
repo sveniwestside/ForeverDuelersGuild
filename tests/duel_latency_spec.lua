@@ -321,6 +321,114 @@ return function(_, equal)
     eq(#net.b.FD.Database.data.matches, 2, "receiver records both duels")
     eq(net.a.FD.Database:GetStats().rating + net.b.FD.Database:GetStats().rating, 3000, "rematch conserves Elo")
 
+    -- TrinityCore sends DUEL_FINISHED before the winner line; noWinner models
+    -- a duel that ends without one (for example a third-party kill).
+    local function finishFirst(winner, loser, noWinner)
+        for _, c in ipairs({ net.a, net.b }) do
+            c:emit("DUEL_FINISHED")
+            if not noWinner then c:emit("CHAT_MSG_SYSTEM", winner.senderName .. " has defeated " .. loser.senderName .. " in a duel") end
+        end
+    end
+    -- Rated duel 1 that A wins; B's RESULT to A (both RESULTs with
+    -- bothWays) is delayed by resultDelay, or lost when it is false.
+    local function ratedDuel(resultDelay, noWinner, bothWays)
+        net = Client.pair({ latency = 0.3, tokens = true })
+        net:nativeCountdown()
+        net.delay = function(entry)
+            if entry.kind == "RESULT" and (bothWays or entry.from == net.b) then return resultDelay end
+            return 0.3
+        end
+        net:challenge(net.a)
+        net:advance(3)
+        net.a.FD.UI.rated.scripts.OnClick()
+        net:advance(1)
+        net.b.FD.UI.rated.scripts.OnClick()
+        net:advance(10)
+        finishFirst(net.a, net.b, noWinner)
+        net:advance(1)
+    end
+    -- B challenges again and A accepts with Blizzard's button: an unrated duel.
+    local function unratedRematch(winner, loser)
+        net.a.onAccept, net.b.onAccept = nil, nil
+        net:challenge(net.b)
+        net:advance(2)
+        net.a.env.AcceptDuel()
+        net.a.env.StaticPopup_Hide("DUEL_REQUESTED")
+        for _, c in ipairs({ net.a, net.b }) do c:emit("CHAT_MSG_SYSTEM", "Duel starting: 3") end
+        net:advance(9)
+        finishFirst(winner, loser)
+        net:advance(60)
+    end
+
+    label = "parked match and the winner line of an unrated rematch"
+    ratedDuel(25)
+    eq(net.a.FD.duel:State(), "FINISHING", "A waits for B's delayed RESULT")
+    unratedRematch(net.b, net.a)
+    eq(net.a.FD.duel.parked, nil, "parked match settled")
+    eq(#net.a.FD.Database.data.matches, 1, "A's parked match finalized from the late RESULT")
+    eq(#net.b.FD.Database.data.matches, 1, "B recorded duel 1")
+    eq(net.a.FD.Database.data.matches[1] and net.a.FD.Database.data.matches[1].result, "WIN", "A keeps its own win")
+    eq(net.a.FD.Database:GetStats().rating + net.b.FD.Database:GetStats().rating, 3000, "Elo conserved")
+
+    label = "parked match while the rematch challenger is unresolved"
+    ratedDuel(25)
+    net.a.units.target = nil
+    unratedRematch(net.b, net.a)
+    eq(#net.a.FD.Database.data.matches, 1, "the rematch winner line never reaches the parked match")
+    eq(net.a.FD.Database.data.matches[1] and net.a.FD.Database.data.matches[1].result, "WIN", "A keeps its own win")
+
+    label = "interrupted rated duel and an unrated rematch"
+    ratedDuel(0.3, true)
+    eq(net.a.FD.duel:State(), "FINISHING", "no winner line: A cannot finalize")
+    unratedRematch(net.a, net.b)
+    eq(#net.a.FD.Database.data.matches, 0, "no record on A for a duel without winner")
+    eq(#net.b.FD.Database.data.matches, 0, "no record on B for a duel without winner")
+    eq(net.a.FD.Database:GetStats().rating, 1500, "A's rating unchanged")
+
+    label = "untracked outgoing rematch after an interrupted rated duel"
+    ratedDuel(0.3, true)
+    -- A challenges again but rated tracking cannot attach (no capture).
+    net.a.onAccept, net.b.onAccept = nil, nil
+    net.a:emit("CHAT_MSG_SYSTEM", net.a.env.ERR_DUEL_REQUESTED)
+    eq(net.a.FD.duel.active and net.a.FD.duel.active.sealed, true, "the acknowledgment seals the finished match")
+    for _, c in ipairs({ net.a, net.b }) do c:emit("CHAT_MSG_SYSTEM", "Duel starting: 3") end
+    net:advance(9)
+    finishFirst(net.a, net.b)
+    net:advance(60)
+    eq(#net.a.FD.Database.data.matches, 0, "the untracked duel's winner is not duel 1's result")
+
+    label = "loading screen during FINISHING"
+    ratedDuel(3)
+    eq(net.a.FD.duel:State(), "FINISHING", "A waits for B's RESULT")
+    net.a:emit("PLAYER_LEAVING_WORLD")
+    eq(net.a.FD.duel:State(), "FINISHING", "a loading screen keeps the finished match")
+    net:advance(2)
+    net.a:emit("PLAYER_ENTERING_WORLD", false, false)
+    net:advance(60)
+    eq(net:count("CANCEL", net.a), 0, "no CANCEL for a loading screen after the duel")
+    ratedPair(net)
+
+    label = "logout during FINISHING"
+    ratedDuel(3)
+    net.a:emit("PLAYER_LOGOUT")
+    eq(net.a.FD.duel.active, nil, "logout ends the finished match")
+    eq(net:count("CANCEL", net.a), 1, "logout still sends the CANCEL")
+
+    label = "peer CANCEL for the parked match"
+    ratedDuel(false, false, true)
+    net:challenge(net.b)
+    net:advance(1)
+    eq(net.a.FD.duel.parked ~= nil, true, "A parked duel 1")
+    eq(net.a.FD.duel.active and net.a.FD.duel.active.held, true, "A holds the new request")
+    -- B gives up on duel 1 (for example a specialization change after it).
+    local parkedOnB = net.b.FD.duel.parked
+    eq(parkedOnB ~= nil, true, "B parked duel 1 as well")
+    net.b.FD.duel:Unrate("spec", true, "test", parkedOnB)
+    net:advance(1)
+    eq(net.a.FD.duel.parked, nil, "the peer's CANCEL drops the parked match")
+    eq(net.a.FD.duel.active and net.a.FD.duel.active.held, nil, "the held request is released at once")
+    eq(#net.a.FD.Database.data.matches, 0, "a cancelled parked match is not recorded")
+
     label = "exact party route while the receiver's roster is still loading"
     net = Client.pair({ latency = 0.5, tokens = true })
     for _, c in ipairs({ net.a, net.b }) do c.grouped, c.members, c.units.party1 = true, 2, c.units.target end

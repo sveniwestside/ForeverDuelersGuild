@@ -306,6 +306,9 @@ end
 -- if the client also raised DUEL_REQUESTED for it, drop that fresh request.
 function Wow:DeathRequest(name)
     self.death = { name = name, at = GetTime() }
+    -- DUEL_REQUESTED for the same name returns early in Incoming, so the
+    -- previous match is not superseded there: its winner line is past.
+    if FD.duel then FD.duel:Seal() end
     if self.pendingIncoming and self.pendingIncoming.name == name then self:ClearIncoming("duel to the death; not tracked") end
     local m = FD.duel and FD.duel.active
     if m and m.role == "INCOMING" and not m.peerNonce and GetTime() - m.createdAt <= 1 then
@@ -362,6 +365,8 @@ function Wow:DuelNotice(message, source, errorType)
         if not pending and failed and self.attempt and self.attempt.at <= failed.at
             and now - failed.at <= FD.C.OUTGOING_TIMEOUT then pending = failed end
         self.outgoing, self.failedOutgoing = nil, nil
+        -- Also for an untracked request: the previous duel's winner line is past.
+        FD.duel:Seal()
         if pending then
             self:OutgoingStatus(pending.opponent.fullName .. " | native acknowledgment via " .. source)
             local begun, reason = FD.duel:Begin("OUTGOING", self:Identity("player", true), pending.opponent, pending.at)
@@ -415,11 +420,11 @@ function Wow:SystemMessage(message)
         FD.duel:Countdown(seconds)
         return
     end
-    for _, match in ipairs({ m or false, parked or false }) do
-        if match then
-            local winner, source = FD.Results:Parse(message, DUEL_WINNER_KNOCKOUT, DUEL_WINNER_RETREAT, match.player, match.opponent)
-            if winner then FD.duel:Result(winner, source, match); return end
-        end
+    -- Only the active match: a parked match was superseded by a newer native
+    -- request, so every winner line from now on belongs to a later duel.
+    if m then
+        local winner, source = FD.Results:Parse(message, DUEL_WINNER_KNOCKOUT, DUEL_WINNER_RETREAT, m.player, m.opponent)
+        if winner then FD.duel:Result(winner, source, m) end
     end
 end
 
@@ -551,14 +556,19 @@ end)
 FD:OnEvent("CHAT_MSG_SYSTEM", function(...) Wow:SystemMessage(...) end)
 FD:OnEvent("UI_INFO_MESSAGE", function(...) Wow:InfoMessage("UI_INFO_MESSAGE", ...) end)
 FD:OnEvent("UI_ERROR_MESSAGE", function(...) Wow:InfoMessage("UI_ERROR_MESSAGE", ...) end)
-local function leaveWorld()
+local function leaveWorld(logout)
     Wow:ClearOutgoing("world transition or logout", true)
     Wow:ClearIncoming("world transition or logout")
+    -- A loading screen keeps the Lua state: a finished duel's result
+    -- exchange, retries and RESULT_TIMEOUT continue afterwards (like a
+    -- parked match). Only logout or /reload ends it.
+    local m = FD.duel.active
+    if not logout and m and (m.finishedAt or m.state == "FINISHING") then return end
     -- Third argument: submit the CANCEL synchronously while still connected.
     FD.duel:Abort("world", true, true)
 end
-FD:OnEvent("PLAYER_LEAVING_WORLD", leaveWorld)
-FD:OnEvent("PLAYER_LOGOUT", leaveWorld)
+FD:OnEvent("PLAYER_LEAVING_WORLD", function() leaveWorld(false) end)
+FD:OnEvent("PLAYER_LOGOUT", function() leaveWorld(true) end)
 FD:OnEvent("PLAYER_SPECIALIZATION_CHANGED", function(unit)
     if Wow:Readable(unit) and unit == "player" then FD.duel:Unrate("spec", true) end
 end)

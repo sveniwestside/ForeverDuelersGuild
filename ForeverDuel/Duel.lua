@@ -186,6 +186,16 @@ end
 function Duel:Supersede(reason)
     local m = self.active
     if m and m.state == "FINISHING" and not m.finalized then
+        -- A newer native request: the server sent this duel's winner line
+        -- before it, so any later winner line belongs to another duel.
+        m.sealed = true
+        if not m.localWinner then
+            -- Without its own winner line it can never finalize; waiting for
+            -- RESULT_TIMEOUT would only hold the new request.
+            self.env.print(FD.L["Match not rated: result could not be confirmed by both clients."])
+            self.env.log("unrated", "no local result")
+            return self:Drop(m, "result")
+        end
         -- A rematch must not discard the previous duel's result exchange.
         -- One bounded slot; its own result timeout still applies.
         if self.parked then self:Drop(self.parked, "replaced") end
@@ -397,14 +407,26 @@ function Duel:Outdated(payload, sender)
     return true
 end
 
--- Late START/RESULT for a parked or recently finalized match, by nonce.
+-- Late START/RESULT/CANCEL for a parked match, START/RESULT for a recently
+-- finalized match, by nonce.
 function Duel:Settle(p, sender)
     local m = self.parked
     local function owns(match)
         return match and p.nonce == match.peerNonce and p.echo == match.nonce
             and sender == match.opponent.fullName and p.guid == match.opponent.guid
     end
-    if owns(m) then self:Evidence(m, p); return true, "parked match evidence accepted" end
+    if owns(m) then
+        if p.kind == "CANCEL" then
+            -- Unrate drops the parked match and releases the held request.
+            self.env.log("cancel received", p.reason or "unknown")
+            self:Unrate("peer:" .. (p.reason or "unknown"), false, nil, m)
+            return true, "parked match cancelled by peer"
+        end
+        self:Evidence(m, p)
+        return true, "parked match evidence accepted"
+    end
+    -- A CANCEL is never answered with a RESULT.
+    if p.kind == "CANCEL" then return false end
     local now, kept = self.env.now(), {}
     for _, entry in ipairs(self.recent) do
         if now - entry.at < FD.C.RECENT_TTL then kept[#kept + 1] = entry end
@@ -433,7 +455,7 @@ function Duel:Receive(payload, sender)
         if self:Outdated(payload, sender) then return self:PeerValidation(false, "opponent uses protocol 2") end
         return self:PeerValidation(false, "invalid envelope", nil, err)
     end
-    if p.kind == "RESULT" or p.kind == "START" then
+    if p.kind == "RESULT" or p.kind == "START" or p.kind == "CANCEL" then
         local settled, status = self:Settle(p, sender)
         if settled then
             if self.env.log then pcall(self.env.log, "peer validation", p.kind .. " | " .. status) end
@@ -596,9 +618,18 @@ end
 -- either side (Blizzard's Accept, Keep unrated, combat, level change, ...)
 -- sends CANCEL and suppresses START and RESULT, so a tentative countdown can
 -- never finalize without both consents.
+-- A native duel after this match's countdown (an untracked rematch, a duel
+-- to the death): its winner line must never become this match's result. The
+-- repeated countdown lines of the match's own duel arrive before FINISHING.
+function Duel:Seal()
+    local m = self.active
+    if m and m.countdownAt and (m.finishedAt or m.state == "FINISHING") then m.sealed = true end
+end
+
 function Duel:Countdown(seconds)
     local m = self.active
-    if not m or m.countdownAt then return end
+    if m and m.countdownAt then return self:Seal() end
+    if not m then return end
     if type(seconds) ~= "number" or seconds < 1 or seconds > 10 then return end
     local rated = (m.role == "INCOMING" and m.state == "RATED_CONFIRMED" and m.nativeAccepted)
         or (m.role == "OUTGOING" and (m.state == "LOCAL_ACCEPTED" or m.state == "RATED_CONFIRMED"))
@@ -656,7 +687,7 @@ end
 
 function Duel:Result(winnerGUID, source, m)
     m = m or self.active
-    if not m or not self:Owns(m) or (m.state ~= "IN_PROGRESS" and m.state ~= "FINISHING") then return end
+    if not m or m.sealed or not self:Owns(m) or (m.state ~= "IN_PROGRESS" and m.state ~= "FINISHING") then return end
     if winnerGUID ~= m.player.guid and winnerGUID ~= m.opponent.guid then return end
     if m.localWinner and m.localWinner ~= winnerGUID then return self:Unrate("disagree", true, "contradictory local result", m) end
     m.localWinner, m.resultSource = winnerGUID, source

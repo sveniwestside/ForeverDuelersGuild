@@ -63,8 +63,9 @@ In every case: no rated record, no rating change, and the ordinary duel stays po
 2. With fresh equal ratings at equal levels: +16/-16. Five levels apart: the lower-level winner gains 20, the higher-level winner gains 12.
 3. `/reload`, then log out and in again: same totals, no duplicates.
 4. Leave the duel boundary in one duel: a RETREAT is rated the same way when both clients see the winner message.
-5. Rematch immediately after a finished duel: a new match ID, using the updated rating.
-6. On a disposable character: `/duelrating reset`, then `/duelrating reset confirm` within 15 s, clears ratings and history. Debug and minimap settings stay.
+5. Rematch immediately after a finished duel: a new match ID, using the updated rating. Repeat with the receiver accepting the rematch with Blizzard's **Accept** and the other player winning it: the first duel's record must keep its own winner, and the rematch creates no record.
+6. Loading screen: right after a rated duel ends, the loser takes a portal or uses the hearthstone (cast started during the duel if possible). Both clients still record the duel with complementary changes, and nobody sees "Your opponent logged out or changed zones".
+7. On a disposable character: `/duelrating reset`, then `/duelrating reset confirm` within 15 s, clears ratings and history. Debug and minimap settings stay.
 
 ## 4. Queue end-to-end
 
