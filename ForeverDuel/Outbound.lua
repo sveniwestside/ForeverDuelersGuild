@@ -118,7 +118,8 @@ end
 local function validItem(item)
     return type(item) == "table" and type(item.prefix) == "string" and type(item.payload) == "string"
         and #item.payload > 0 and #item.payload <= 255 and type(item.channel) == "string"
-        and (item.channel ~= "WHISPER" or (type(item.target) == "string" and #item.target > 0))
+        and ((item.channel ~= "WHISPER" and item.channel ~= "CHANNEL")
+            or (type(item.target) == "string" and #item.target > 0))
 end
 
 -- item = { prefix, payload, channel = "WHISPER"|"PARTY", target, priority,
@@ -165,8 +166,9 @@ function Outbound:Resolve(item)
         if type(item.target) ~= "string" or item.noWhisperFallback then return nil end
         channel, target = "WHISPER", item.target
     end
-    if channel == "WHISPER" and (type(target) ~= "string" or target == "") then return nil end
-    return channel, channel == "WHISPER" and target or nil
+    if (channel == "WHISPER" or channel == "CHANNEL") and (type(target) ~= "string" or target == "") then return nil end
+    -- WHISPER needs the player name, CHANNEL the channel number as a string.
+    return channel, (channel == "WHISPER" or channel == "CHANNEL") and target or nil
 end
 
 -- Submit one item to the native API now. Returns class, code.

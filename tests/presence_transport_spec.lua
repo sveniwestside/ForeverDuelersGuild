@@ -98,51 +98,20 @@ return function(_, equal)
     c:receive("FDP2|Player-1-0000DDDD|1550|38|MAGE|30|60", "Delta-OtherRealm")
     equal(c.P:FindByName("Delta-OtherRealm").mapID, 38, "a qualified sender keeps the remote realm")
 
-    -- The live client rejects a CHANNEL send without the channel number as
-    -- target (TargetRequired). The pinned FD.Outbound:Resolve drops every
-    -- non-WHISPER target, so with it the experiment is expected to fail live;
-    -- passing the CHANNEL target is a requested foundation fix. Both outcomes
-    -- are asserted, and the working-route scenarios below run against a
-    -- modelled fix (`routed`) until the real one lands, then against it.
+    -- A CHANNEL addon message must address the channel number as target.
     c = started({ joined = true })
     c:advance(30)
     equal(count(c, "CHANNEL"), 1, "one experimental CHANNEL broadcast after joining")
     local experiment = c:packets("CHANNEL")[1]
-    local targeted = experiment.target == "6"
+    equal(experiment.target, "6", "the experiment addresses the channel number, never a player")
     equal(experiment.prefix, "ForeverDuelZone2", "experiment uses the discovery prefix")
     equal(experiment.payload, "FDP2|Player-1-0000AAAA|1500|37|MAGE|30|60", "experiment carries the public profile")
-    if targeted then
-        equal(experiment.result, 0, "a CHANNEL send with its channel number is accepted")
-        equal(traced(c, "zone send CHANNEL experiment sent Success"), true, "the experiment result code is recorded")
-    else
-        equal(experiment.target, nil, "the pinned Outbound drops the CHANNEL target")
-        equal(experiment.result, 6, "the client rejects CHANNEL without its channel number")
-        equal(traced(c, "zone send CHANNEL experiment failed TargetRequired"), true, "the live outcome is recorded")
-        equal(c.P.lastChannelSend:find("TargetRequired", 1, true) ~= nil, true, "status shows the rejection code")
-    end
+    equal(experiment.result, 0, "a CHANNEL send with its channel number is accepted")
+    equal(traced(c, "zone send CHANNEL experiment sent Success"), true, "the experiment result code is recorded")
     equal(count(c, "WHISPER"), 0, "the experiment never addresses a player")
-    if not targeted then
-        -- Hearing other clients cannot switch a client whose own broadcasts
-        -- are rejected: it keeps querying, or nobody would learn about it.
-        c.members = { { name = "Beta Two", guid = BETA.guid } }
-        c:receive(WIRE, "Beta Two", "CHANNEL", 6)
-        equal(c.P:ChannelMode(), false, "a rejected CHANNEL route keeps whisper discovery")
-        c.FD.Zone.shown = true
-        c:advance(60)
-        equal(count(c, "WHISPER", "FDQ2") >= 1, true, "members are still queried by whisper")
-        preserved(c, "rejected CHANNEL target")
-    end
 
     local function routed(options)
         local client = Harness.client(options)
-        if not targeted then
-            local resolve = client.FD.Outbound.Resolve
-            client.FD.Outbound.Resolve = function(self, item)
-                local channel, target = resolve(self, item)
-                if channel == "CHANNEL" and target == nil then target = item.target end
-                return channel, target
-            end
-        end
         equal(client:start(), true, "discovery initializes")
         return client
     end

@@ -293,8 +293,8 @@ def public_history(database):
         result = {field: record[field] for field in MATCH_FIELDS if record.get(field) is not None}
         for field in ("schemaVersion", "protocolVersion"):
             result[field] = require_integer(result.get(field), f"{label}.{field}")
-            if result[field] != 2:
-                raise ExportError(f"{label} requires schemaVersion 2 and protocolVersion 2")
+        if result["schemaVersion"] != 2 or result["protocolVersion"] not in (2, 3):
+            raise ExportError(f"{label} requires schemaVersion 2 and protocolVersion 2 or 3")
         match_id = require_string(result.get("matchId"), f"{label}.matchId")
         if match_id in seen:
             raise ExportError(f"{label} has a duplicate matchId")

@@ -688,8 +688,10 @@ function Duel:FinalizeMatch(m)
     local fresh, code, detail = self:Fresh(m)
     if not fresh then self:Unrate(code, true, detail, m); return false end
     local won = m.localWinner == m.player.guid
-    local after, delta = FD.Rating:Calculate(m.ratingBefore, m.opponentRatingBefore, won, m.player.level, m.opponent.level)
+    local rules = FD.Rating:Rules()
+    local after, delta = FD.Rating:Calculate(m.ratingBefore, m.opponentRatingBefore, won, m.player.level, m.opponent.level, rules)
     local record = {
+        rules = rules,
         schemaVersion = FD.C.SCHEMA_VERSION, protocolVersion = FD.C.PROTOCOL_VERSION,
         addonVersion = FD.C.VERSION,
         bracket = m.bracket,

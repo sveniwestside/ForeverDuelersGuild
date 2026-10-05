@@ -452,7 +452,6 @@ function Wow:Environment()
         render = function(m)
             FD.UI:Render(m)
             FD.Profile:RefreshIfShown()
-            if FD.Presence then FD.Presence:Changed() end
         end,
         hide = function() FD.UI:Hide() end,
         print = function(text) FD.Debug:Print(text) end,

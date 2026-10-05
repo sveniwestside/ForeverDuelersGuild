@@ -44,10 +44,9 @@ function FD:RecoverDuel(reason)
         self.Wow.pendingIncoming = nil
         self.Wow.incomingStatus = "addon error; native duel retained"
     end
-    if self.UI then
-        pcall(self.UI.Hide, self.UI)
-        if m and self.UI.Restore then pcall(self.UI.Restore, self.UI, m) end
-    end
+    -- Blizzard's own duel popup is never hidden before the addon accepts, so
+    -- hiding our panel leaves the player with the ordinary native choice.
+    if self.UI then pcall(self.UI.Hide, self.UI) end
     return m
 end
 
@@ -110,6 +109,9 @@ function FD:Initialize()
     self.databaseError = nil
     self.initialized = true
     if db.legacy then self.Debug:Print(self.L["Previous rating preserved in Legacy. Leveling and Max level have separate ratings."]) end
+    if db.archivedNotice then
+        self.Debug:Print(self.L["Saved data of another character with this name was archived. This character starts with a fresh rating."])
+    end
     -- Each optional step is isolated so one failure cannot block the others.
     local failed = {}
     local function step(name, run)
@@ -165,7 +167,6 @@ end, "Delete this character's rating and history (asks for confirmation).", 70)
 
 FD:RegisterCommand("repair", function(rest)
     if FD.Database.data then say(FD.L["Saved data is valid; nothing to repair."]); return end
-    if type(FD.Database.Repair) ~= "function" then say(FD.L["Repair is unavailable in this version."]); return end
     if rest ~= "confirm" then
         say(FD.L["Repair starts a fresh rating for this character. The unreadable data stays in the saved file under 'quarantine'. Type /duelrating repair confirm."])
         return
@@ -211,9 +212,6 @@ for event, handlers in pairs(FD.eventHandlers) do
         FD.eventRegistered[event] = true
     end
 end
--- Older clients can reject unknown events. Keep ordinary transport usable when
--- the optional logged-addon receive route is absent.
-if FD.Comms then FD.Comms.loggedReceiveAvailable = FD.eventRegistered.CHAT_MSG_ADDON_LOGGED == true end
 frame:SetScript("OnEvent", function(_, event, ...)
     local handlers = FD.eventHandlers[event]
     if not handlers then return end

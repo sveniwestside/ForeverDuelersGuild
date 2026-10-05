@@ -1178,7 +1178,6 @@ return function(_, equal)
     exchangeWithPresence()
     equal(a.FD.Presence.available, true, "loaded addon initializes automatic roster presence")
     equal(a.joinedChannel, "ForeverDuel", "loaded addon joins the dedicated directory")
-    equal(a.FD.Presence.areaUnsupported, true, "native YELL rejection does not prevent directory discovery")
     equal(a.FD.Presence.lastReceive:find("WHISPER", 1, true) ~= nil, true, "directory discovery receives actual whispered profiles")
     equal(a.selectedChannel, 1, "loaded integration restores the native channel selection")
     equal(#a.FD.Presence:GetPlayers(), 1, "first adapter discovers the other surname player")
@@ -1247,7 +1246,8 @@ return function(_, equal)
     for index = 1, 17 do
         local player = c.FD.Database:GetStats()
         local won = index % 2 == 1
-        local after, delta = c.FD.Rating:Calculate(player.rating, 1500, won)
+        local after, delta = c.FD.Rating:Calculate(player.rating, 1500, won,
+            c.FD.Wow:Identity("player", true).level, c.FD.Wow:Identity("target").level)
         local record = {
             schemaVersion = 2, protocolVersion = c.FD.C.PROTOCOL_VERSION, bracket = "LEVELING", matchId = "overview-" .. index,
             player = c.FD.Wow:Identity("player", true), opponent = c.FD.Wow:Identity("target"),

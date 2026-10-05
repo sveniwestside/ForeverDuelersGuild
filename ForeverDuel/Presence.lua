@@ -27,11 +27,7 @@ local _, FD = ...
 -- CHANNEL route becoming audible and the first whisper failure of each kind,
 -- so a busy channel cannot evict duel and queue evidence.
 FD.Presence = { players = {}, suspended = false, queries = {}, replies = {}, held = {}, whispered = {},
-    forgotten = {}, failures = {}, work = {}, workCount = 0, seq = 0, pings = {}, pongs = {}, pingSeq = 0,
-    -- Forever rejects addon YELL/SAY with InvalidChatType (live 0.4.2), so
-    -- the area route was removed. Dead flag, kept only while adapter_spec
-    -- (another workstream) still asserts it.
-    areaUnsupported = true }
+    forgotten = {}, failures = {}, work = {}, workCount = 0, seq = 0, pings = {}, pongs = {}, pingSeq = 0 }
 local Presence = FD.Presence
 local PREFIX = "ForeverDuelZone2"
 local TICK, PULSE = 2, 5            -- event-driven ticks are coalesced; housekeeping cadence

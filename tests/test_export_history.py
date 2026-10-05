@@ -202,6 +202,20 @@ class ExportTests(unittest.TestCase):
                 self.write(text)
                 EXPORTER.load_history(self.source)
 
+    def test_accepts_protocol_three_records_and_rejects_unknown_protocols(self):
+        current = record()
+        current["protocolVersion"] = 3
+        current["rules"] = {"version": 1, "k": 32}
+        self.write(saved_variables([current]))
+        exported = EXPORTER.load_history(self.source)["matches"][0]
+        self.assertEqual(exported["protocolVersion"], 3)
+        self.assertNotIn("rules", exported, "only allowlisted fields are exported")
+        future = record()
+        future["protocolVersion"] = 4
+        with self.assertRaises(EXPORTER.ExportError):
+            self.write(saved_variables([future]))
+            EXPORTER.load_history(self.source)
+
     def test_rejects_nonsequential_and_duplicate_history(self):
         for matches in ({2: record()}, {"1": record()}, [record(), record()]):
             with self.subTest(matches=matches), self.assertRaises(EXPORTER.ExportError):
