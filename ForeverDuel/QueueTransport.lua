@@ -11,6 +11,8 @@ local TTL = { QUERY = 8, PROFILE = 8, LEAVE = 10, CANCEL = 30, VENUE = 20, VENUE
 -- Discovery is background traffic: it never takes the whisper budget that
 -- match controls and the rated duel need.
 local DISCOVERY = { QUERY = true, PROFILE = true, LEAVE = true }
+-- A PROFILE stays current while it can still pair or re-key a ticket.
+local PROFILE_STATES = { SEARCHING = true, PAUSED = true, INVITING = true, INVITED = true, GROUPING = true }
 
 local function readable(...)
     return not FD.Wow or FD.Wow:Readable(...)
@@ -69,6 +71,19 @@ function Transport:TicketMatches(packet, ticket, outgoing)
         and packet.peerSession == (outgoing and ticket.peerSession or ticket.ownSession)
 end
 
+-- The PARTY channel is server-scoped to group members and the sender name is
+-- authoritative; the ticket tuple and sender bind it. The one exception is an
+-- OFFER (from the ticket peer while a ticket exists): a grouped invitee binds
+-- or re-keys from it, or answers one naming its earlier session with its
+-- current PROFILE. PARTY never discovers peers; the engine validates OFFERs.
+function Transport:PartyAccepts(packet, sender, engine)
+    engine = engine or FD.queue
+    if type(engine) ~= "table" or not engine.session then return false end
+    local ticket = engine.ticket
+    if ticket and (type(ticket.peer) ~= "table" or sender ~= ticket.peer.fullName) then return false end
+    return packet.kind == "OFFER" or ticket ~= nil and self:TicketMatches(packet, ticket, false)
+end
+
 function Transport:ExactTicketParty(ticket)
     return type(ticket) == "table" and type(ticket.peer) == "table" and FD.QueueWow ~= nil
         and FD.QueueWow:GroupState(ticket.peer) == "EXACT"
@@ -105,7 +120,7 @@ function Transport:Current(packet, owner)
     -- Terminal and reply packets stay valid after their ticket ended.
     if kind == "QUERY" or kind == "LEAVE" or kind == "CANCEL" or Protocol.SETUP_KINDS[kind] then return true end
     if not engine or engine.session ~= packet.session then return false end
-    if kind == "PROFILE" then return engine.state == "SEARCHING" or engine.state == "INVITING" or engine.state == "GROUPING" end
+    if kind == "PROFILE" then return PROFILE_STATES[engine.state] == true end
     local ticket = engine.ticket
     return owner ~= nil and owner == ticket and self:TicketMatches(packet, ticket, true)
 end
@@ -200,11 +215,7 @@ function Transport:Receive(prefix, payload, channel, sender)
     sender = self:NormalizeSender(sender)
     if not packet or not sender then return false end
     if channel == "PARTY" then
-        -- The PARTY channel itself is server-scoped to group members and the
-        -- sender name is authoritative; the ticket tuple and sender bind it.
-        -- It never discovers peers or creates a ticket.
-        local ticket = FD.queue and FD.queue.ticket
-        if not self:TicketMatches(packet, ticket, false) or sender ~= ticket.peer.fullName then return false end
+        if not self:PartyAccepts(packet, sender) then return false end
         return self:Deliver(packet, sender, channel)
     end
     local known = self:KnownPlayer(sender)

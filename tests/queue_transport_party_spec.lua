@@ -298,13 +298,32 @@ return function(_, equal, newNamespace)
     incoming.peerSession, incoming.ticket = "a1", "a2.b1"
     equal(transport:Receive("ForeverDuelQ2", assert(c.fd.QueueProtocol:Encode(incoming)), "PARTY", w.b.profile.fullName), false,
         "old ticket cannot reach engine")
+    -- A PARTY OFFER naming our own session reaches the engine so a grouped
+    -- invitee can bind or re-key, but PARTY never discovers its sender.
     w = world(); w:pair()
     local receiver = w.b
     local offered = w.a.queue:Control("OFFER")
+    local function offer(packet, sender)
+        return receiver.fd.QueueTransport:Receive("ForeverDuelQ2", assert(receiver.fd.QueueProtocol:Encode(packet)),
+            "PARTY", sender or w.a.profile.fullName)
+    end
     receiver.queue.state, receiver.queue.ticket = "SEARCHING", nil
-    equal(receiver.fd.QueueTransport:Receive("ForeverDuelQ2", assert(receiver.fd.QueueProtocol:Encode(offered)),
-        "PARTY", w.a.profile.fullName), false, "party offer cannot create a reservation")
-    equal(receiver.queue.ticket, nil, "exact native party does not create a queue ticket")
+    offer(offered)
+    equal(receiver.queue.ticket, nil, "a PARTY OFFER from an undiscovered sender creates no ticket")
+    local foreign = w.a.fd.Copy(offered); foreign.peerSession, foreign.ticket = "b9", "a1.b9"
+    offer(foreign)
+    equal(receiver.queue.ticket, nil, "a PARTY OFFER naming another session of ours creates no ticket")
+    local known = w.a.fd.Copy(w.a.queue.ownProfile)
+    known.fullName, known.lastSeen = w.a.profile.fullName, w.now
+    receiver.queue.peers[known.guid] = known
+    receiver.queue.pendingOffer = nil
+    equal(offer(offered), true, "a PARTY OFFER from a known queue peer reaches the engine")
+    equal(receiver.queue.state, "INVITED", "the grouped invitee binds from the PARTY OFFER")
+    equal(receiver.queue.ticket.id, "a1.b1", "ticket named by the OFFER")
+    local requeued = w.a.fd.Copy(offered); requeued.session, requeued.ticket = "a2", "a2.b1"
+    equal(offer(requeued), true, "an OFFER from the ticket peer with a newer session passes the PARTY rule")
+    equal(receiver.queue.ticket.id, "a2.b1", "the invitee re-keys to the coordinator's current session")
+    equal(offer(requeued, "Gamma-Forever"), false, "another group member cannot re-key the ticket")
 
     w = world(); w:pair(); c = w.a; transport = c.fd.QueueTransport
     assert(transport:Send(c.queue:Control("GROUP", { mapID = 10, continentID = 0, x = 0, y = 0 }), c.queue.ticket.peer.fullName, c.queue.ticket))

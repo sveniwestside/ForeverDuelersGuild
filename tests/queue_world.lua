@@ -280,12 +280,14 @@ return function(options)
             IsGUIDInGroup = function(guid) return c.view.grouped and c.view.partyGUID == guid or false end,
         }
         env.AcceptGroup = function() c.acceptGroups = (c.acceptGroups or 0) + 1; w:accept(c) end
+        env.DeclineGroup = function() c.declineGroups = (c.declineGroups or 0) + 1; w:decline(c) end
         env.StaticPopup_FindVisible = function(which) if which == "PARTY_INVITE" then return c.popup end end
         env.StaticPopup_Hide = function(which)
             if which ~= "PARTY_INVITE" or not c.popup then return end
             local popup = c.popup
             c.popup = nil
-            if not popup.inviteAccepted then w:decline(c) end
+            -- FrameXML's OnHide declines an invitation that was not accepted.
+            if not popup.inviteAccepted then env.DeclineGroup() end
         end
         local function vector(x, y) return { GetXY = function() return x, y end } end
         env.CreateVector2D = vector

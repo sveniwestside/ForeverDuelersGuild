@@ -451,18 +451,23 @@ function Queue:QueryPeer()
     end
 end
 
-function Queue:NewTicket(peer, id, coordinator)
+-- The ticket ID is always "<coordinator session>.<invitee session>".
+local function ticketID(coordinator, own, peer)
+    return coordinator and own .. "." .. peer or peer .. "." .. own
+end
+
+function Queue:NewTicket(peer, peerSession, coordinator)
     local now = self.env.now()
-    self.ticket = { id = id, coordinator = coordinator, peer = FD.Copy(peer), player = FD.Copy(self.ownProfile),
-        ownSession = self.session, peerSession = peer.session, createdAt = now, lastPeerAt = now,
-        sentAt = {}, rejected = {}, samples = 0 }
+    self.ticket = { id = ticketID(coordinator, self.session, peerSession), coordinator = coordinator,
+        peer = FD.Copy(peer), player = FD.Copy(self.ownProfile), ownSession = self.session, peerSession = peerSession,
+        createdAt = now, lastPeerAt = now, sentAt = {}, rejected = {}, samples = 0 }
     self.pendingOffer, self.pendingInvite = nil, nil
     return self.ticket
 end
 
 -- Coordinator: one informational OFFER whisper, then the native invitation.
 function Queue:Offer(peer)
-    local t = self:NewTicket(peer, self.ownProfile.session .. "." .. peer.session, true)
+    local t = self:NewTicket(peer, peer.session, true)
     self:Advance("INVITING")
     self.reason = FD.Locale:Format("Inviting %s to a group for your rated queue match.", peer.fullName)
     t.sentAt.OFFER = self.env.now()
@@ -478,12 +483,18 @@ function Queue:Offer(peer)
 end
 
 -- Invitee: recognised from PARTY_INVITE_REQUEST (inviterGUID) or the OFFER.
-function Queue:Invited(peer, id, seen)
+-- `session` is the coordinator's current session; `native` is the state of
+-- Blizzard's invitation: "open", "accepted" or nil when it was not seen.
+-- Returns false and an Eligible code on refusal.
+function Queue:Invited(peer, session, native)
     local own = self:RefreshOwn()
-    if not own or peer.guid >= own.guid or self.env.now() - peer.lastSeen >= T.INVITE_RECOGNITION
-        or not self:Eligible(peer) or self:GroupState(peer) == "CHANGED" then return false end
-    local t = self:NewTicket(peer, id, false)
-    t.inviteSeen = seen == true
+    if not own or peer.guid >= own.guid or self.env.now() - peer.lastSeen >= T.INVITE_RECOGNITION then return false end
+    local eligible, code = self:Eligible(peer)
+    if not eligible then return false, code end
+    if self:GroupState(peer) == "CHANGED" then return false end
+    local t = self:NewTicket(peer, session, false)
+    -- An invitation the player already accepted needs no prompt.
+    t.inviteSeen, t.announced = native ~= nil, native == "accepted"
     self:Advance("INVITED")
     self:InvitedNotice()
     return true
@@ -505,14 +516,83 @@ function Queue:InvitedNotice()
     self.env.render()
 end
 
-function Queue:Busy(p, sender)
-    self:Log("queue invite", "busy")
+-- Refuses an OFFER. A paused pair answers DECLINED, a decision the
+-- coordinator honours with its own pair block instead of retrying.
+function Queue:Busy(p, sender, reason)
+    reason = reason or "BUSY"
+    self:Log("queue invite", reason == "BUSY" and "busy" or "declined")
     self.env.send({ kind = "CANCEL", session = self.session, peerSession = p.session, ticket = p.ticket,
-        reason = "BUSY" }, sender, nil)
+        reason = reason }, sender, nil)
+end
+
+-- Either side may have requeued (new session) after the other read its
+-- PROFILE. Until the pair is bound and planned, the ticket follows the peer's
+-- newest session: the invitee from the coordinator's OFFER or PROFILE, the
+-- coordinator from the invitee's PROFILE.
+function Queue:Rekey(session)
+    local t = self.ticket
+    if not t or t.plan or t.peerBound or t.peerSession == session
+        or self.state ~= (t.coordinator and "INVITING" or "INVITED") and self.state ~= "GROUPING" then return end
+    t.id, t.peerSession = ticketID(t.coordinator, t.ownSession, session), session
+    t.sentAt[t.coordinator and "OFFER" or "GROUP"] = nil
+    self:Log("queue invite", "rekeyed")
+end
+
+-- An OFFER that names an earlier session of ours: we requeued after the
+-- coordinator read our PROFILE. Our current PROFILE lets it re-key while its
+-- native invitation may still be open.
+function Queue:Reintroduce(sender)
+    local own, peer, now = self.ownProfile, self:PeerNamed(sender), self.env.now()
+    if not own or not peer or peer.guid >= own.guid or now - (self.reintroducedAt or -math.huge) < T.RETRY then return end
+    self.reintroducedAt = now
+    self:Log("queue invite", "session renewed")
+    self:Announce(sender, true)
+end
+
+function Queue:PeerNamed(name)
+    for _, peer in pairs(self.peers) do if peer.fullName == name then return peer end end
+end
+
+-- State of the native invitation from `guid`: "open", "accepted" or nil.
+-- Blizzard's dialog decides when it can be inspected (a declined, rescinded
+-- or expired invitation is void); otherwise a remembered PARTY_INVITE_REQUEST
+-- counts as open. `proven` (an OFFER from that player) also consults the
+-- dialog when this engine kept no record, e.g. after its own requeue.
+function Queue:PendingInvite(guid, proven)
+    local invite = self.pendingInvite
+    local remembered = invite ~= nil and invite.guid == guid and self.env.now() - invite.at < T.INVITE_RECOGNITION
+    if not remembered and not proven then return nil end
+    local native
+    if type(self.env.inviteOpen) == "function" then
+        local ok, state = pcall(self.env.inviteOpen, guid)
+        if ok then native = state end
+    end
+    if native == "open" or native == "accepted" then return native end
+    if native == false then
+        if remembered then self.pendingInvite = nil end
+        return nil
+    end
+    return remembered and "open" or nil
+end
+
+-- The player declined Blizzard's dialog (DeclineGroup), or the inviter
+-- rescinded it / it expired (`rescinded`, PARTY_INVITE_CANCEL). FrameXML's own
+-- PARTY_INVITE_CANCEL handler also hides the dialog through DeclineGroup, in
+-- either order within one frame, so the INVITED decision waits for the next
+-- pulse. `guid` is the inviter of the closed invitation when known.
+function Queue:InviteClosed(guid, rescinded)
+    local invite, t, now = self.pendingInvite, self.ticket, self.env.now()
+    if invite and (not guid or invite.guid == guid) then self.pendingInvite = nil end
+    if guid then self.closedInvite = { guid = guid, at = now } end
+    if t and self.state == "INVITED" and (guid == t.peer.guid or rescinded and t.inviteClosed) then
+        t.inviteClosed = t.inviteClosed or { at = now }
+        t.inviteClosed.rescinded = t.inviteClosed.rescinded or rescinded == true
+    end
 end
 
 function Queue:InviteRequest(guid)
     if type(guid) ~= "string" or not self.session then return end
+    if self.closedInvite and self.closedInvite.guid == guid then self.closedInvite = nil end
     local t = self.ticket
     if t then
         if t.peer.guid == guid and self.state == "INVITED" then
@@ -524,40 +604,61 @@ function Queue:InviteRequest(guid)
         return
     end
     if self.state ~= "SEARCHING" and self.state ~= "PAUSED" then return end
+    self.pendingInvite = { guid = guid, at = self.env.now() }
     local peer = self.peers[guid]
-    if not peer then self.pendingInvite = { guid = guid, at = self.env.now() }; return end
-    self:Invited(peer, peer.session .. "." .. self.session, true)
+    if peer then self:ResolveInvite(peer, "open") end
+end
+
+-- Binds a native invitation from a known queue peer. The newest of its
+-- PROFILE and a remembered OFFER names the coordinator's current session.
+function Queue:ResolveInvite(peer, native)
+    if self.ticket or not SEARCH_STATES[self.state] then return end
+    local offer = self.pendingOffer
+    self:Invited(peer, offer and offer.sender == peer.fullName and offer.at >= peer.lastSeen
+        and offer.packet.session or peer.session, native)
 end
 
 function Queue:ReceiveOffer(p, sender)
-    if p.peerSession ~= self.session or p.ticket ~= p.session .. "." .. p.peerSession then return end
-    local peer
-    for _, entry in pairs(self.peers) do if entry.fullName == sender then peer = entry end end
-    if not peer or peer.session ~= p.session then
-        -- A whispered OFFER can overtake the PROFILE it depends on.
-        if not peer then self.pendingOffer = { packet = p, sender = sender, at = self.env.now() } end
+    if not self.session or p.ticket ~= p.session .. "." .. p.peerSession then return end
+    local t = self.ticket
+    local mine = t and t.peer.fullName == sender and not t.coordinator
+    if p.peerSession ~= self.session then
+        if not t or mine and not t.plan then self:Reintroduce(sender) end
         return
     end
-    local t = self.ticket
-    if t then
-        if t.peer.guid == peer.guid and not t.coordinator then
-            -- Before the group exists the OFFER names the coordinator's
-            -- actual session tuple; later OFFERs for another ticket are stale.
-            if self.state == "INVITED" then t.id, t.peerSession = p.ticket, p.session end
-            return
-        end
-        return self:Busy(p, sender)
+    if mine then return self:Rekey(p.session) end
+    if t then return self:Busy(p, sender) end
+    local peer = self:PeerNamed(sender)
+    if not peer or peer.session ~= p.session then
+        -- A whispered OFFER can overtake the PROFILE it depends on (discovery
+        -- uses the background lane), also right after the coordinator requeued.
+        self.pendingOffer = { packet = p, sender = sender, at = self.env.now() }
+        return
     end
-    local seen = self.pendingInvite and self.pendingInvite.guid == peer.guid
-    if (self.state == "SEARCHING" or self.state == "PAUSED") and self:Invited(peer, p.ticket, seen) then return end
-    return self:Busy(p, sender)
+    if not SEARCH_STATES[self.state] then return self:Busy(p, sender) end
+    -- An OFFER slower than its native invitation: once that invitation was
+    -- declined, rescinded or expired, the coordinator's CANCEL follows.
+    local closed = self.closedInvite
+    if closed and closed.guid == peer.guid and self.env.now() - closed.at < T.INVITE_RECOGNITION then return end
+    local native = self:PendingInvite(peer.guid, true)
+    local ok, code = self:Invited(peer, p.session, native)
+    if ok then return end
+    if code ~= "BLOCKED" then return self:Busy(p, sender) end
+    -- A paused pair (block expiry differs by the CANCEL latency): the OFFER
+    -- proves the open invitation is this void match, so it is declined.
+    if native == "open" and type(self.env.declineInvite) == "function" then
+        self.env.declineInvite(peer)
+        self:Notify("info", FD.Locale:Format("Declined the group invitation from %s: this pairing is paused for two minutes after its last cancellation.", peer.fullName))
+    end
+    return self:Busy(p, sender, "DECLINED")
 end
 
 function Queue:ResolvePending(peer)
-    local now = self.env.now()
-    local invite, offer = self.pendingInvite, self.pendingOffer
-    if invite and invite.guid == peer.guid and now - invite.at < T.INVITE_RECOGNITION then self:InviteRequest(peer.guid) end
-    if offer and offer.sender == peer.fullName and now - offer.at < T.INVITE_RECOGNITION and not self.ticket then
+    local native = self:PendingInvite(peer.guid)
+    if native then return self:ResolveInvite(peer, native) end
+    local offer = self.pendingOffer
+    if offer and offer.sender == peer.fullName and offer.packet.session == peer.session
+        and self.env.now() - offer.at < T.INVITE_RECOGNITION and not self.ticket then
         self.pendingOffer = nil
         self:ReceiveOffer(offer.packet, offer.sender)
     end
@@ -592,6 +693,8 @@ function Queue:Receive(p, sender)
         local peer = FD.Copy(p); peer.fullName, peer.lastSeen = sender, now
         peer.kind, peer.protocolVersion = nil, nil
         self.peers[p.guid] = peer
+        local t = self.ticket
+        if t and t.peer.guid == p.guid and t.peer.fullName == sender then return self:Rekey(p.session) end
         return self:ResolvePending(peer)
     end
     local t = self.ticket
@@ -865,6 +968,13 @@ function Queue:Tick()
         if group == "EXACT" then self:GroupFormed(t)
         elseif group == "CHANGED" then return self:Finish("GROUP_CHANGED") end
         if self.ticket ~= t then return end
+        -- Declining Blizzard's dialog is the invitee's decision even when the
+        -- coordinator's CANCEL is lost; a rescinded one waits for that CANCEL.
+        local closed = t.inviteClosed
+        if self.state == "INVITED" and closed and not closed.rescinded and now > closed.at then
+            self:Log("queue invite", "declined locally")
+            return self:Finish("DECLINED")
+        end
     elseif not self:CheckGroup(t, group) then return end
     if self.state == "TRAVELLING" or self.state == "READY" then return self:Travel(t, now) end
     self:Retransmit(t, now)
@@ -881,11 +991,14 @@ function Queue:Verdict(reason, received, noRequeue)
         local presence = self:ArrivalVerdict()
         verdict.requeue, verdict.cooldown = presence == "arrived", presence == "absent"
     elseif reason == "CANCELLED" then
-        verdict.requeue, verdict.block = received, received and t ~= nil
+        -- The pair block is symmetric: a leaver that rejoins must not keep
+        -- inviting the player that now refuses it.
+        verdict.requeue, verdict.block = received, t ~= nil
     elseif reason == "GROUP_TIMEOUT" and t and not t.coordinator then
         -- Only an invitee that was shown the invitation and never joined
-        -- decided not to accept.
-        if t.inviteSeen and not t.groupAt then verdict.block, verdict.decided = true, true
+        -- decided not to accept; a rescinded invitation is no decision.
+        if t.inviteSeen and not t.groupAt and not (t.inviteClosed and t.inviteClosed.rescinded) then
+            verdict.block, verdict.decided = true, true
         else verdict.requeue, verdict.retry = true, true end
     elseif class == "decision" then
         verdict.requeue, verdict.block = true, t ~= nil
@@ -947,7 +1060,8 @@ function Queue:Finish(reason, options)
     self.reason = self:CancelText(reason, received, verdict, t and t.peer.fullName)
     self.cancel.text, self.cleanupStatus = self.reason, nil
     self:Log("queue cancel", reason, from, received and "received" or "local", outcome)
-    self:Notify(reason == "FINISHED" and "finished" or "cancel", self.reason)
+    -- The player's own leave needs no chat line, sound or window.
+    if reason ~= "CANCELLED" or received then self:Notify(reason == "FINISHED" and "finished" or "cancel", self.reason) end
     self.env.clearWaypoint()
     self.requeueWait = verdict.requeue and self.queuedAt or nil
     if not t then return self:End() end
@@ -996,7 +1110,7 @@ end
 function Queue:End()
     local wait = self.requeueWait
     self.ticket, self.session, self.ownProfile, self.queuedAt, self.requeueWait = nil, nil, nil, nil, nil
-    self.pendingOffer, self.pendingInvite, self.loadingAt = nil, nil, nil
+    self.pendingOffer, self.pendingInvite, self.closedInvite, self.loadingAt = nil, nil, nil, nil
     self:Enter("IDLE")
     if wait then
         local ok, reason = self:Join(wait, true)

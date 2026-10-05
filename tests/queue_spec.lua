@@ -69,7 +69,16 @@ return function(_, equal, newNamespace)
                 self:roster(c)
             elseif c.inviting then
                 local target = c.inviting
-                if target.pending and target.pending.from == c then target.pending = nil end
+                if target.pending and target.pending.from == c then
+                    local seen = target.pending.seen
+                    target.pending = nil
+                    -- PARTY_INVITE_CANCEL on the invitee.
+                    if seen then
+                        self:at(0.2, function()
+                            target.queue:Run(function() target.queue:InviteClosed(c.profile.guid, true) end)
+                        end)
+                    end
+                end
                 c.inviting = nil
                 c.rescinded = (c.rescinded or 0) + 1
                 self:roster(c)
@@ -80,10 +89,17 @@ return function(_, equal, newNamespace)
                 self:form(inviter, invitee)
             end
         end
-        function w:decline(invitee, inviter)
+        -- `own`: the addon declined through Blizzard's dialog after it had
+        -- already forgotten the invitation, so the DeclineGroup hook names no
+        -- inviter (QueueWow:DeclineInvite).
+        function w:decline(invitee, inviter, own)
             if not invitee.pending or invitee.pending.from ~= inviter then return end
+            local seen = invitee.pending.seen
             invitee.pending, inviter.inviting = nil, nil
             self:roster(inviter)
+            if seen then
+                invitee.queue:Run(function() invitee.queue:InviteClosed(not own and inviter.profile.guid or nil) end)
+            end
             self:at(0.3, function()
                 inviter.queue:Run(function() inviter.queue:SystemMessage("DECLINED:" .. invitee.profile.fullName) end)
             end)
@@ -102,6 +118,9 @@ return function(_, equal, newNamespace)
         end
         for index = 1, options.count or 2 do
             local fd = newNamespace()
+            -- The real PARTY acceptance rule (exact ticket tuple and sender,
+            -- or an OFFER naming our session) filters every PARTY delivery.
+            assert(loadfile("ForeverDuel/QueueTransport.lua"))("ForeverDuel", fd)
             local c = { fd = fd, index = index, options = options.players and options.players[index] or {},
                 nonceCounter = 0, invited = 0, challenged = 0, leaves = 0, autoAccepted = 0, declined = 0,
                 waypoints = 0, cleared = 0, ratingCalls = 0, logs = {}, notices = {}, errors = 0,
@@ -135,10 +154,13 @@ return function(_, equal, newNamespace)
                         w.dropped.party = (w.dropped.party or 0) + 1
                         return
                     end
+                    local packet = assert(target.fd.QueueProtocol:Decode(payload))
+                    if channel == "PARTY" and not target.fd.QueueTransport:PartyAccepts(packet, c.profile.fullName, target.queue) then
+                        w.dropped.partyFilter = (w.dropped.partyFilter or 0) + 1
+                        return
+                    end
                     message.delivered = true
-                    target.queue:Run(function()
-                        target.queue:Receive(assert(target.fd.QueueProtocol:Decode(payload)), c.profile.fullName)
-                    end)
+                    target.queue:Run(function() target.queue:Receive(packet, c.profile.fullName) end)
                 end)
                 return true
             end
@@ -237,11 +259,17 @@ return function(_, equal, newNamespace)
                     c.autoAccepted = c.autoAccepted + 1
                     w:at(0.1, function() w:accept(c, byGUID(peer.guid)) end)
                 end,
+                inviteOpen = function(guid)
+                    local inviter = byGUID(guid)
+                    if c.pending and c.pending.from == inviter and c.pending.seen then return "open" end
+                    if c.group and inviter and inviter.group == c.group then return "accepted" end
+                    return false
+                end,
                 declineInvite = function(peer)
                     local inviter = byGUID(peer.guid)
                     if c.pending and c.pending.from == inviter and c.pending.seen then
                         c.declined = c.declined + 1
-                        w:decline(c, inviter)
+                        w:decline(c, inviter, true)
                     end
                 end,
                 inviteNotice = function(message, peer)
@@ -474,6 +502,73 @@ return function(_, equal, newNamespace)
     w:reach("TRAVELLING", 20)
     eq(w:count("OFFER", w.a) >= 2, true, "OFFER repeated until the invitee's GROUP arrived")
     eq(w.a.queue.cancel, nil, "no cancellation")
+    eq(w:count("OFFER", w.a, "PARTY") >= 1, true, "the grouped invitee bound from an OFFER over PARTY")
+    w:noRatings()
+
+    scenario = "invitee keyed from a stale coordinator session re-keys over PARTY"
+    -- The coordinator requeued with a new session; the invitee still holds the
+    -- older PROFILE and no whispered OFFER or PROFILE gets through.
+    w = world({ players = { [2] = { inviteLatency = 2, acceptDelay = 1 } } })
+    w.drop = function(packet, from, _, channel)
+        return from == w.a and channel == "WHISPER"
+            and (packet.kind == "OFFER" or packet.kind == "PROFILE" and w.a.queue.state ~= "SEARCHING")
+    end
+    w:join()
+    w:reach("INVITING", 10, { w.a })
+    w:advance(1) -- the last PROFILE A sent while searching has arrived
+    assert(w.b.queue.peers[w.a.profile.guid], "invitee knows the coordinator's PROFILE")
+    w.b.queue.peers[w.a.profile.guid].session = "dead-0001"
+    w:reach("INVITED", 10, { w.b })
+    eq(w.b.queue.ticket.id ~= w.a.queue.ticket.id, true, "the invitee's first ticket used the stale session")
+    w:reach("TRAVELLING", 30)
+    eq(w.b.queue.ticket.id, w.a.queue.ticket.id, "the coordinator's PARTY OFFER re-keyed the invitee's ticket")
+    eq(w:logged(w.b, "queue invite", "rekeyed"), true, "re-key logged without the ticket itself")
+    eq((w.dropped.partyFilter or 0) >= 1, true, "the real PARTY rule rejected the stale GROUP")
+    for _, c in ipairs({ w.a, w.b }) do eq(c.queue.cancel, nil, c.profile.fullName .. " never cancelled (no PEER_SILENT)") end
+    w:noRatings()
+
+    scenario = "the invitee requeued after the coordinator read its PROFILE"
+    -- B's own coordination failed and it requeued with a new session while
+    -- A's native invitation stayed open; B accepts it afterwards.
+    -- B's discovery PROFILEs are lost too, so only its reply to the stale
+    -- OFFER can tell A the new session.
+    w = world({ players = { [2] = { acceptDelay = 2 } } })
+    local muted = false
+    w.drop = function(packet, from, _, channel)
+        if from == w.b then return muted and packet.kind == "PROFILE" and w.b.queue.state == "SEARCHING" end
+        return from == w.a and channel == "WHISPER" and (packet.kind == "OFFER" or packet.kind == "PROFILE" and w.now < 4)
+    end
+    w:join()
+    w:reach("INVITING", 10, { w.a })
+    muted = true
+    w:advance(0.5)
+    eq(w.b.queue.pendingInvite ~= nil and w.b.queue.ticket == nil, true, "the invitation arrived before A's PROFILE")
+    local oldSession = w.b.queue.session
+    w.b.queue.requeueWait = w.b.queue.queuedAt
+    w.b.queue:End()
+    eq(w.b.queue.session ~= oldSession and w.b.queue.state == "SEARCHING", true, "B requeued with a new session")
+    w:reach("TRAVELLING", 40)
+    eq(w.a.queue.ticket.id, w.b.queue.ticket.id, "A re-keyed to B's current session")
+    eq(w:logged(w.b, "queue invite", "session renewed"), true, "B answered the stale OFFER with its current PROFILE")
+    eq(w:logged(w.a, "queue invite", "rekeyed"), true, "the coordinator re-keyed from that PROFILE")
+    for _, c in ipairs({ w.a, w.b }) do eq(c.queue.cancel, nil, c.profile.fullName .. " never cancelled (no PEER_SILENT)") end
+    w:noRatings()
+
+    scenario = "an OFFER newer than the stored PROFILE waits for it"
+    w = world({ whisperLatency = function(packet, from) return from.index == 1 and packet.kind == "OFFER" and 2 or 0.5 end,
+        players = { [2] = { inviteLatency = 3 } } })
+    w.drop = function(packet, from, _, channel)
+        return from == w.a and channel == "WHISPER" and packet.kind == "PROFILE" and w.a.queue.state ~= "SEARCHING"
+    end
+    w:join()
+    w:reach("INVITING", 10, { w.a })
+    w:advance(1)
+    w.b.queue.peers[w.a.profile.guid].session = "dead-0001"
+    w:advance(1.5)
+    eq(w.b.queue.pendingOffer ~= nil, true, "the OFFER naming a newer coordinator session is remembered")
+    w:reach("INVITED", 5, { w.b })
+    eq(w.b.queue.ticket.id, w.a.queue.ticket.id, "the native invitation binds with the OFFER's session")
+    w:reach("TRAVELLING", 20)
     w:noRatings()
 
     scenario = "group roster lag: party1 GUID after member count"
@@ -526,12 +621,84 @@ return function(_, equal, newNamespace)
     eq(w.a.queue.blocked[w.b.profile.guid] ~= nil, true, "decline blocks this pair briefly")
     w:advance(2)
     eq(w.b.queue.state, "SEARCHING", "decliner stays in the queue for other opponents")
-    eq(w.b.queue.cancel.reason, "DECLINED", "decliner receives the reason")
-    eq(w.b.queue.cancel.received, true, "decliner sees it as the opponent client's message")
+    eq(w.b.queue.cancel.reason, "DECLINED", "the decliner's match ends as DECLINED")
+    eq(w.b.queue.blocked[w.a.profile.guid] ~= nil, true, "the decliner pauses the pair too")
     w:advance(60)
     eq(w.a.invited, 1, "blocked pair is not invited again within two minutes")
     eq(w.a.queue.queuedAt, BASE + 0, "original wait preserved on requeue")
     w:noRatings()
+
+    scenario = "a declined dialog ends INVITED even when the coordinator's CANCEL is lost"
+    w = world({ players = { [2] = { inviteResponse = "decline", acceptDelay = 4 } } })
+    w.drop = function(packet, from) return from == w.a and packet.kind == "CANCEL" end
+    w:join()
+    w:reach("INVITED", 10, { w.b })
+    w:advance(6)
+    eq(w.b.queue.cancel and w.b.queue.cancel.reason, "DECLINED", "the invitee's own decline ends its match")
+    eq(w.b.queue.cancel.received, false, "decided on this client")
+    eq(w.b.queue.state, "SEARCHING", "the decliner stays in the queue for other opponents")
+    eq(w.b.queue.blocked[w.a.profile.guid] ~= nil, true, "the decliner pauses this pair")
+    eq(w:logged(w.b, "queue invite", "declined locally"), true, "local decline logged")
+    eq(w.a.queue.cancel and w.a.queue.cancel.reason, "DECLINED", "the coordinator saw the decline natively")
+    w:noRatings()
+
+    scenario = "a rescinded invitation is never the invitee's decision"
+    w = world({ pendingInviterGroup = true, players = { [2] = { inviteResponse = "ignore" } } })
+    w.drop = function(packet, from) return from == w.a and (packet.kind == "CANCEL" or packet.kind == "LEAVE") end
+    w:join()
+    w:reach("INVITED", 10, { w.b })
+    w.a.queue:Leave()
+    w:advance(3)
+    eq(w.a.rescinded, 1, "the leaving coordinator rescinded its invitation")
+    eq(w.b.queue.state, "INVITED", "a rescinded invitation waits for the coordinator's CANCEL")
+    w:reach("SEARCHING", 70, { w.b })
+    eq(w.b.queue.cancel.reason, "GROUP_TIMEOUT", "the lost CANCEL ends at the invitation deadline")
+    eq(w.b.queue.blocked[w.a.profile.guid], nil, "no pair block for a rescinded invitation")
+    eq(w.b.queue.reason:find("did not accept", 1, true), nil, "the invitee is not told it failed to accept")
+    w:noRatings()
+
+    scenario = "a paused pair answers DECLINED instead of BUSY"
+    w = world()
+    w:travel()
+    w.a.queue:Leave()
+    w:advance(4)
+    eq(w.a.queue.blocked[w.b.profile.guid] ~= nil, true, "the leaver pauses the pair too")
+    eq(w.b.queue.blocked[w.a.profile.guid] ~= nil, true, "the remaining player pauses the pair")
+    eq(w.a.queue:Join(), true, "the leaver rejoins")
+    w:advance(30)
+    eq(w.a.invited, 1, "the paused pair is not invited again")
+    -- Both blocks are epoch based but start one CANCEL latency apart: the
+    -- side whose pause ends first may still offer once.
+    w.a.queue.blocked = {}
+    w:advance(8)
+    eq(w.a.invited, 2, "the coordinator whose pause ended invites once")
+    eq(w.a.queue.cancel and w.a.queue.cancel.reason, "DECLINED", "the still-paused invitee refuses with a decision")
+    eq(w.a.queue.blocked[w.b.profile.guid] ~= nil, true, "the coordinator pauses the pair again instead of retrying")
+    eq(w.b.declined, 1, "the void native invitation is declined on the paused side")
+    local told = false
+    for _, notice in ipairs(w.b.notices) do
+        if notice.event == "info" and notice.text:find("paused for two minutes", 1, true) then told = true end
+    end
+    eq(told, true, "the paused player is told why the invitation was declined")
+    eq(w.b.queue.state, "SEARCHING", "the paused player keeps searching")
+    eq(w.b.view.grouped, false, "no group forms for the paused pair")
+    w:advance(30)
+    eq(w.a.invited, 2, "no retry loop of raw invitations")
+    w:noRatings()
+
+    scenario = "the player's own leave is quiet"
+    w = world()
+    w:travel()
+    local before = #w.a.notices
+    w.a.queue:Leave()
+    w:advance(1)
+    eq(#w.a.notices, before, "no cancellation notice, sound or window for the player's own leave")
+    eq(w.a.queue.cancel.reason, "CANCELLED", "the leave is still recorded with its reason")
+    eq(w.b.notices[#w.b.notices].event, "cancel", "the opponent is notified")
+    w = world()
+    eq(w.a.queue:Join(), true, "joined")
+    w.a.queue:Leave()
+    eq(#w.a.notices, 0, "a ticket-less leave is quiet too")
 
     scenario = "auto-accept setting"
     w = world({ players = { [2] = { inviteResponse = "ignore" } } })

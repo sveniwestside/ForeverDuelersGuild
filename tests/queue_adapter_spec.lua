@@ -295,6 +295,26 @@ return function(_, equal)
     local regionalPeer = { guid = c.peer.guid, fullName = "Beta Brave" }
     equal(wow:InviteNotice("Beta declines your group invitation.", regionalPeer), "DECLINED", "surname first name matched")
 
+    -- Native invitation liveness: a declined, rescinded or expired
+    -- invitation is never announced or accepted late.
+    wow:InviteRequested(c.peer.guid)
+    c.popupShown, c.popup.inviteAccepted = true, nil
+    equal(wow:InviteOpen(c.peer.guid), "open", "a visible dialog keeps the invitation open")
+    equal(wow:InviteOpen("Player-1-00000003"), false, "another inviter has no open invitation")
+    c.popupShown = false
+    equal(wow:InviteOpen(c.peer.guid), false, "a closed dialog voids the invitation")
+    local acceptedBefore = c.accepted
+    wow:AcceptInvite(c.peer); c:advance(0.1)
+    equal(c.accepted, acceptedBefore, "auto-accept never answers a closed dialog")
+    equal(adapter.inviteOpen(c.peer.guid), false, "queue environment exposes invitation liveness")
+    equal(wow:InviteClosed(true), c.peer.guid, "the AcceptGroup hook marks the invitation accepted")
+    equal(wow:InviteOpen(c.peer.guid), "accepted", "an accepted invitation stays bindable")
+    equal(wow:DeclineInvite(c.peer), false, "an accepted invitation is never declined")
+    wow:InviteRequested(c.peer.guid)
+    equal(wow:InviteClosed(false), c.peer.guid, "DeclineGroup and PARTY_INVITE_CANCEL name the closed inviter")
+    equal(wow:InviteOpen(c.peer.guid), false, "a declined invitation is forgotten")
+    equal(wow:InviteClosed(false), nil, "nothing is pending afterwards")
+
     -- GUID-based group classification: names never decide.
     equal(wow:GroupState(c.peer), "SOLO", "readable native solo state")
     c.grouped, c.count = true, 2
@@ -575,7 +595,9 @@ return function(_, equal)
     equal(kept, captured.id, "new place keeps its own ID")
     equal(#native:Catalog(), 1, "stored verified place available to matching")
     equal(native:StoreVenue(captured), true, "same stable place can replace saved metadata")
+    native:StoreVenue(captured)
     equal(#native:Catalog(), 1, "stable venue ID prevents duplicates")
+    equal(#tested.FD.Database.data.settings.queue.venues, 1, "re-saving one ID replaces the stored record instead of appending")
     local larger = tested.FD.Copy(captured)
     larger.id, larger.mapX = "test-37-50000010-50000000-a", 0.5000001
     stored, kept = native:StoreVenue(larger)
@@ -588,6 +610,8 @@ return function(_, equal)
     equal(kept, smaller.id, "the smaller ID of one spot wins on every client")
     equal(#native:Catalog(), 1, "the replaced record is removed")
     equal(native:Catalog()[1].id, smaller.id, "catalog converges on the smaller ID")
+    native:StoreVenue(larger)
+    equal(#tested.FD.Database.data.settings.queue.venues, 1, "a partner's merged record shared back adds no copy")
     local far = tested.FD.Copy(captured)
     far.id, far.mapX = "test-37-60000000-50000000-a", 0.6
     native:StoreVenue(far)

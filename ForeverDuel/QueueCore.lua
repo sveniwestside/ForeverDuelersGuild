@@ -10,6 +10,7 @@ function FD:InitializeQueue()
     if self.queue or not self.Queue or not self.QueueWow or not self.QueueTransport then return end
     self.QueueTransport:Initialize()
     self.queue = self.Queue:New(self.QueueWow:Environment())
+    self.QueueWow:InstallHooks()
     local function pulse()
         if self.queueStopped then return end
         self.queue:Run(function() self.queue:Tick() end)
@@ -54,6 +55,11 @@ FD:OnEvent("PARTY_INVITE_REQUEST", function(...)
     run(function()
         if FD.QueueWow:InviteRequested(guid) then FD.queue:InviteRequest(guid) end
     end)
+end, false, true)
+-- The inviter rescinded the invitation or it expired (pinned PartyInfo
+-- documentation; FrameXML hides the dialog). A late PROFILE must not revive it.
+FD:OnEvent("PARTY_INVITE_CANCEL", function()
+    run(function() FD.queue:InviteClosed(FD.QueueWow:InviteClosed(false), true) end)
 end, false, true)
 -- Group formation and cleanup react to the roster at once; travel checks
 -- keep their one-second sampling pulse.

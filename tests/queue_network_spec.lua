@@ -51,7 +51,7 @@ return function(_, equal)
     eq(#a.sounds > 0 and #b.sounds > 0, true, "sounds played for queue milestones")
     w:advance(30)
     eq(a.FD.queue.state, "READY", "READY is stable over time")
-    local party, throttled = 0, a.throttled + b.throttled
+    local party = 0
     for _, record in ipairs(w:sentKinds(a, Q2)) do
         if record.channel == "PARTY" and record.at > w.now - 30 then party = party + 1 end
     end
@@ -80,7 +80,24 @@ return function(_, equal)
     local chain = table.concat(states, ">")
     eq(chain:find("INVITING>GROUPING>PLANNING>TRAVELLING>READY>DUEL>CLEANUP>IDLE", 1, true) ~= nil, true,
         "persisted queue lifecycle shows the invite-first path: " .. chain)
-    eq(throttled >= 0, true, "throttle model active")
+
+    scenario = "throttled PARTY state changes are retried"
+    w = newWorld({ throttle = true, partyLatency = 0.5 })
+    a, b = w:client(), w:client()
+    w:venue({ a, b })
+    a:command("queue join"); b:command("queue join")
+    w:reach("GROUPING", 30, { a })
+    -- Other traffic exhausted the coordinator's per-prefix allowance.
+    a.tokens[Q2] = { tokens = -3, at = w.now }
+    w:reach("TRAVELLING", 40, { a, b })
+    eq(a.throttled > 0, true, "the per-prefix throttle rejected PARTY sends (" .. a.throttled .. ")")
+    local rejected, retried = {}, false
+    for _, record in ipairs(w:sentKinds(a, Q2)) do
+        if record.channel == "PARTY" and record.result == 3 then rejected[record.kind] = true
+        elseif record.channel == "PARTY" and record.result == 0 and rejected[record.kind] then retried = true end
+    end
+    eq(retried, true, "a throttled PARTY packet was sent again once the allowance refilled")
+    eq(a.FD.queue.ticket.plan.deadline, b.FD.queue.ticket.plan.deadline, "the plan survived the throttle")
 
     for _, latency in ipairs({ 5, 10 }) do
         scenario = "pairing at " .. latency .. " s whisper latency with loss"
@@ -198,4 +215,142 @@ return function(_, equal)
     w:reach("TRAVELLING", 40, { a, b })
     eq(a.FD.queue.ticket.plan.venue.id, "shared-spot", "only the place both clients hold is planned")
     eq(b.FD.queue.ticket.plan.venue.id, "shared-spot", "the invitee travels to the same place")
+
+    local function logged(client, event, detail)
+        for _, entry in ipairs(client.FD.Debug:RequestTrace(256, "lifecycle")) do
+            if entry.event == event and entry.detail:find(detail, 1, true) then return true end
+        end
+        return false
+    end
+    for _, latency in ipairs({ 3, 10 }) do
+        scenario = "quick decline, then an immediate re-offer to a third client at " .. latency .. " s"
+        -- Alpha invites Gamma, Gamma declines, Alpha requeues with a new
+        -- session and at once invites Beta, whose copy of Alpha's PROFILE
+        -- still names the old session. Beta and Gamma cannot pair.
+        w = newWorld({ whisperLatency = latency, partyLatency = 0.5 })
+        a = w:client({ level = 30 })
+        b = w:client({ level = 26, acceptDelay = 2 })
+        c = w:client({ level = 34, inviteResponse = "decline", acceptDelay = 0.5 })
+        w:venue({ a, b, c })
+        c:command("queue join"); w:advance(3)
+        b:command("queue join"); a:command("queue join")
+        w:reach("TRAVELLING", 90, { a, b })
+        eq(a.FD.queue.ticket.id, b.FD.queue.ticket.id, "Alpha and Beta share one ticket")
+        eq(a.FD.queue.ticket.plan.deadline, b.FD.queue.ticket.plan.deadline, "one travel deadline")
+        eq(a.FD.queue.cancel and a.FD.queue.cancel.reason, "DECLINED", "the decline ended the first offer")
+        eq(b.FD.queue.cancel, nil, "Beta never cancelled (no PEER_SILENT)")
+        eq(a.leaves + b.leaves, 0, "the accepted group is kept")
+        if latency == 10 then eq(logged(b, "queue invite", "rekeyed"), true, "Beta re-keyed from the stale session") end
+        eq(c:printed("Accept the group invitation"), false, "the declined invitation is never announced late")
+        eq(c.acceptGroups or 0, 0, "the declined invitation is never accepted")
+        eq(c.FD.queue.state, "SEARCHING", "Gamma keeps searching")
+    end
+
+    -- Four searchers with random 0-10 s whispers, 10 % loss, the throttle,
+    -- lagging rosters and some players who decline: requeues on both sides
+    -- of an invitation must never strand a formed group (PEER_SILENT).
+    local seed = 7
+    local function random()
+        seed = (seed * 1103515245 + 12345) % 2147483648
+        return seed / 2147483648
+    end
+    for round = 1, 6 do
+        scenario = "four searchers under loss and requeues, round " .. round
+        w = newWorld({ whisperLatency = function() return random() * 10 end,
+            partyLatency = function() return 0.2 + random() end, loss = 0.1, throttle = true,
+            rosterLag = 1, guidLag = 1, nameLag = 2 })
+        local list, silent = {}, {}
+        for i = 1, 4 do
+            local client = w:client({ level = 28 + i, acceptDelay = 0.5 + random() * 4,
+                inviteResponse = (round + i) % 3 == 0 and "decline" or "accept" })
+            list[i] = client
+            -- Every outcome, not only the bounded diagnostic ring.
+            local env = client.FD.queue.env
+            local log = env.log
+            env.log = function(topic, reason, ...)
+                if topic == "queue cancel" and reason == "PEER_SILENT" then silent[client.name] = true end
+                return log(topic, reason, ...)
+            end
+        end
+        w:venue(list)
+        for i = 1, 4 do list[i]:command("queue join"); w:advance(random() * 3) end
+        w:advance(240)
+        local ready = 0
+        for _, client in ipairs(list) do
+            eq(client.FD.queue.lastErrorAt, nil, client.name .. " had no queue error")
+            eq(silent[client.name], nil, client.name .. " never stranded in a group (PEER_SILENT)")
+            if client.FD.queue.state == "READY" then ready = ready + 1 end
+        end
+        eq(ready >= 2, true, "at least one pair reached the meeting place (" .. ready .. " ready)")
+    end
+
+    scenario = "a late PROFILE never revives a declined or rescinded invitation"
+    w = newWorld({ whisperLatency = 10, partyLatency = 0.5 })
+    a = w:client()
+    c = w:client({ inviteResponse = "decline", acceptDelay = 0.5 })
+    w:venue({ a, c })
+    c:command("queue join"); w:advance(3); a:command("queue join")
+    local declinedAt, invitedAt
+    for _ = 1, 200 do
+        w:advance(0.25)
+        if not declinedAt and (c.inviteEvents or 0) > 0 and not c.popup then declinedAt = w.now end
+        if not invitedAt and c.FD.queue.state == "INVITED" then invitedAt = w.now end
+    end
+    eq(declinedAt ~= nil, true, "the invitation was declined in Blizzard's dialog")
+    eq(invitedAt, nil, "the invitee never enters INVITED for a declined invitation")
+    eq(c:printed("Accept the group invitation"), false, "no stale accept prompt")
+    eq(#c.sounds, 0, "no stale invitation sound")
+    eq(c.queueShown, 1, "the window opened only for the join")
+    eq(a.FD.queue.cancel and a.FD.queue.cancel.reason, "DECLINED", "the coordinator saw the decline")
+    w = newWorld({ whisperLatency = 10, partyLatency = 0.5 })
+    a = w:client()
+    c = w:client({ inviteResponse = "ignore" })
+    w:venue({ a, c })
+    c:command("queue autoaccept on")
+    c:command("queue join"); w:advance(3); a:command("queue join")
+    for _ = 1, 120 do
+        w:advance(0.25)
+        if c.popup then break end
+    end
+    eq(c.popup ~= nil and c.FD.queue.state == "SEARCHING", true, "the invitation arrived before the inviter's PROFILE")
+    -- The inviter rescinds: PARTY_INVITE_CANCEL hides Blizzard's dialog.
+    c.pending = nil
+    c.env.StaticPopup_Hide("PARTY_INVITE")
+    c:emit("PARTY_INVITE_CANCEL")
+    w:advance(30)
+    eq(c.acceptGroups or 0, 0, "auto-accept never answers a rescinded invitation")
+    eq(c:printed("Accept the group invitation"), false, "a rescinded invitation is never announced")
+
+    scenario = "pair block after a voluntary leave is symmetric"
+    w = newWorld()
+    a, b = w:client(), w:client()
+    w:venue({ a, b })
+    a:command("queue join"); b:command("queue join")
+    w:reach("TRAVELLING", 40, { a, b })
+    a:command("queue leave")
+    w:advance(5)
+    eq(a.FD.queue.state, "IDLE", "the leaver is idle")
+    eq(b.FD.queue.state, "SEARCHING", "the other player searches again")
+    eq(a.FD.queue.blocked[b.guid] ~= nil, true, "the leaver pauses the pair as well")
+    eq(b.FD.queue.blocked[a.guid] ~= nil, true, "the remaining player pauses the pair")
+    local invites, events = a.invites, b.inviteEvents or 0
+    a:command("queue join")
+    w:advance(100)
+    eq(a.invites, invites, "a rejoining leaver never invites the paused pair")
+    eq((b.inviteEvents or 0) - events, 0, "no raw invitation without queue context")
+    eq(a.FD.queue.state, "SEARCHING", "the leaver keeps searching")
+    w:reach("TRAVELLING", 60, { a, b })
+    eq(a.invites, invites + 1, "the pair matches again once the pause has expired")
+
+    scenario = "a voluntary leave while searching"
+    w = newWorld()
+    a = w:client()
+    w:venue({ a })
+    a:command("queue join")
+    local shown, lines = a.queueShown, #a.prints
+    a:command("queue leave")
+    eq(a.FD.queue.state, "IDLE", "left the queue")
+    eq(#a.prints - lines, 1, "one chat line for the leave")
+    eq(#a.sounds, 0, "no cancellation sound for the player's own leave")
+    eq(a.queueShown, shown, "the queue window is not reopened")
 end

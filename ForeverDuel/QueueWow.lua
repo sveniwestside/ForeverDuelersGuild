@@ -240,6 +240,47 @@ function Wow:InviteRequested(guid)
     return guid
 end
 
+-- The invitation was answered in Blizzard's dialog (AcceptGroup/DeclineGroup
+-- hooks) or ended natively (PARTY_INVITE_CANCEL). A declined, rescinded or
+-- expired invitation is forgotten so it is never announced or accepted late.
+-- Returns the inviter GUID of the closed invitation.
+function Wow:InviteClosed(accepted)
+    local pending = self.pendingInviter
+    if not pending then return nil end
+    if accepted then pending.accepted = true else self.pendingInviter = nil end
+    return pending.guid
+end
+
+-- State of the native invitation from `guid`: "accepted", "open", false when
+-- it is gone, nil when the dialog cannot be inspected.
+function Wow:InviteOpen(guid)
+    local pending = self.pendingInviter
+    if not pending or pending.guid ~= guid or now() - pending.at > 60 then return false end
+    if pending.accepted then return "accepted" end
+    if type(StaticPopup_FindVisible) ~= "function" then return nil end
+    local ok, dialog = pcall(StaticPopup_FindVisible, "PARTY_INVITE")
+    if not ok or not readable(dialog) then return nil end
+    return dialog ~= nil and "open" or false
+end
+
+-- AcceptGroup and DeclineGroup are FrameXML-called globals (PARTY_INVITE
+-- dialog in the pinned GameDialogDefs.lua), feature-detected and hooked once.
+function Wow:InstallHooks()
+    if self.hooksInstalled or type(hooksecurefunc) ~= "function" then return end
+    self.hooksInstalled = true
+    local function closed(accepted)
+        return function()
+            if not FD.queue then return end
+            FD.queue:Run(function()
+                local guid = self:InviteClosed(accepted)
+                if not accepted then FD.queue:InviteClosed(guid) end
+            end)
+        end
+    end
+    if type(AcceptGroup) == "function" then pcall(hooksecurefunc, "AcceptGroup", closed(true)) end
+    if type(DeclineGroup) == "function" then pcall(hooksecurefunc, "DeclineGroup", closed(false)) end
+end
+
 -- Opt-in auto-accept for exactly the matched inviter. It runs on the next
 -- frame so Blizzard's dialog exists; marking it accepted first keeps its
 -- OnHide handler from declining. REQUIRES LIVE VERIFICATION: AcceptGroup is
@@ -247,11 +288,13 @@ end
 function Wow:AcceptInvite(peer)
     local function accept()
         local pending = self.pendingInviter
-        if type(peer) ~= "table" or not pending or pending.guid ~= peer.guid or now() - pending.at > 60
+        if type(peer) ~= "table" or not pending or pending.accepted or pending.guid ~= peer.guid or now() - pending.at > 60
             or type(AcceptGroup) ~= "function" or not self:Solo() then return false end
-        if not pcall(AcceptGroup) then return false end
-        self.pendingInviter = nil
         local dialog = type(StaticPopup_FindVisible) == "function" and call(StaticPopup_FindVisible, "PARTY_INVITE")
+        -- Only an invitation whose dialog is still open can be accepted.
+        if type(StaticPopup_FindVisible) == "function" and type(dialog) ~= "table" then return false end
+        if not pcall(AcceptGroup) then return false end
+        pending.accepted = true
         if type(dialog) == "table" then
             dialog.inviteAccepted = 1
             if type(StaticPopup_Hide) == "function" then pcall(StaticPopup_Hide, "PARTY_INVITE") end
@@ -269,7 +312,7 @@ end
 -- hiding Blizzard's dialog declines through its own OnHide handler.
 function Wow:DeclineInvite(peer)
     local pending = self.pendingInviter
-    if type(peer) ~= "table" or not pending or pending.guid ~= peer.guid then return false end
+    if type(peer) ~= "table" or not pending or pending.guid ~= peer.guid or pending.accepted then return false end
     self.pendingInviter = nil
     if self:GroupState(peer) == "EXACT" or type(StaticPopup_Hide) ~= "function" then return false end
     return pcall(StaticPopup_Hide, "PARTY_INVITE")
@@ -666,11 +709,13 @@ function Wow:StoreVenue(venue)
     local environment = self:VenueEnvironment(venues)
     local keep = venue
     for _, existing in ipairs(venues) do
-        if existing.id ~= venue.id and existing.id < keep.id and FD.Venues:SameSpot(existing, venue, environment) then keep = existing end
+        if existing.id < keep.id and FD.Venues:SameSpot(existing, venue, environment) then keep = existing end
     end
+    -- Every other record of this ID or spot goes, so a re-save replaces the
+    -- record (and its metadata) instead of appending a copy.
     for index = #venues, 1, -1 do
         local existing = venues[index]
-        if existing.id ~= keep.id and (existing.id == venue.id or FD.Venues:SameSpot(existing, venue, environment)) then
+        if existing ~= keep and (existing.id == venue.id or FD.Venues:SameSpot(existing, venue, environment)) then
             table.remove(venues, index)
         end
     end
@@ -813,6 +858,7 @@ function Wow:Environment()
         invite = function(peer) return self:Invite(peer) end,
         acceptInvite = function(peer) return self:AcceptInvite(peer) end,
         declineInvite = function(peer) return self:DeclineInvite(peer) end,
+        inviteOpen = function(guid) return self:InviteOpen(guid) end,
         inviteNotice = function(message, peer) return self:InviteNotice(message, peer) end,
         leave = function(peer) return self:Leave(peer) end,
         leaveGroup = function() return self:LeaveGroup() end,
