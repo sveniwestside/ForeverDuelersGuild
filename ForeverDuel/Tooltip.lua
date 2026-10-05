@@ -66,8 +66,9 @@ function Tooltip:AddRating(tooltip, data)
     if not readable(guid) or type(guid) ~= "string" or not FD.Protocol:ValidGUID(guid)
         or (expectedGUID and guid ~= expectedGUID) then return end
 
-    -- Presence is a self-report. Confirm both the visible GUID and the actual
-    -- transport name, so an unrelated sender cannot name someone else's GUID.
+    -- Presence is a self-report keyed by the sender name. Only an entry whose
+    -- claimed GUID this visible unit corroborates is shown; an unknown player
+    -- is asked for a profile on demand (rate limited inside Presence).
     local identity = FD.Wow:Identity(unit)
     if not readable(identity) or type(identity) ~= "table"
         or not readable(identity.guid, identity.fullName) or identity.guid ~= guid
@@ -75,7 +76,7 @@ function Tooltip:AddRating(tooltip, data)
     local record = FD.Presence:GetOwnPlayer()
     if not readable(record) then return end
     if type(record) ~= "table" or not readable(record.guid) or record.guid ~= guid then
-        record = FD.Presence:GetPlayer(guid) -- Cache read only; never sends on hover.
+        record = FD.Presence:Observe(unit, identity)
     end
     if not readable(record) or type(record) ~= "table"
         or not readable(record.guid, record.fullName, record.rating, record.level, record.maxLevel, record.bracket)
@@ -93,8 +94,8 @@ function Tooltip:AddRating(tooltip, data)
     -- Mark first so a reentrant callback or an error after insertion cannot
     -- duplicate this line. A native rebuild permits a fresh cache read.
     state.added = true
-    local mode = bracket == "MAX_LEVEL" and "Max level" or "Leveling"
-    tooltip:AddDoubleLine("Duel Rating (" .. mode .. ", Lv " .. record.level .. ")", tostring(rating), 1, 0.82, 0, 1, 1, 1)
+    local mode = bracket == "MAX_LEVEL" and FD.L["Max level"] or FD.L["Leveling"]
+    tooltip:AddDoubleLine(FD.Locale:Format("Duel Rating (%s, Lv %d)", mode, record.level), tostring(rating), 1, 0.82, 0, 1, 1, 1)
 end
 
 function Tooltip:Initialize()

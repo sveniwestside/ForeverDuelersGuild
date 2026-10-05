@@ -1,12 +1,14 @@
 return function(FD, equal)
     local env = setmetatable({}, { __index = _G })
     env._G = env
-    local state = { players = {}, queries = 0, challenges = {}, prints = {}, logs = {} }
+    local state = { players = {}, queries = 0, challenges = {}, prints = {}, logs = {}, now = 1000, refreshes = 0, wakes = 0 }
     local active = { state = "IN_PROGRESS", matchId = "preserve-duel" }
     FD.duel, FD.Debug = { active = active }, {}
     FD.Wow = { Readable = function() return true end }
     FD.Database:Initialize(nil, { guid = "Player-1-AAA", name = "Me", realm = "Realm", classFile = "MAGE", level = 30, maxLevel = 60 })
-    FD.Presence = {}
+    FD.Presence = { STALE = 45 }
+    function FD.Presence:RefreshNow() state.refreshes = state.refreshes + 1 end
+    function FD.Presence:Changed() state.wakes = state.wakes + 1 end
     function FD.Presence:GetOwnPlayer()
         if state.missingOwn then return nil end
         return { guid = "Player-1-AAA", rating = 1500, level = 30, maxLevel = 60, bracket = "LEVELING" }
@@ -17,8 +19,8 @@ return function(FD, equal)
         return FD.Database:Copy(state.players)
     end
     function FD.Presence:GetStatus() return state.status or "Discovering players in this zone..." end
-    function FD.Presence:Challenge(guid)
-        state.challenges[#state.challenges + 1] = guid
+    function FD.Presence:Challenge(name)
+        state.challenges[#state.challenges + 1] = name
         if state.failChallenge then error("challenge failed") end
         return state.challengeSuccess, "Move closer to the player and try again."
     end
@@ -55,6 +57,7 @@ return function(FD, equal)
         methods[name] = function() end
     end
     env.CreateFrame = function() return widget() end
+    env.GetTime = function() return state.now end
     env.UIParent = widget()
     env.UIParent:SetSize(1920, 1080)
     env.UISpecialFrames = {}
@@ -91,6 +94,11 @@ return function(FD, equal)
     equal(FD.Zone.previous.enabled, false, "empty page disables previous")
     equal(FD.Zone.next.enabled, false, "empty page disables next")
     equal(#state.challenges, 0, "opening browser does not initiate a duel")
+    equal(FD.Zone:IsShown(), true, "Presence can see that the browser is open")
+    equal(state.wakes, 1, "opening the browser starts a discovery pass")
+    click(FD.Zone.refresh)
+    equal(state.refreshes, 1, "the Refresh button asks Presence for an explicit refresh")
+    equal(#state.challenges, 0, "refreshing never initiates a duel")
     equal(env.UISpecialFrames[2], "ForeverDuelZone", "escape can close browser")
     click(FD.Zone.overview)
     equal(FD.Profile.frame:IsShown(), true, "return button opens overview")
@@ -102,7 +110,7 @@ return function(FD, equal)
     for index = 10, 1, -1 do
         state.players[#state.players + 1] = { guid = "Player-1-" .. index,
             fullName = string.format("Peer%02d-Realm", index), rating = 1500 + index, classFile = "MAGE",
-            level = 30, maxLevel = 60, bracket = "LEVELING" }
+            level = 30, maxLevel = 60, bracket = "LEVELING", lastSeen = state.now - (index == 2 and 50 or 10) }
     end
     state.status = "10 ForeverDuel players discovered."
     FD.Zone:Toggle()
@@ -111,6 +119,8 @@ return function(FD, equal)
     equal(FD.Zone.rows[1].rating.text, "1501", "row includes peer rating")
     equal(FD.Zone.rows[1].level.text, "Lv 30 / Leveling", "row includes level and rating mode")
     equal(FD.Zone.rows[1].name.color[2], 0.7, "row uses class color")
+    equal(FD.Zone.rows[1].seen.text, "", "a fresh entry has no last-seen note")
+    equal(FD.Zone.rows[2].seen.text, "last seen 50 s ago", "an entry older than 45 seconds is marked last seen")
     equal(FD.Zone.rows[8].name.text, "Peer08-Realm", "first page bounded to eight rows")
     equal(FD.Zone.pageLabel.text, "Page 1 / 2  /  10 of 10 players", "pagination includes total players")
     equal(FD.Zone.next.enabled, true, "next page available")
@@ -119,16 +129,16 @@ return function(FD, equal)
     equal(#state.challenges, 0, "rendering players does not initiate a duel")
     click(FD.Zone.next)
     equal(FD.Zone.page, 2, "next button advances page")
-    equal(FD.Zone.rows[1].guid, "Player-1-9", "second page starts with ninth peer")
+    equal(FD.Zone.rows[1].key, "Peer09-Realm", "second page starts with ninth peer")
     equal(FD.Zone.rows[3]:IsShown(), false, "partial final page hides unused rows")
-    equal(FD.Zone.rows[3].guid, nil, "unused rows discard old challenge identity")
+    equal(FD.Zone.rows[3].key, nil, "unused rows discard old challenge identity")
     equal(FD.Zone.next.enabled, false, "final page disables next")
     click(FD.Zone.rows[1].duel)
-    equal(state.challenges[1], "Player-1-9", "explicit click challenges current row GUID")
+    equal(state.challenges[1], "Peer09-Realm", "explicit click challenges the row's sender name")
     equal(state.prints[1], "Move closer to the player and try again.", "failed challenge explains next action")
     state.challengeSuccess = true
     click(FD.Zone.rows[2].duel)
-    equal(state.challenges[2], "Player-1-10", "successful click selects matching peer")
+    equal(state.challenges[2], "Peer10-Realm", "successful click selects matching peer")
     equal(#state.prints, 1, "successful challenge avoids failure message")
     click(FD.Zone.rows[3].duel)
     equal(#state.challenges, 2, "hidden expired row cannot challenge prior peer")
@@ -138,11 +148,11 @@ return function(FD, equal)
     equal(FD.Zone.page, 1, "peer expiry clamps an obsolete page")
     equal(FD.Zone.rows[1].name.text, "Pipe||cFF0000-Realm", "peer text cannot inject UI markup")
     equal(FD.Zone.rows[1].name.color[1], 0.92, "unknown class resets old class color")
-    equal(FD.Zone.rows[2].guid, nil, "live refresh clears vanished peer GUID")
+    equal(FD.Zone.rows[2].key, nil, "live refresh clears vanished peer key")
     state.players = {}
     FD.Zone:RefreshIfShown()
     equal(FD.Zone.empty:IsShown(), true, "last peer expiry restores empty state")
-    equal(FD.Zone.rows[1].guid, nil, "last peer expiry clears clickable identity")
+    equal(FD.Zone.rows[1].key, nil, "last peer expiry clears clickable identity")
     preserved("browser navigation and clicks")
 
     local function peer(id, name, rating, level, class, cap)
@@ -160,7 +170,7 @@ return function(FD, equal)
     FD.Zone.searchBox:SetText("ALPHA")
     equal(FD.Zone.page, 1, "editing name search resets pagination")
     equal(FD.Zone.rows[1].name.text, "Alpha-Realm", "name search is case-insensitive")
-    equal(FD.Zone.rows[2].guid, nil, "name search excludes nonmatches")
+    equal(FD.Zone.rows[2].key, nil, "name search excludes nonmatches")
     equal(FD.Zone.pageLabel.text, "Page 1 / 1  /  1 of 6 players", "filtered count includes discovered total")
     FD.Zone.searchBox:SetText("[")
     equal(FD.Zone.rows[1].name.text, "Literal[-Realm", "name search treats pattern punctuation literally")
@@ -197,7 +207,7 @@ return function(FD, equal)
     selectOption(FD.Zone.classFilter, 2)
     equal(FD.Zone.classFilter.text, "Class: Warrior", "class dropdown selects a named class")
     equal(FD.Zone.rows[1].name.text, "Alpha-Realm", "class filter keeps matching class")
-    equal(FD.Zone.rows[2].guid, nil, "class filter excludes other classes")
+    equal(FD.Zone.rows[2].key, nil, "class filter excludes other classes")
     selectOption(FD.Zone.classFilter, 1)
     equal(FD.Zone.classFilter.text, "Class: All", "class dropdown returns directly to all classes")
     selectOption(FD.Zone.ratingFilter, 2)

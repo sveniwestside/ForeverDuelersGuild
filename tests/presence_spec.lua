@@ -1,233 +1,203 @@
 return function(_, equal)
+    local Harness = assert(loadfile("tests/presence_harness.lua"))()
     local function client(options)
-        options = options or {}
-        local env = setmetatable({}, { __index = _G })
-        env._G = env
-        local state = { now = 100, mapID = 37, units = {}, logs = {}, native = {}, timers = {}, refreshes = 0 }
-        state.secret = setmetatable({}, { __tostring = function() error("secret formatted") end,
-            __index = function() error("secret indexed") end, __le = function() error("secret compared") end })
-        env.issecretvalue = function(value) return rawequal(value, state.secret) end
-        env.GetTime = function() return state.now end
-        env.InCombatLockdown = function() return state.combat or false end
-        env.C_Map = { GetBestMapForUnit = function(unit)
-            equal(unit, "player", "map query refers to own player")
-            if state.failMap then error("map API failed") end
-            return state.mapID
-        end }
-        env.UnitGUID = function(unit)
-            if state.failIdentity then error("unit API failed") end
-            return state.units[unit] and state.units[unit].guid
-        end
-        env.UnitFullName = function(unit)
-            local identity = state.units[unit]
-            if identity then return identity.name, identity.realm end
-        end
-        env.UnitClass = function(unit)
-            local identity = state.units[unit]
-            if identity then return identity.classFile, identity.classFile end
-        end
-        env.UnitLevel = function(unit) return state.units[unit] and state.units[unit].level end
-        env.GetMaxPlayerLevel = function() return state.maxLevel or 60 end
-        env.UnitIsPlayer = function(unit)
-            local identity = state.units[unit]
-            if identity and identity.isPlayer ~= nil then return identity.isPlayer end
-            return identity ~= nil
-        end
-        env.GetNormalizedRealmName = function() return "Forever" end
-        env.RegionalUniqueNamesEnabled = function() return options.surname or false end
-        env.UnitNameUnmodified = function(unit)
-            local identity = state.units[unit]
-            if identity then return identity.name, identity.surname end
-        end
-        env.NameUtil = { GetUnmodifiedUnitFullName = function(unit)
-            local identity = state.units[unit]
-            return identity.name .. (identity.surname and " " .. identity.surname or "")
-        end }
-        env.C_Timer = { After = function(delay, callback)
-            state.timers[#state.timers + 1] = { delay = delay, callback = callback }
-        end }
-        local FD = { Debug = {}, Zone = {}, duel = {} }
-        function FD.Debug:Log(...) state.logs[#state.logs + 1] = { ... } end
-        function FD.Zone:RefreshIfShown() state.refreshes = state.refreshes + 1 end
-        function FD:Safe() error("Discovery must not enter duel-aborting recovery") end
-        function FD.duel:Begin() error("Presence must not begin rated negotiation") end
-        function FD.duel:Abort() error("Presence must not abort rated negotiation") end
-        env.StartDuel = function(unit, exact)
-            if state.failNative then error("native duel unavailable") end
-            state.native[#state.native + 1] = { unit = unit, exact = exact }
-            if state.nativeHook then FD.Wow:CaptureOutgoing(unit) end
-        end
-        for _, module in ipairs({ "Constants", "Protocol", "Rating", "Database", "Wow", "Presence" }) do
-            local chunk = assert(loadfile("ForeverDuel/" .. module .. ".lua"))
-            setfenv(chunk, env)
-            chunk("ForeverDuel", FD)
-        end
-        state.units.player = { guid = "Player-1-AAAA", name = "Alpha", surname = "Own",
-            realm = "Forever", classFile = "MAGE", level = 30 }
-        FD.Database:Initialize(nil, FD.Wow:Identity("player"))
-        state.FD, state.env = FD, env
-        function state:peer(unit)
-            local identity = { guid = "Player-1-BBBB", name = "Beta", surname = "Peer",
-                realm = "Forever", classFile = "ROGUE", level = 32 }
-            if unit then self.units[unit] = identity end
-            local profile = { guid = identity.guid, fullName = options.surname and "Beta Peer" or "Beta-Forever",
-                classFile = identity.classFile, rating = 1642, level = identity.level, maxLevel = 60,
-                bracket = "LEVELING", mapID = self.mapID, lastSeen = self.now }
-            self.FD.Presence.players[profile.guid] = profile
-            return profile, identity
-        end
-        return state
+        local c = Harness.client(options)
+        equal(c:start(), true, "discovery initializes")
+        return c
     end
+    local function preserved(c, label)
+        equal(c.FD.Database.data.player.ratings.LEVELING.rating, 1500, label .. " preserves rating")
+        equal(#c.FD.Database.data.matches, 0, label .. " preserves match history")
+    end
+    local BETA = { guid = "Player-1-0000BBBB", name = "Beta", surname = "Two", realm = "Forever",
+        classFile = "ROGUE", level = 32, faction = "Alliance" }
 
+    -- Own profile.
     local c = client()
-    local p = c.FD.Presence
+    local p = c.P
     equal(#p:GetPlayers(), 0, "new cache is empty")
     local own = p:GetOwnPlayer()
-    equal(own.guid, c.units.player.guid, "own profile uses real native identity")
-    equal(own.fullName, "Alpha-Forever", "own profile uses canonical full name")
-    equal(own.rating, 1500, "own tooltip profile uses persisted rating")
+    equal(own.guid, c.player.guid, "own profile uses real native identity")
+    equal(own.fullName, "Alpha One", "own profile uses the native surname full name")
+    equal(own.rating, 1500, "own profile uses persisted rating")
     equal(own.mapID, 37, "own profile has current map")
     equal(own.level, 30, "own profile includes native level")
     equal(own.maxLevel, 60, "own profile includes runtime level cap")
     equal(own.bracket, "LEVELING", "own rating mode derives from native level")
     c.FD.Database.data.player.ratings.MAX_LEVEL.rating = 1777
-    c.units.player.level = 60
+    c.player.level = 60
     equal(p:GetOwnPlayer().rating, 1777, "reaching cap announces max-level rating independently")
     equal(p:GetOwnPlayer().bracket, "MAX_LEVEL", "reaching cap changes announced mode")
-    c.units.player.level = nil
+    c.player.level = nil
     equal(p:GetOwnPlayer(), nil, "missing native level cannot publish a profile")
-    c.units.player.level = c.secret
+    c.player.level = c.secret
     equal(p:GetOwnPlayer(), nil, "restricted native level cannot publish a profile")
-    c.units.player.level = 30
-    own.rating = 9999
-    equal(p:GetOwnPlayer().rating, 1500, "own profile is independent of database")
-    local peer = c:peer()
-    local copy = p:GetPlayer(peer.guid)
-    equal(copy.fullName, "Beta-Forever", "fresh cached identity available")
-    equal(copy.rating, 1642, "fresh cached rating available")
+    c.player.level = 30
+    c.FD.Database.data.player.ratings.LEVELING.rating = c.secret
+    equal(p:GetOwnPlayer(), nil, "restricted saved rating is not published")
+    c.FD.Database.data.player.ratings.LEVELING.rating = 1500
+
+    -- The cache is keyed by the authenticated sender name; the GUID is a claim.
+    c:receive(c:profile(BETA), "Beta Two")
+    local copy = p:GetPlayer(BETA.guid)
+    equal(copy.fullName, "Beta Two", "sender name is stored with the claimed GUID")
+    equal(copy.rating, 1500, "fresh cached rating available")
+    equal(copy.verified, false, "an unobserved GUID claim is unverified")
     copy.rating, copy.fullName = 1, "Changed"
-    equal(p:GetPlayer(peer.guid).rating, 1642, "single lookup returns isolated copy")
+    equal(p:GetPlayer(BETA.guid).rating, 1500, "single lookup returns isolated copy")
+    equal(p:FindByName("Beta Two").guid, BETA.guid, "name lookup finds the entry")
+    equal(p:FindByName(c.secret), nil, "secret name lookup is rejected")
+    equal(#p:Candidates(), 1, "candidates contain the fresh entry")
     local list = p:GetPlayers()
     equal(#list, 1, "same-map cached player is listed")
-    list[1].rating, list[1].mapID = 0, 99
-    list[2] = { guid = "injected" }
-    equal(#p:GetPlayers(), 1, "returned list is independent of cache")
-    equal(p:GetPlayer(peer.guid).mapID, 37, "returned player cannot rewrite map")
+    list[1].rating = 0
+    equal(p:GetPlayers()[1].rating, 1500, "returned list is independent of cache")
+    -- A second sender claiming the same GUID no longer locks out the first.
+    c:receive(c:profile({ guid = BETA.guid, rating = 9000, classFile = "MAGE", level = 30 }), "Mallory Evil")
+    c:receive(c:profile(BETA), "Beta Two")
+    equal(p:FindByName("Beta Two").rating, 1500, "the real owner's profile is still accepted")
+    equal(p:FindByName("Mallory Evil").rating, 9000, "the impostor is listed under its own name only")
+    equal(#p:GetPlayers(), 2, "both senders are kept as separate entries")
+    c:addUnit("target", BETA)
+    c:receive(c:profile(BETA), "Beta Two")
+    equal(p:FindByName("Beta Two").verified, true, "a visible native unit corroborates the claimed GUID")
+    equal(p:GetPlayer(BETA.guid).fullName, "Beta Two", "GUID lookup prefers the corroborated entry")
+    equal(p:FindByName("Mallory Evil").verified, false, "the impostor claim stays unverified")
+    c:receive(c:profile({ guid = "Player-1-0000CCCC", classFile = "MAGE", level = 30 }), "Beta Two")
+    equal(p:FindByName("Beta Two").verified, false, "a changed GUID claim loses verification")
+    c:receive(c:profile({ guid = c.player.guid, classFile = "MAGE", level = 30 }), "Spoof Name")
+    equal(p:FindByName("Spoof Name"), nil, "own GUID never becomes a discovered peer")
+    c:receive(c:profile({ guid = "Player-1-0000DDDD", classFile = "MAGE", level = 30 }), "Alpha One")
+    equal(p:GetPlayer("Player-1-0000DDDD"), nil, "own sender name cannot add a foreign GUID")
+
+    -- Map filtering, expiry and suspension.
+    c = client()
+    p = c.P
+    c:receive(c:profile(BETA), "Beta Two")
     c.mapID = 38
     equal(#p:GetPlayers(), 0, "moving maps removes old-zone list entries")
-    equal(p:GetPlayer(peer.guid).rating, 1642, "tooltip lookup retains fresh other-map profile")
+    equal(p:GetPlayer(BETA.guid).rating, 1500, "lookup retains fresh other-map profile")
     c.mapID = 37
-    c.now = 219.99
-    equal(#p:GetPlayers(), 1, "profile remains fresh immediately before 120 seconds")
-    c.now = 220
-    equal(p:GetPlayer(peer.guid), nil, "profile expires at 120 seconds")
-    equal(#p:GetPlayers(), 0, "expired profile leaves zone list")
-    c.now = 100
+    c:receive(c:profile(BETA, 0), "Beta Two")
+    equal(#p:GetPlayers(), 0, "an undisclosed map (0) is never listed in the zone")
+    equal(p:FindByName("Beta Two").mapID, 0, "undisclosed map is cached as 0")
+    c:receive(c:profile(BETA), "Beta Two")
+    c.now = c.now + 179.99
+    equal(#p:GetPlayers(), 1, "profile remains fresh immediately before 180 seconds")
+    c.now = c.now + 0.01
+    equal(p:GetPlayer(BETA.guid), nil, "profile expires at 180 seconds")
+    equal(p:FindByName("Beta Two"), nil, "expired profile is not found by name")
+    equal(#p:Candidates(), 0, "expired profile is no queue candidate")
+    c.now = c.now - 180
     p.suspended = true
-    equal(p:GetPlayer(peer.guid), nil, "world transition suspends cached profile use")
+    equal(p:GetPlayer(BETA.guid), nil, "world transition suspends cached profile use")
     equal(#p:GetPlayers(), 0, "world transition hides zone list")
     equal(p:GetStatus(), "Waiting for the world to load.", "transition has useful status")
     p.suspended = false
-    c.mapID = nil
-    equal(p:MapID(), nil, "missing map returns no fabricated zone")
-    equal(#p:GetPlayers(), 0, "missing map prevents zone list")
-    equal(p:GetStatus():find("waiting for map information", 1, true) ~= nil, true, "missing map explains wait")
     for _, invalid in ipairs({ c.secret, "37", 0, -1, 0.5, 10000001, math.huge, 0 / 0 }) do
         c.mapID = invalid
         equal(p:MapID(), nil, "invalid or restricted map rejected")
         equal(#p:GetPlayers(), 0, "invalid map cannot produce zone matches")
     end
+    c.mapID = nil
+    equal(p:GetStatus():find("waiting for map information", 1, true) ~= nil, true, "missing map explains wait")
     c.env.C_Map = nil
     equal(p:MapID(), nil, "missing map API is tolerated")
-    c.env.C_Map = {}
-    equal(p:MapID(), nil, "missing map function is tolerated")
     for _, invalid in ipairs({ c.secret, "not-a-player", "Player-1-XYZ", false, {} }) do
         equal(p:GetPlayer(invalid), nil, "invalid or secret GUID cannot query cache")
     end
-    equal(p:GetPlayer(nil), nil, "nil GUID cannot query cache")
-    c.FD.Database.data.player.ratings.LEVELING.rating = c.secret
-    equal(p:GetOwnPlayer(), nil, "restricted saved rating is not published")
-    c.FD.Database.data.player.ratings.LEVELING.rating = 1500
-    c.units.player.guid = c.secret
-    equal(p:GetOwnPlayer(), nil, "restricted own identity is not published")
-    p:Refresh()
-    equal(c.refreshes, 1, "presence refresh notifies zone view")
+    -- Entries injected by value (other modules' fixtures) are found by field.
+    c = client()
+    c.P.players[BETA.guid] = { guid = BETA.guid, fullName = "Beta Two", rating = 1500, level = 30,
+        maxLevel = 60, mapID = 37, lastSeen = c.now }
+    equal(c.P:FindByName("Beta Two").guid, BETA.guid, "lookups scan values, not keys")
+    equal(#c.P:Candidates(), 1, "candidates scan values")
 
-    local function rejected(setup, label)
+    -- Bounded cache.
+    c = client()
+    for index = 1, 302 do
+        c.now = c.now + 0.01
+        c:receive(string.format("FDP2|Player-2-%X|1500|37|MAGE|30|60", index), "Peer" .. index .. " Crowd")
+    end
+    local entries = 0
+    for _ in pairs(c.P.players) do entries = entries + 1 end
+    equal(entries, 300, "advisory cache remains bounded")
+    equal(c.P:FindByName("Peer1 Crowd"), nil, "oldest profile is evicted when capacity is exhausted")
+    equal(c.P:FindByName("Peer302 Crowd").rating, 1500, "newest peer survives capacity eviction")
+    c:advance(700)
+    entries = 0
+    for _ in pairs(c.P.players) do entries = entries + 1 end
+    equal(entries, 0, "housekeeping forgets stale entries without incoming packets")
+
+    -- Challenge resolves a visible native unit and uses the duel module's
+    -- single request entry point, returning its reason.
+    local function challenge(setup)
         local test = client()
-        local profile = test:peer("target")
-        setup(test, profile)
-        local accepted, reason = test.FD.Presence:Challenge(profile.guid)
-        equal(accepted, false, label .. " rejected")
-        equal(type(reason), "string", label .. " explains failure")
-        equal(#test.native, 0, label .. " never starts native duel")
-        return test
+        test.FD.Wow.RequestDuel = function(_, token)
+            test.requested = token
+            if test.blocked then return false, "Native duel request was blocked; request the duel manually." end
+            return true
+        end
+        test:receive(test:profile(BETA), "Beta Two")
+        test:addUnit("target", BETA)
+        if setup then setup(test) end
+        return test, test.P:Challenge("Beta Two")
     end
-    rejected(function(test) test.combat = true end, "combat challenge")
-    local pending = { state = "READY", matchId = "unchanged" }
-    c = rejected(function(test) test.FD.duel.active = pending end, "pending rated duel")
-    equal(c.FD.duel.active, pending, "rejected click preserves existing rated flow")
-    rejected(function(test) test.FD.Wow.outgoing = {} end, "pending native request")
-    rejected(function(test) test.FD.duel = nil end, "uninitialized duel")
-    rejected(function(test) test.env.StartDuel = nil end, "missing native duel API")
-    rejected(function(test) test.mapID = 38 end, "different current map")
-    rejected(function(test) test.mapID = nil end, "unavailable current map")
-    rejected(function(test) test.now = 220 end, "expired player")
-    rejected(function(test) test.FD.Presence.suspended = true end, "world transition")
-    rejected(function(test) test.units.target = nil end, "unobserved player")
-    rejected(function(test) test.units.target.guid = "Player-1-CCCC" end, "same name different GUID")
-    rejected(function(test) test.units.target.name = "Gamma" end, "same GUID different name")
-    rejected(function(test) test.units.target.realm = "OtherRealm" end, "same short name different realm")
-    rejected(function(test) test.units.target.isPlayer = false end, "non-player unit")
-    rejected(function(test) test.units.target.isPlayer = test.secret end, "restricted player flag")
-    rejected(function(test) test.units.target.guid = test.secret end, "restricted local GUID")
-    rejected(function(test) test.units.target.name = test.secret end, "restricted local name")
-    c = client()
-    equal(c.FD.Presence:Challenge(c.secret), false, "secret click GUID rejected")
-    equal(#c.native, 0, "secret click GUID cannot start native duel")
-
-    for _, unit in ipairs({ "target", "mouseover", "focus", "party1", "party4", "raid1", "raid40", "nameplate1", "nameplate40" }) do
-        c = client()
-        peer = c:peer(unit)
-        equal(c.FD.Presence:Challenge(peer.guid), true, unit .. " exact identity can request native duel")
-        equal(#c.native, 1, unit .. " produces one native request")
-        equal(c.native[1].unit, unit, unit .. " native request uses observable token")
-        equal(c.native[1].exact, true, unit .. " native request uses exact matching")
-        equal(c.FD.duel.active, nil, unit .. " request itself never begins rated negotiation")
-        equal(c.FD.Database.data.player.ratings.LEVELING.rating, 1500, unit .. " request never changes rating")
-        equal(#c.FD.Database.data.matches, 0, unit .. " request never invents match history")
+    local test, ok, reason = challenge()
+    equal(ok, true, "visible listed player can be challenged")
+    equal(test.requested, "target", "challenge passes the native unit to Wow:RequestDuel")
+    equal(test.P:FindByName("Beta Two").verified, true, "challenge corroborates the claim")
+    test, ok, reason = challenge(function(t) t.blocked = true end)
+    equal(ok, false, "blocked request is reported")
+    equal(reason, "Native duel request was blocked; request the duel manually.", "RequestDuel reason is shown")
+    for _, case in ipairs({
+        { "different map", function(t) t.mapID = 38 end },
+        { "unobserved player", function(t) t.units.target = nil end },
+        { "same name different GUID", function(t) t.units.target = Harness.identity(9, { name = "Beta", surname = "Two" }) end },
+        { "same GUID different name", function(t) t.units.target = { guid = BETA.guid, name = "Gamma", surname = "Two",
+            realm = "Forever", classFile = "ROGUE", level = 32, faction = "Alliance" } end },
+        { "pending native request", function(t) t.FD.Wow.outgoing = {} end },
+        { "expired player", function(t) t.now = t.now + 181 end },
+        { "world transition", function(t) t.P.suspended = true end },
+        { "restricted local GUID", function(t) t.units.target.guid = t.secret end },
+    }) do
+        test, ok, reason = challenge(case[2])
+        equal(ok, false, case[1] .. " rejected")
+        equal(type(reason), "string", case[1] .. " explains failure")
+        equal(test.requested, nil, case[1] .. " never requests a native duel")
+        preserved(test, case[1])
     end
-    c = client({ surname = true })
-    peer = c:peer("focus")
-    equal(c.FD.Presence:Challenge(peer.guid), true, "Forever exact surname identity can duel")
-    c.units.focus.surname = "Other"
-    equal(c.FD.Presence:Challenge(peer.guid), false, "same first name cannot replace exact surname identity")
-    equal(#c.native, 1, "altered surname creates no second native request")
-    c = client()
-    peer = c:peer("target")
-    peer.level, c.units.target.level = 50, 50
-    equal(c.FD.Presence:Challenge(peer.guid), true, "normal duel button remains available outside rated level range")
-    c = client()
-    peer = c:peer("target")
-    c.nativeHook = true
-    equal(c.FD.Presence:Challenge(peer.guid), true, "native request works with real capture post-hook")
-    equal(c.FD.Wow.outgoing.opponent.guid, peer.guid, "capture hook binds clicked identity")
-    equal(c.FD.duel.active, nil, "captured request still awaits native server acknowledgement")
-    equal(c.FD.Presence:Challenge(peer.guid), false, "second click cannot overlap captured request")
-    equal(#c.native, 1, "second click sends no native request")
-
-    for _, failure in ipairs({ "failMap", "failIdentity", "failNative" }) do
-        c = client()
-        peer = c:peer("target")
-        c[failure] = true
-        local accepted, reason = c.FD.Presence:Challenge(peer.guid)
-        equal(accepted, nil, failure .. " is caught locally")
+    test = client()
+    equal(test.P:Challenge(test.secret), false, "secret click key rejected")
+    for _, token in ipairs({ "mouseover", "focus", "party1", "raid1", "nameplate40" }) do
+        test = client()
+        test:receive(test:profile(BETA), "Beta Two")
+        test:addUnit(token, BETA)
+        test.FD.duel = { active = nil }
+        equal(test.P:Challenge("Beta Two"), true, token .. " exact identity can request a native duel")
+        equal(test.duels[1], token, token .. " native request uses the observed token")
+        equal(test.FD.duel.active, nil, token .. " request never begins rated negotiation")
+        preserved(test, token)
+    end
+    test = client()
+    test:receive(test:profile(BETA), "Beta Two")
+    test:addUnit("target", BETA)
+    test.FD.duel = { active = { state = "READY" } }
+    ok, reason = test.P:Challenge("Beta Two")
+    equal(ok, false, "an active duel blocks the request through RequestDuel")
+    equal(reason, "Finish the current duel request first.", "RequestDuel's own reason is returned")
+    for _, failure in ipairs({ "failMap", "failIdentity" }) do
+        test = client()
+        test:receive(test:profile(BETA), "Beta Two")
+        test:addUnit("target", BETA)
+        test[failure] = true
+        ok, reason = test.P:Challenge("Beta Two")
+        equal(ok, nil, failure .. " is caught locally")
         equal(reason, "Zone discovery temporarily unavailable.", failure .. " has a useful fallback")
-        equal(#c.logs, 1, failure .. " is logged locally")
-        equal(#c.native, 0, failure .. " produces no native request")
-        equal(c.FD.Database.data.player.ratings.LEVELING.rating, 1500, failure .. " preserves rating")
-        equal(#c.FD.Database.data.matches, 0, failure .. " preserves match history")
+        equal(#test.FD.Debug:Errors(), 1, failure .. " is persisted as an addon error")
+        equal(test.duels, nil, failure .. " produces no native request")
+        preserved(test, failure)
     end
-    c.FD.Debug.Log = function() error("logger failed") end
-    equal(pcall(function() c.FD.Presence:Challenge(peer.guid) end), true, "logger failure stays isolated")
+    test.FD.Debug.Error = function() error("logger failed") end
+    equal(pcall(function() test.P:Challenge("Beta Two") end), true, "logger failure stays isolated")
 end
