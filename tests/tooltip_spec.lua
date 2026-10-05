@@ -76,9 +76,11 @@ return function(FD, equal)
         state.tooltip = state:newTooltip()
         env.GameTooltip = state.tooltip
         if options.noModern then env.TooltipDataProcessor = false end
-        local chunk = assert(loadfile("ForeverDuel/Tooltip.lua"))
-        setfenv(chunk, env)
-        chunk("ForeverDuel", FD)
+        for _, module in ipairs({ "Native", "Tooltip" }) do
+            local chunk = assert(loadfile("ForeverDuel/" .. module .. ".lua"))
+            setfenv(chunk, env)
+            chunk("ForeverDuel", FD)
+        end
         state.FD, state.env, state.active = FD, env, active
         function state:fire(data, tooltip)
             if self.callback then self.callback(tooltip or self.tooltip, data or self:data())
@@ -217,7 +219,12 @@ return function(FD, equal)
     -- Integration with the real Presence: a player tooltip asks once (paced)
     -- and shows a rating only after the claimed GUID is corroborated.
     local Harness = assert(loadfile("tests/presence_harness.lua"))()
-    local h = Harness.client({ channel = false, tooltip = true })
+    local h = Harness.client({ channel = false })
+    for _, module in ipairs({ "Native", "Tooltip" }) do
+        local chunk = assert(loadfile("ForeverDuel/" .. module .. ".lua"))
+        setfenv(chunk, h.env)
+        chunk("ForeverDuel", h.FD)
+    end
     h.env.Enum.TooltipDataType = { Unit = 2 }
     local post
     h.env.TooltipDataProcessor = { AddTooltipPostCall = function(_, callback) post = callback end }

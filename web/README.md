@@ -4,10 +4,10 @@ The website is a local duel register: the ladder and recent duels are the main s
 
 ## View the design
 
-Requires Node.js 24.15 or later. There are no npm dependencies to install.
+Requires Node.js 24.15 or later. There are no npm dependencies to install. From the repository root:
 
 ```powershell
-cd C:\DEV\wow_addons\foreverDuelersGuild\web
+cd web
 npm run preview
 ```
 

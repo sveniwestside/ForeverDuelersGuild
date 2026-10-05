@@ -2,10 +2,8 @@ local _, FD = ...
 FD.Tooltip = {}
 local Tooltip = FD.Tooltip
 local tracked = setmetatable({}, { __mode = "k" })
-
-local function readable(...)
-    return FD.Wow and FD.Wow:Readable(...)
-end
+local Native = FD.Native
+local readable = Native.Readable
 
 -- Optional presentation must never enter Core:Safe and abort an active duel.
 function Tooltip:Run(callback)
@@ -82,8 +80,7 @@ function Tooltip:AddRating(tooltip, data)
         or not readable(record.guid, record.fullName, record.rating, record.level, record.maxLevel, record.bracket)
         or record.guid ~= guid or record.fullName ~= identity.fullName then return end
     local rating = record.rating
-    if type(rating) ~= "number" or rating ~= rating or rating < -100000
-        or rating > 100000 or rating % 1 ~= 0 then return end
+    if not Native.Integer(rating, -100000, 100000) then return end
     local bracket = FD.Rating:Bracket(record.level, record.maxLevel)
     if not bracket or bracket ~= record.bracket
         or not readable(identity.level, identity.maxLevel)

@@ -14,20 +14,7 @@ local DISCOVERY = { QUERY = true, PROFILE = true, LEAVE = true }
 -- A PROFILE stays current while it can still pair or re-key a ticket.
 local PROFILE_STATES = { SEARCHING = true, PAUSED = true, INVITING = true, INVITED = true, GROUPING = true }
 
-local function readable(...)
-    return not FD.Wow or FD.Wow:Readable(...)
-end
-
-local function validName(value)
-    return readable(value) and type(value) == "string" and #value > 0 and #value <= 128
-        and not value:find("[%c|]")
-end
-
-local function now()
-    if type(GetTime) ~= "function" then return 0 end
-    local ok, value = pcall(GetTime)
-    return ok and readable(value) and type(value) == "number" and value or 0
-end
+local readable, validName, now = FD.Native.Readable, FD.Native.Text, FD.Native.Now
 
 local function log(...)
     if FD.Debug then pcall(FD.Debug.Log, FD.Debug, ...) end

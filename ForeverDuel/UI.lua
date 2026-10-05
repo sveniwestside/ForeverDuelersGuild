@@ -8,16 +8,13 @@ local UI = FD.UI
 -- standalone proposal panel. Closing it (close button, or Esc on the
 -- OUTGOING panel) keeps the duel unrated.
 local VISIBLE = { READY = true, LOCAL_ACCEPTED = true, REMOTE_ACCEPTED = true, RATED_CONFIRMED = true }
+local Native = FD.Native
 
-local function readable(...)
-    if FD.Wow and FD.Wow.Readable then return FD.Wow:Readable(...) end
-    return true
-end
-
+-- A failing or restricted reading counts as combat; a missing API does not.
 local function inCombat()
     if type(InCombatLockdown) ~= "function" then return false end
     local ok, value = pcall(InCombatLockdown)
-    return not ok or not readable(value) or value == true
+    return not ok or not Native.Readable(value) or value == true
 end
 
 function UI:Create()
@@ -92,10 +89,8 @@ function UI:Hide()
 end
 
 local function nativePopup()
-    if type(StaticPopup_Visible) ~= "function" then return nil end
     -- Pinned StaticPopup.lua: returns the dialog name and the dialog frame.
-    local ok, name, dialog = pcall(StaticPopup_Visible, "DUEL_REQUESTED")
-    if not ok or not readable(name, dialog) then return nil end
+    local name, dialog = Native.Call(StaticPopup_Visible, "DUEL_REQUESTED")
     if type(dialog) == "table" then return dialog end
     if type(name) == "string" and type(_G[name]) == "table" then return _G[name] end
 end
