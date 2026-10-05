@@ -9,34 +9,36 @@ Every file receives the private namespace through `local _, FD = ...`. The only 
 | # | File | Area | Responsibility |
 | --- | --- | --- | --- |
 | 1 | `Constants.lua` | foundation | `FD.C` versions, rating rules and duel timings; the command, status and event registries; `FD.Copy`. |
-| 2 | `Locale.lua` | foundation | `FD.L[...]` / `FD.Locale:Format`: English source text is the key; a missing or broken translation falls back to English. |
-| 3 | `Locale_deDE.lua` | foundation | German translations registered for `deDE`. |
-| 4 | `Debug.lua` | foundation | Chat output, persisted lifecycle/transport rings, persisted Lua errors, traffic counters. |
-| 5 | `Commands.lua` | foundation | `/duelrating` dispatcher plus `help`, `debug`, `status`, `diagnose`, `errors`. |
-| 6 | `Outbound.lua` | foundation | The only sender of addon messages: prefix registration, priority lanes, token budgets, retries, PARTY->WHISPER fallback, counters. |
-| 7 | `Rating.lua` | data | Brackets, eligibility, level-weighted Elo, versioned `Rules()`. |
-| 8 | `Database.lua` | data | Schema-2 `ForeverDuelDB`: load-time ledger validation, schema-1 Legacy migration, archive of another character's table, repair with quarantine, commit, reset. |
-| 9 | `History.lua` | data | Read-only queries: recent, pages, series, details, overview statistics. |
-| 10 | `Protocol.lua` | duel | FD3 envelope: 15 strict fields plus optional `key=value` extensions; FD2 recognition; nonces; match IDs. |
-| 11 | `Results.lua` | duel | Pure parser for the localized countdown and winner system messages. |
-| 12 | `Duel.lua` | duel | Rated state machine: consent, freshness checks, evidence, finalization, CANCEL reasons. No game globals; the environment is injected. |
-| 13 | `Comms.lua` | duel | Duel packets to Outbound (drain validity, PARTY/WHISPER route), receive gates, own-PARTY-echo filter, status lines. |
-| 14 | `UI.lua` | duel | The rated panel (companion below Blizzard's popup or standalone), chat summary and history. |
-| 15 | `Profile.lua` | UI | Movable overview: mode selectors, chart, paged history, details, archive/quarantine notice. |
-| 16 | `Minimap.lua` | UI | Minimap button with saved angle. |
-| 17 | `Presence.lua` | discovery | On-demand profile whispers, CHANNEL experiment, profile cache, quiet mode, `ping`. |
-| 18 | `Roster.lua` | discovery | Membership of the `ForeverDuel` chat channel: join, member list, failure detection, selection restore. |
-| 19 | `Zone.lua` | UI | Players in zone browser: filters, Refresh, "last seen", Duel button. |
-| 20 | `Tooltip.lua` | UI | Rating line on player tooltips, only for corroborated profiles. |
-| 21 | `Wow.lua` | duel | Native adapter: identity, outgoing capture and acknowledgment, incoming resolution, system messages, hooks, `RequestDuel`, duel events. |
-| 22 | `QueueProtocol.lua` | queue | Queue protocol 2 (`ForeverDuelQ2`, wire `FQ2`): schemas, reasons, validation. |
-| 23 | `Venues.lua` | queue | Pure venue logic: eligibility, digest hashes, selection, travel estimate, same-spot test. |
-| 24 | `Queue.lua` | queue | Queue engine: forward transitions, one deadline per state, `Finish` with outcome classes. Environment is injected. |
-| 25 | `QueueWow.lua` | queue | Native queue adapter: ruleset, position, GUID group classification, invitations, co-location, tested places, waypoint. |
-| 26 | `QueueTransport.lua` | queue | Queue packets to Outbound; sender, PARTY and ticket checks on receive. |
-| 27 | `QueueUI.lua` | UI | Queue window. |
-| 28 | `QueueCore.lua` | queue | Queue wiring: events, 1 s pulse, tested-place sharing, `queue` command and status. |
-| 29 | `Core.lua` | foundation | Bootstrap, `FD:Safe` recovery, `ui`/`summary`/`history`/`reset`/`repair`, event frame. Loads last. |
+| 2 | `Locale.lua` | foundation | `FD.L[...]` / `FD.Locale:Format`: English source text is the key; a missing or broken translation falls back to English. See [Localization](#localization). |
+| 3 | `Locale_deDE.lua` | foundation | Complete German translation registered for `deDE`, guarded by `tests/locale_spec.lua`. |
+| 4 | `Native.lua` | foundation | `FD.Native`: shared checks for native values (readable, finite, plain text) used by the WoW-bound modules and windows. |
+| 5 | `Debug.lua` | foundation | Chat output, persisted lifecycle/transport rings, persisted Lua errors, traffic counters. |
+| 6 | `Commands.lua` | foundation | `/duelrating` dispatcher plus `help`, `debug`, `status`, `diagnose`, `errors`. |
+| 7 | `Outbound.lua` | foundation | The only sender of addon messages: prefix registration, priority lanes, token budgets, retries, PARTY->WHISPER fallback, counters. |
+| 8 | `Rating.lua` | data | Brackets, eligibility, level-weighted Elo, versioned `Rules()`. |
+| 9 | `Database.lua` | data | Schema-2 `ForeverDuelDB`: load-time ledger validation, schema-1 Legacy migration, archive of another character's table, repair with quarantine, commit, reset. |
+| 10 | `History.lua` | data | Read-only queries: recent, pages, series, details, overview statistics. |
+| 11 | `Protocol.lua` | duel | FD3 envelope: 15 strict fields plus optional `key=value` extensions; FD2 recognition; nonces; match IDs. |
+| 12 | `Results.lua` | duel | Pure parser for the localized countdown and winner system messages. |
+| 13 | `Duel.lua` | duel | Rated state machine: consent, freshness checks, evidence, finalization, CANCEL reasons. No game globals; the environment is injected. |
+| 14 | `Comms.lua` | duel | Duel packets to Outbound (drain validity, PARTY/WHISPER route), receive gates, own-PARTY-echo filter, status lines. |
+| 15 | `Widgets.lua` | UI | `FD.Widgets`: shared frame helpers for the windows (panels, labels, buttons, dropdowns, fit, toggle, isolated `Run`). |
+| 16 | `UI.lua` | duel | The rated panel (companion below Blizzard's popup or standalone), chat summary and history. |
+| 17 | `Profile.lua` | UI | Movable overview: mode selectors, chart, paged history, details, archive/quarantine notice. |
+| 18 | `Minimap.lua` | UI | Minimap button with saved angle and a localized tooltip. |
+| 19 | `Presence.lua` | discovery | On-demand profile whispers, CHANNEL posts, profile cache, quiet mode, `ping`. |
+| 20 | `Roster.lua` | discovery | Membership of the `ForeverDuel` chat channel: join, member list, failure detection, selection restore. |
+| 21 | `Zone.lua` | UI | Players in zone browser: filters, Refresh, "last seen", Duel button. |
+| 22 | `Tooltip.lua` | UI | Rating line on player tooltips, only for corroborated profiles. |
+| 23 | `Wow.lua` | duel | Native adapter: identity, outgoing capture and acknowledgment, incoming resolution, system messages, hooks, `RequestDuel`, duel events. |
+| 24 | `QueueProtocol.lua` | queue | Queue protocol 2 (`ForeverDuelQ2`, wire `FQ2`): schemas, reasons, validation. |
+| 25 | `Venues.lua` | queue | Pure venue logic: eligibility, digest hashes, selection, travel estimate, same-spot test. |
+| 26 | `Queue.lua` | queue | Queue engine: forward transitions, one deadline per state, `Finish` with outcome classes. Environment is injected. |
+| 27 | `QueueWow.lua` | queue | Native queue adapter: ruleset, position, GUID group classification, invitations, co-location, tested places, waypoint. |
+| 28 | `QueueTransport.lua` | queue | Queue packets to Outbound; sender, PARTY and ticket checks on receive. |
+| 29 | `QueueUI.lua` | UI | Queue window. While shown it refreshes at 1 Hz whenever the queue is not `IDLE`; when idle, only while a cooldown, a notice, the ruleset detection, a cleanup advisory, the **Leave group** button or the profile count can change without a queue render. |
+| 30 | `QueueCore.lua` | queue | Queue wiring: events, 1 s pulse, tested-place sharing, `queue` command and status. |
+| 31 | `Core.lua` | foundation | Bootstrap, `FD:Safe` recovery, `ui`/`summary`/`history`/`reset`/`repair`, event frame. Loads last. |
 
 ## Load order and bootstrap
 
@@ -48,7 +50,7 @@ Every file receives the private namespace through `local _, FD = ...`. The only 
 
 ## Registries (Constants.lua)
 
-- **Commands:** `FD:RegisterCommand(name, run, help, order, anyState)`. `FD:Command` lowercases the subcommand and passes the argument with its original case. An empty command means `ui`; an unknown one prints the list. Without loadable saved data only `anyState` commands run: `help`, `status`, `diagnose`, `errors`, `repair`.
+- **Commands:** `FD:RegisterCommand(name, run, help, order, anyState)`. `FD:Command` finds the subcommand in the lowercased input and calls `run(rest, rawRest)`: `rest` is the lowercased argument text, `rawRest` the same text in its original case (character names, venue IDs). An empty command means `ui`; an unknown one prints the list. Without loadable saved data only `anyState` commands run: `help`, `status`, `diagnose`, `errors`, `repair`.
 
   | Owner | Commands |
   | --- | --- |
@@ -58,7 +60,7 @@ Every file receives the private namespace through `local _, FD = ...`. The only 
   | Presence.lua | `quiet`, `ping [name]` |
   | QueueCore.lua | `queue [join\|leave\|status\|autoaccept on\|off\|help\|venue add\|import\|remove]` |
 
-- **Status sections:** `FD:RegisterStatus(order, lines)`. `/duelrating status` prints them sorted: 10 Core (version and build, transport, state, debug, last error, traffic), 12 Database (archives, quarantine), 20 Wow (requests, native self and opponent, peer confirmation and version, discovery round trip), 25 Comms (queued packets, last send and receive, peer validation), 30 Presence (discovery status, route, quiet, roster), 40 QueueCore (queue state, last cancellation, criteria, opponent, place, queue send and receive). A failing section prints `status section failed` instead of breaking the command.
+- **Status sections:** `FD:RegisterStatus(order, lines)`. `/duelrating status` prints them sorted: 10 Core (version and build, transport, state, debug, last error, traffic), 12 Database (archives, quarantine), 20 Wow (requests, native self and opponent, peer confirmation and version, discovery round trip), 25 Comms (queued packets, last send and receive, peer validation), 30 Presence (discovery status, route, quiet, roster), 40 QueueCore (queue state, last cancellation, criteria, opponent, place, queue send and receive). A failing section prints `status section failed` instead of breaking the command. Sections 10, 20 and 25 are English diagnostics; 12, 30 and 40 use localized labels around internal codes (states, reasons, routes).
 - **Events:** `FD:OnEvent(event, run, always, optional)`. Core registers each event once (optional events through `pcall`, recorded in `FD.eventRegistered`) and calls the handlers in load order through `FD:Safe`. Handlers without `always` run only after initialization. Presence registers its handlers with `always` and wraps them in `Presence:Run`.
 
 ## Outbound: budgets and priorities
@@ -125,7 +127,7 @@ sequenceDiagram
 Details the diagram leaves out:
 
 - **Binding:** a bare HELLO is answered but never binds, because it may belong to an older request. HELLOs whose nonce time is more than 10 s older than this request are rejected. The first HELLO_ACK that echoes the own nonce binds the peer's nonce and profile and fixes the match ID. The round trip from the first sent HELLO is shown in status.
-- **Panel:** it appears only after binding. The receiver's companion has only the rated button; its X keeps the duel unrated. Esc there reaches Blizzard's popup first, which declines the request. The challenger's panel has Propose/Accept RATED, Keep unrated, the X and Esc. Both show a 1 Hz expiry countdown. The rated button is disabled in combat and enabled again when combat ends.
+- **Panel:** it appears only after binding. The receiver's companion has only the rated button; its X keeps the duel unrated. Esc there reaches Blizzard's popup first, which declines the request. The challenger's panel has Propose/Accept RATED, Keep unrated, the X and Esc. Both show a 1 Hz expiry countdown. A player who is already in combat when the request begins sees the rated button disabled ("Leave combat to choose a rated duel."); it works again once combat ends within the window (`PLAYER_REGEN_ENABLED` re-renders the panel). Entering combat while a request is pending, before the countdown, unrates it for good (`PLAYER_REGEN_DISABLED`, `CANCEL r=combat`).
 - **Native accept:** only the receiver calls `AcceptDuel`, and only from `RATED_CONFIRMED`. Every other accept (Blizzard's button or another addon), seen through the `AcceptDuel` hook, makes the duel unrated and sends `CANCEL r=choice`. If no countdown follows within 8 s of any accept, the match is released, with `CANCEL r=timeout` if it was still rated. After the addon's own accept, the receiver is told to ask for a new challenge.
 - **Tentative countdown:** the challenger's countdown can arrive before the receiver's ACCEPT. A countdown in `LOCAL_ACCEPTED` is therefore tentatively rated, and the chat says "Waiting for X to confirm the RATED duel". The RATED line appears only after the peer's ACCEPT, START or RESULT arrives. Every unrated path on the receiver sends CANCEL and suppresses START and RESULT, so a tentative countdown can never finalize without both consents.
 - **Expiry:** the 50 s request window is the only decision timer. A challenger that has already consented gets one extra 8 s grace, because the receiver's window starts later. No CANCEL is sent for timing reasons after a countdown.
@@ -208,12 +210,19 @@ Each reason has a local sentence and a form for the other side ("Your opponent's
 
 Profiles (`FDP2|guid|rating|mapID|classFile|level|maxLevel`, queries `FDQ2|...`) are advisory self-reports, keyed by the sender name the server reports. They never supply consent, snapshots or results.
 
-- **Queries** go out only on demand: to the target or mouseover (same faction, readable) while the zone window is open, or when their tooltip shows; to channel members while the zone window is open, the queue is `SEARCHING` or `PAUSED`, or for 10 s after **Refresh**. Nothing is queried while a duel request or a queue ticket exists. There is no nameplate, party or raid fan-out.
-- **Replies** go only to trusted senders: queue peers, channel members and visible units with that name. A query from an unknown sender waits up to 20 s for a roster read to prove membership. The real map ID goes to visible units and queue peers, and to members that reported the same map; everyone else gets map 0.
-- **CHANNEL:** after joining, one profile per session is posted to the channel as an experiment. Only another player's CHANNEL profile proves that channel delivery works. While that holds and our own post was accepted, posts every 60 s replace member queries. Profile changes are pushed at most every 30 s.
+- **Queries** go out only on demand: to the target or mouseover (same faction, readable) while the zone window is open or for 10 s after **Refresh**, or when their tooltip shows; to channel members while the zone window is open, the queue is `SEARCHING` or `PAUSED`, or for 10 s after **Refresh**. Targeting alone (zone window closed, no tooltip) sends nothing: `PLAYER_TARGET_CHANGED` only wakes discovery while the zone window is shown. Nothing is queried while a duel request or a queue ticket exists. There is no nameplate, party or raid fan-out. A query (`FDQ2`) carries the full own profile, real map ID included, to the queried player.
+- **Replies** (`FDP2` whispers) go only to trusted senders: queue peers, channel members and visible units with that name. A query from an unknown sender waits up to 20 s for a roster read to prove membership and is otherwise never answered. `Presence:MapFor` sets the map in replies: the real map ID for visible units and queue peers, and for channel members whose last profile reported the same map; other channel members get map 0, which keeps us out of their zone browser. Without a working CHANNEL route, profile changes are pushed the same way to fresh trusted peers, at most every 30 s.
+- **CHANNEL:** `Presence:Broadcast` posts the full own profile, real map ID included, to every member of the `ForeverDuel` channel; `MapFor` does not apply. After joining, one post per session is an experiment. Only another player's CHANNEL profile proves that channel delivery works. While that holds and our own post was accepted, a heartbeat post every 60 s and an update post after profile changes (at most every 30 s) replace member queries. While others' posts arrive but ours are rejected, a retry post goes out every 10 minutes. A newcomer's first post is answered with one whispered reply (at most one greeting per 10 s).
 - **Roster:** the `ForeverDuel` channel is joined (temporary) only after the default channels exist. Password, ban, missing-after-join and manual-leave failures are detected. A fully readable roster read replaces the member list. Loading the list may briefly change the native channel selection; it is restored, and it is never touched while the Channels window is open.
 - **Quiet mode** (`settings.quiet`) stops every Presence and Roster send and drops pending work. Only `ping` and its PONG stay, because they are the measurement.
 - **Ping:** `PING|seq|ms` is answered with `PONG|seq|ms`, at most once per 2 s per sender and route, and only to cached players, channel members, the target or party members. The round trip is measured on the pinging client.
+
+## Localization
+
+- User-facing text is written in English and used as the lookup key: `FD.L["..."]` for fixed text, `FD.Locale:Format(pattern, ...)` for patterns. Lua 5.1 has no positional arguments, so a translation keeps the placeholders in the same order. A missing translation, or one whose placeholders do not fit the arguments, falls back to English, so a label is never empty and never shows a raw `%s`.
+- `Locale_deDE.lua` translates every user-facing text (informal "du"; glossary at the top of the file). Status texts for steps the addon performs itself use descriptive forms ("Gegner wird eingeladen", "Warten auf ..."); imperatives are kept for what the player must do. Slash commands, the addon and channel names and saved-data keys stay unchanged.
+- `tests/locale_spec.lua` reads every TOC module and fails when a user-facing key has no German entry, when a German entry is unused, or when placeholders, slash commands, escape pipes or line breaks differ from the English key. It finds literal `FD.L[...]`, `L(...)` and `Format(...)` arguments, the named text tables (for example `STATE_NAMES`, `CANCEL_TEXT`) and a short list of literals passed through variables (such as the Outbound delivery states `sent`, `failed`, `expired`, `dropped`). Every new user-facing string therefore needs a deDE entry in the same commit.
+- Diagnostic output stays English on purpose, so bug reports read the same on every client: the status sections of Core, Wow and Comms (version, state, traffic, request, native, peer, send and receive lines), the `diagnose` and `errors` entries, and debug chat output. The zone and queue status lines have German labels, but internal codes in them (states, CANCEL reasons, routes) stay English.
 
 ## Diagnostics (Debug.lua)
 

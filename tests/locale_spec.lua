@@ -140,7 +140,8 @@ return function(FD, equal, newNamespace)
         -- Untracked reasons, printed through FD.L[attempt.reason].
         ["Wow.lua"] = { "another duel request is still pending", "the requested player could not be identified",
             "the requested name matches several players", "rated tracking could not start" },
-        -- Broadcast reasons and FD.Outbound delivery states in the status lines.
+        -- Broadcast reasons and FD.Outbound delivery states in the Presence and
+        -- QueueTransport status lines (both pass the state through FD.L).
         ["Presence.lua"] = { "update", "heartbeat", "retry", "experiment", "sent", "failed" },
         ["Outbound.lua"] = { "expired", "dropped" },
         -- The stat card titles iterate an inline table.
@@ -302,7 +303,7 @@ return function(FD, equal, newNamespace)
         "Der gegnerische Client hat abgebrochen, weil dein Client nicht mehr antwortet."
             .. " Melde dich erneut an, um ein weiteres Match zu spielen.", "peer cancellation clause and outcome")
     equal(FD.Queue:CancelText("BUSY", false, { requeue = true }, "Thrall"),
-        "Thrall ist bereits in einem anderen Match. Suche erneut; deine Wartezeit bleibt erhalten.", "local cancellation and outcome")
+        "Thrall ist bereits in einem anderen Match. Die Suche läuft erneut; deine Wartezeit bleibt erhalten.", "local cancellation and outcome")
     equal(FD.L["An English sentence nobody translated."], "An English sentence nobody translated.", "unknown key falls back")
     equal(FD.Locale:Format("Untranslated %d of %s.", 3, "four"), "Untranslated 3 of four.", "unknown pattern formats in English")
     FD.Locale.current = "enUS"

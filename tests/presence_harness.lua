@@ -204,7 +204,7 @@ function Harness.client(options)
         setfenv(chunk, env)
         chunk("ForeverDuel", FD)
     end
-    for _, name in ipairs({ "Constants", "Locale", "Debug", "Commands", "Outbound", "Protocol", "Rating", "Database", "Wow" }) do
+    for _, name in ipairs({ "Constants", "Locale", "Native", "Debug", "Commands", "Outbound", "Protocol", "Rating", "Database", "Wow" }) do
         load(name)
     end
     -- Only discovery handlers are dispatched by state:emit.

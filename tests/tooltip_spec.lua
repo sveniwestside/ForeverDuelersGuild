@@ -219,12 +219,7 @@ return function(FD, equal)
     -- Integration with the real Presence: a player tooltip asks once (paced)
     -- and shows a rating only after the claimed GUID is corroborated.
     local Harness = assert(loadfile("tests/presence_harness.lua"))()
-    local h = Harness.client({ channel = false })
-    for _, module in ipairs({ "Native", "Tooltip" }) do
-        local chunk = assert(loadfile("ForeverDuel/" .. module .. ".lua"))
-        setfenv(chunk, h.env)
-        chunk("ForeverDuel", h.FD)
-    end
+    local h = Harness.client({ channel = false, tooltip = true })
     h.env.Enum.TooltipDataType = { Unit = 2 }
     local post
     h.env.TooltipDataProcessor = { AddTooltipPostCall = function(_, callback) post = callback end }

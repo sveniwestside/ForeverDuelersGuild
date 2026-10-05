@@ -60,7 +60,7 @@ return function(_, equal)
             if state.failCursor then error("cursor failed") end
             return state.cursorX, state.cursorY
         end
-        for _, module in ipairs({ "Native", "Minimap" }) do
+        for _, module in ipairs({ "Locale", "Native", "Minimap" }) do
             local chunk = assert(loadfile("ForeverDuel/" .. module .. ".lua"))
             setfenv(chunk, env)
             chunk("ForeverDuel", FD)
@@ -106,6 +106,7 @@ return function(_, equal)
     c:fire("OnEnter")
     equal(c.env.GameTooltip.title, "ForeverDuelersGuild", "tooltip identifies addon")
     equal(#c.env.GameTooltip.lines, 2, "tooltip describes click and drag")
+    equal(c.env.GameTooltip.lines[1], "Left-click: Open your duel record.", "English client shows the English click hint")
     equal(c.env.GameTooltip.owner, button, "tooltip owned by launcher")
     equal(c.env.GameTooltip.shown, true, "hover shows tooltip")
     c:fire("OnLeave")
@@ -196,6 +197,22 @@ return function(_, equal)
     equal(c.FD.Minimap.dragging, false, "drag error clears active tracking")
     equal(button.scripts.OnUpdate, nil, "drag error removes frame callback")
     c:preserved("failed drag")
+    equal(c.prints[1], "Minimap button unavailable. Use /duelrating to open your record.", "fallback text in English")
+
+    -- Tooltip and fallback texts go through the locale table.
+    local german = client()
+    german.FD.Locale.current = "deDE"
+    german.FD.Locale:Register("deDE", { ["Left-click: Open your duel record."] = "Linksklick: Bilanz",
+        ["Drag: Move around the minimap."] = "Ziehen: verschieben",
+        ["Minimap button unavailable. Use /duelrating to open your record."] = "Nicht verfügbar." })
+    german.FD.Minimap:Initialize()
+    german:fire("OnEnter")
+    equal(german.env.GameTooltip.lines[1], "Linksklick: Bilanz", "click hint is localized")
+    equal(german.env.GameTooltip.lines[2], "Ziehen: verschieben", "drag hint is localized")
+    german.failToggle = true
+    german:click()
+    equal(german.prints[1], "Nicht verfügbar.", "fallback text is localized")
+
     c.FD.Debug.Print = function() error("logger failed") end
     c.FD.Debug.Log = function() error("logger failed") end
     c.failToggle = true

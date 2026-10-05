@@ -27,7 +27,7 @@ _Review-driven rework. Simulated in the test suites; the live two-client run ([M
 
 - Blizzard's duel popup is never hidden or replaced before the addon accepts. The addon panel appears only after the opponent's addon has answered: below the popup for the receiver, and as a separate window for the challenger. It shows how many seconds the request has left.
 - Blizzard's **Accept** starts an unrated duel. **Decline** or Esc on the popup refuses the request. Closing the addon panel keeps the duel unrated.
-- The rated button is disabled in combat and enabled again afterwards.
+- A player who is already in combat when the request begins sees the rated button disabled until combat ends within the request window. Entering combat while a request is pending makes the duel unrated for good.
 - At the countdown the chat says `RATED duel vs <name> (win +x / loss -y)` or `This duel is UNRATED: <reason>`.
 
 ### Queue
@@ -40,8 +40,9 @@ _Review-driven rework. Simulated in the test suites; the live two-client run ([M
 
 ### Discovery
 
-- Discovery runs on demand. Your target and mouseover are asked while the zone window is open or their tooltip shows. Channel members are asked while the zone window is open, the queue is searching, or after **Refresh**. There is no nameplate or raid scanning, and no asking during a duel request or a queue match. Replies go only to channel members, visible players and queue partners, and strangers do not learn your map.
-- Once per session one profile is posted to the `ForeverDuel` channel to test whether channel messages work. If they do, periodic posts replace per-member whispers. The YELL/SAY beacon and the logged-message route of 0.5.6 are gone.
+- Discovery runs on demand. Your target and mouseover are asked while the zone window is open or their tooltip shows; targeting with the window closed sends nothing. Channel members are asked while the zone window is open, the queue is searching, or after **Refresh**. There is no nameplate or raid scanning, and no asking during a duel request or a queue match. Queries carry your full profile, map ID included.
+- Whispered replies go only to channel members, visible players and queue partners. Channel members that have not reported your map get map 0 in a reply; everyone else in that list gets your real map.
+- Once per session your full profile, including your map ID, is posted to every member of the `ForeverDuel` channel to test whether channel messages work. If they do, a post every 60 s and after profile changes replaces per-member whispers. The YELL/SAY beacon and the logged-message route of 0.5.6 are gone.
 - The channel is joined after the default chat channels. A password, a ban or a manual leave is detected and shown. Profiles stay valid for 3 minutes, and the browser marks older entries as "last seen".
 - New `/duelrating quiet` stops all discovery traffic. New `/duelrating ping` measures the round trip of an addon message over WHISPER, and over PARTY in a two-player group.
 - All addon messages now go through one paced sender with priorities and a shared whisper budget, so discovery can never delay duel or queue messages.
@@ -60,7 +61,9 @@ _Review-driven rework. Simulated in the test suites; the live two-client run ([M
 
 ### Language
 
-- All user-facing text is translatable. German clients get German texts, and anything untranslated falls back to English.
+- Complete German localization: every user-facing text has a German entry, and status texts describe what the addon is doing instead of reading like instructions. Other client languages show English.
+- `tests/locale_spec.lua` fails when a user-facing string has no German entry, a German entry is unused, or placeholders differ, so every new string needs a deDE entry.
+- Diagnostic output stays English on purpose: the duel, transport and traffic lines of `/duelrating status`, the `diagnose` and `errors` entries, and debug chat output.
 
 ### Development
 

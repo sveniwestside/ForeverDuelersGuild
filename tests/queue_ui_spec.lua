@@ -340,6 +340,41 @@ return function(_, equal)
     equal(small.FD.QueueUI.frame:IsShown(), false, "record navigation closes queue")
     equal(small.FD.Profile.frame:IsShown(), true, "record navigation opens overview")
 
+    -- The 1 Hz ticker covers every text that changes without a queue render:
+    -- always while queued or matched, and when idle only time-dependent
+    -- content (cleanup advisory, Leave group, an ageing profile count).
+    local live = client()
+    local liveUI = live.FD.QueueUI
+    liveUI:Show()
+    equal(#live.timers, 0, "an idle window without time-dependent content stays quiet")
+    live.status.state, live.status.cleanupStatus, live.status.groupAction = "CLEANUP", "Closing the queue group.", true
+    liveUI:RefreshIfShown()
+    equal(liveUI.timer.text, "", "cleanup without a deadline shows no countdown")
+    equal(#live.timers, 1, "a queue match keeps the ticker without a countdown")
+    -- Queue:Cleanup ends a match while the pair is still grouped; the
+    -- engine's own pulse changes these fields without rendering the window.
+    live.status.state = "IDLE"
+    live.status.cleanupStatus = "You are still in a group. Leave it manually if you no longer need it."
+    live:tick()
+    equal(liveUI.cleanup.text, live.status.cleanupStatus, "the end of a grouped match shows without a queue render")
+    equal(liveUI.leaveGroup.enabled, true, "Leave group offered for the leftover pair")
+    equal(#live.timers, 1, "an idle cleanup advisory keeps the ticker")
+    live.status.cleanupStatus, live.status.groupAction = nil, false
+    live:tick()
+    equal(liveUI.cleanup.text, "", "a cleared advisory disappears without a queue render")
+    equal(liveUI.leaveGroup.enabled, false, "Leave group follows the native group without a queue render")
+    equal(#live.timers, 0, "nothing time-dependent is left: the ticker stops")
+    live.status.discovered = 3
+    liveUI:RefreshIfShown()
+    equal(#live.timers, 1, "an idle profile count ages, so it keeps the ticker")
+    live.status.discovered = 0
+    live:tick()
+    equal(liveUI.discovery.text, "Queue profiles found: 0", "aged-out profiles leave the count without a queue render")
+    equal(#live.timers, 0, "an empty profile count ends the ticker")
+    live.status.state, live.status.venue = "TRAVELLING", {}
+    liveUI:RefreshIfShown()
+    equal(liveUI.venue.text, "Venue: unnamed", "a venue without name or ID gets its own line")
+
     -- Every user-facing label goes through the locale table.
     local german = client()
     german.FD.Locale.current = "deDE"

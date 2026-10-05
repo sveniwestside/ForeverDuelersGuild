@@ -119,7 +119,8 @@ function Transport:Route(packet, owner, target)
 end
 
 function Transport:Remember(kind, target, route, status, code)
-    self.lastSend = FD.Locale:Format("%s to %s via %s (%s)", kind, target, tostring(route), status)
+    -- The Outbound delivery state is shown localized, like Presence's lines.
+    self.lastSend = FD.Locale:Format("%s to %s via %s (%s)", kind, target, tostring(route), FD.L[status])
     self.lastSendAt, self.lastSendRoute, self.lastSendStatus = now(), route, status
     log("queue send", kind, tostring(route), status, code ~= nil and tostring(code) or nil)
 end
