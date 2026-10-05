@@ -6,7 +6,7 @@ return function(FD, equal)
     FD.duel, FD.Debug = { active = active }, {}
     FD.Wow = { Readable = function() return true end }
     FD.Database:Initialize(nil, { guid = "Player-1-AAA", name = "Me", realm = "Realm", classFile = "MAGE", level = 30, maxLevel = 60 })
-    FD.Presence = { STALE = 45 }
+    FD.Presence = { STALE = 90 }
     function FD.Presence:RefreshNow() state.refreshes = state.refreshes + 1 end
     function FD.Presence:Changed() state.wakes = state.wakes + 1 end
     function FD.Presence:GetOwnPlayer()
@@ -110,7 +110,7 @@ return function(FD, equal)
     for index = 10, 1, -1 do
         state.players[#state.players + 1] = { guid = "Player-1-" .. index,
             fullName = string.format("Peer%02d-Realm", index), rating = 1500 + index, classFile = "MAGE",
-            level = 30, maxLevel = 60, bracket = "LEVELING", lastSeen = state.now - (index == 2 and 50 or 10) }
+            level = 30, maxLevel = 60, bracket = "LEVELING", lastSeen = state.now - (index == 2 and 95 or 60) }
     end
     state.status = "10 ForeverDuel players discovered."
     FD.Zone:Toggle()
@@ -119,8 +119,8 @@ return function(FD, equal)
     equal(FD.Zone.rows[1].rating.text, "1501", "row includes peer rating")
     equal(FD.Zone.rows[1].level.text, "Lv 30 / Leveling", "row includes level and rating mode")
     equal(FD.Zone.rows[1].name.color[2], 0.7, "row uses class color")
-    equal(FD.Zone.rows[1].seen.text, "", "a fresh entry has no last-seen note")
-    equal(FD.Zone.rows[2].seen.text, "last seen 50 s ago", "an entry older than 45 seconds is marked last seen")
+    equal(FD.Zone.rows[1].seen.text, "", "an entry refreshed by the 60 s heartbeat has no last-seen note")
+    equal(FD.Zone.rows[2].seen.text, "last seen 95 s ago", "an entry older than STALE is marked last seen")
     equal(FD.Zone.rows[8].name.text, "Peer08-Realm", "first page bounded to eight rows")
     equal(FD.Zone.pageLabel.text, "Page 1 / 2  /  10 of 10 players", "pagination includes total players")
     equal(FD.Zone.next.enabled, true, "next page available")

@@ -26,7 +26,7 @@ local _, FD = ...
 -- only rare facts: the CHANNEL experiment, changed CHANNEL outcomes, the
 -- CHANNEL route becoming audible and the first whisper failure of each kind,
 -- so a busy channel cannot evict duel and queue evidence.
-FD.Presence = { players = {}, suspended = false, queries = {}, replies = {}, held = {}, whispered = {},
+FD.Presence = { players = {}, suspended = false, queries = {}, asked = {}, replies = {}, held = {}, whispered = {},
     forgotten = {}, failures = {}, work = {}, workCount = 0, seq = 0, pings = {}, pongs = {}, pingSeq = 0 }
 local Presence = FD.Presence
 local PREFIX = "ForeverDuelZone2"
@@ -44,7 +44,11 @@ local WORK_LIMIT, WORK_TTL = 30, 30 -- pending discovery whispers and their life
 local QUERY_BACKLOG = 6             -- member queries waiting at once (refilled every Tick)
 local ANNOUNCE_GAP, BROADCAST, CHANNEL_STALE, CHANNEL_RETRY = 30, 60, 180, 600
 local NOT_FOUND_WINDOW, PING_TIMEOUT, PONG_GAP, MAX_PINGS = 5, 90, 2, 20
-Presence.STALE = 45                 -- the zone browser marks older entries as "last seen"
+local PONG_BURST, PONG_WINDOW = 3, 10 -- PONGs to everyone: 3, refilled 3 per 10 s
+-- The zone browser marks older entries as "last seen": only after a missed
+-- refresh (CHANNEL heartbeat 60 s, member re-query after HEARTBEAT 45 s plus
+-- sweep and whisper delay), never before the normal one; below EXPIRY.
+Presence.STALE = 90
 local classes = { WARRIOR = true, PALADIN = true, HUNTER = true, ROGUE = true,
     PRIEST = true, SHAMAN = true, MAGE = true, WARLOCK = true, DRUID = true }
 
@@ -152,6 +156,18 @@ function Presence:Entry(name)
     if not self.suspended and fresh(player, GetTime()) then return player end
 end
 
+-- An entry stored from an unsolicited whisper of an untrusted sender stays
+-- out of every lookup (zone browser, queue discovery, PONG) until that sender
+-- is trusted: a queue peer, a channel member or a visible unit.
+function Presence:Visible(player)
+    if not player.unsolicited then return true end
+    if self:Trust(player.fullName, player.guid) then
+        player.unsolicited = nil
+        return true
+    end
+    return false
+end
+
 local function better(a, b)
     if not b then return true end
     if (a.verified == true) ~= (b.verified == true) then return a.verified == true end
@@ -162,7 +178,7 @@ function Presence:GetPlayer(guid)
     if not FD.Wow:Readable(guid) or not FD.Protocol:ValidGUID(guid) or self.suspended then return nil end
     local best, at = nil, GetTime()
     for _, player in pairs(self.players) do
-        if player.guid == guid and fresh(player, at) and better(player, best) then best = player end
+        if player.guid == guid and fresh(player, at) and better(player, best) and self:Visible(player) then best = player end
     end
     return best and FD.Copy(best) or nil
 end
@@ -172,7 +188,7 @@ function Presence:GetPlayers()
     if not mapID or self.suspended then return list end
     local at = GetTime()
     for _, player in pairs(self.players) do
-        if fresh(player, at) and player.mapID == mapID then list[#list + 1] = FD.Copy(player) end
+        if fresh(player, at) and player.mapID == mapID and self:Visible(player) then list[#list + 1] = FD.Copy(player) end
     end
     table.sort(list, function(a, b)
         if a.fullName == b.fullName then return a.guid < b.guid end
@@ -186,7 +202,7 @@ function Presence:FindByName(fullName)
     if not FD.Wow:Readable(fullName) or type(fullName) ~= "string" or self.suspended then return nil end
     local at = GetTime()
     for _, player in pairs(self.players) do
-        if player.fullName == fullName and fresh(player, at) then return FD.Copy(player) end
+        if player.fullName == fullName and fresh(player, at) and self:Visible(player) then return FD.Copy(player) end
     end
 end
 
@@ -195,7 +211,7 @@ function Presence:Candidates()
     if self.suspended then return result end
     local at = GetTime()
     for _, player in pairs(self.players) do
-        if fresh(player, at) then result[#result + 1] = FD.Copy(player) end
+        if fresh(player, at) and self:Visible(player) then result[#result + 1] = FD.Copy(player) end
     end
     return result
 end
@@ -388,7 +404,7 @@ function Presence:Done(name, entry, item, status, code)
     local at, kind = GetTime(), entry.reply and "profile" or "query"
     if status == "sent" then
         self.whispered[name], self.forgotten[name] = at, nil
-        if entry.reply then self.replies[name] = at else self.queries[name] = at end
+        if entry.reply then self.replies[name] = at else self.queries[name], self.asked[name] = at, at end
     elseif status == "failed" and code == FD.Outbound:Code("TargetOffline") then
         self:Forget(name) -- Offline recipients are never retried.
     elseif not entry.reply then
@@ -448,7 +464,7 @@ function Presence:Observe(unit, identity)
         if type(identity) ~= "table" then return nil end
         local player = self:Entry(identity.fullName)
         if player and player.guid == identity.guid then
-            player.verified = true
+            player.verified, player.unsolicited = true, nil
             return FD.Copy(player)
         end
         self:Ask(unit, identity, true)
@@ -461,7 +477,8 @@ function Presence:ScanNearby()
     return self:Run(function() self:Wake(0) end)
 end
 
-function Presence:Store(name, player)
+-- solicited: a CHANNEL post, an answer to our own query, or a trusted sender.
+function Presence:Store(name, player, solicited)
     local at, old = GetTime(), self.players[name]
     if not old then
         local count, oldestKey, oldestAt = 0, nil, math.huge
@@ -478,6 +495,9 @@ function Presence:Store(name, player)
     player.fullName, player.lastSeen = name, at
     player.verified = old ~= nil and old.guid == player.guid and old.verified == true
         or self:NativeUnit(name, player.guid) ~= nil
+    -- An accepted entry stays accepted when the same sender refreshes it.
+    player.unsolicited = not solicited and not player.verified
+        and (old == nil or old.guid ~= player.guid or old.unsolicited == true) or nil
     self.players[name] = player
     return fresh(old, at) and old or nil
 end
@@ -519,7 +539,9 @@ function Presence:Receive(prefix, payload, distribution, sender, _, _, localID)
         self.lastChannelReceive = at
         if FD.Roster then FD.Roster:AddMember(name, player.guid, true) end
     end
-    local known = self:Store(name, player)
+    local asked = self.asked[name]
+    local solicited = channel or asked ~= nil and at - asked < EXPIRY or self:Trust(name, player.guid) ~= nil
+    local known = self:Store(name, player, solicited)
     self.lastReceive = FD.Locale:Format(query and "Query from %s via %s" or "Profile from %s via %s", name, distribution)
     traffic("receive", query and "query" or "profile", "via " .. distribution)
     if query then self:Answer(name, player.guid)
@@ -649,6 +671,7 @@ function Presence:Tick()
         if type(player) ~= "table" or type(player.lastSeen) ~= "number" or at - player.lastSeen >= FORGET then self.players[name] = nil end
     end
     for name, last in pairs(self.queries) do if at - last >= FORGET then self.queries[name] = nil end end
+    for name, last in pairs(self.asked) do if at - last >= EXPIRY then self.asked[name] = nil end end
     for name, last in pairs(self.replies) do if at - last >= MIN_REPLY then self.replies[name] = nil end end
     for name, last in pairs(self.whispered) do
         if at - last >= NOT_FOUND_WINDOW then self.whispered[name] = nil end
@@ -726,13 +749,18 @@ end
 
 -- A loading screen only suspends: the cache (hidden while suspended) and the
 -- channel members survive, so the zone change that follows still reaches
--- trusted peers through Announce.
+-- trusted peers through Announce. Known addon users and members may be asked
+-- again at once; names that never answered keep their STRANGER interval and
+-- offline names their Forget suppression.
 function Presence:Leave(logout)
+    for name in pairs(self.queries) do
+        if self.players[name] or FD.Roster and FD.Roster:IsMember(name) then self.queries[name] = nil end
+    end
     if FD.Roster then FD.Roster:Reset() end
     self.suspended = true
-    self.queries, self.replies = {}, {}
+    self.replies = {}
     self:DropWork()
-    if logout then self.stopped, self.players = true, {} end
+    if logout then self.stopped, self.players, self.queries, self.asked = true, {}, {}, {} end
     self:Refresh()
 end
 
@@ -764,6 +792,18 @@ function Presence:NotFound(message)
     if not self.forgotten[whispered] then
         self.forgotten[whispered] = true
         FD.Outbound:Unreachable(whispered)
+    end
+    -- An open WHISPER probe to that name has its answer: nobody will PONG.
+    for seq, probe in pairs(self.pings) do
+        if probe.route == "WHISPER" and sameName(probe.target, whispered) then
+            self.pings[seq] = nil
+            FD.Debug:Log("ping", "no such player", probe.route)
+            -- Printed after the chat filter has returned.
+            local text = FD.Locale:Format("PING to %s via %s: no such player online.", probe.target, probe.route)
+            if C_Timer and type(C_Timer.After) == "function" then
+                C_Timer.After(0, function() self:Run(function() say(text) end) end)
+            else say(text) end
+        end
     end
     return true
 end
@@ -825,8 +865,11 @@ function Presence:GroupedWith(name)
     return identity ~= nil and identity.fullName == name
 end
 
+-- A cached player (not one known only from an unsolicited whisper), a
+-- channel member, the target or a party member.
 function Presence:PongAllowed(name)
-    if self.players[name] or FD.Roster and FD.Roster:IsMember(name) then return true end
+    local player = self.players[name]
+    if player and self:Visible(player) or FD.Roster and FD.Roster:IsMember(name) then return true end
     for _, unit in ipairs({ "target", "party1", "party2", "party3", "party4" }) do
         local identity = FD.Wow:Identity(unit)
         if identity and identity.fullName == name then return true end
@@ -897,10 +940,20 @@ function Presence:ReceivePing(payload, distribution, name)
     if kind == "PING" then
         local key = name .. " " .. distribution
         if self.pongs[key] and at - self.pongs[key] < PONG_GAP or not self:PongAllowed(name) then return end
+        -- A global budget on top of the per-sender gap: several pingers
+        -- cannot take the shared whisper budget. A burst of 3 keeps the
+        -- simultaneous WHISPER and PARTY probe of one pinger.
+        self.pongTokens = math.min(PONG_BURST, (self.pongTokens or PONG_BURST)
+            + (at - (self.pongRefill or at)) * PONG_BURST / PONG_WINDOW)
+        self.pongRefill = at
+        if self.pongTokens < 1 then return end
+        self.pongTokens = self.pongTokens - 1
         self.pongs[key] = at
         for other, last in pairs(self.pongs) do if at - last >= PONG_GAP then self.pongs[other] = nil end end
+        -- Keyed per route: a PONG still waiting for budget is replaced, not queued twice.
         FD.Outbound:Send({ prefix = PREFIX, payload = string.format("PONG|%d|%.0f", seq, clock), channel = distribution,
-            target = name, priority = FD.Outbound.QUEUE, ttl = 10, owner = "ping", noWhisperFallback = true })
+            target = name, priority = FD.Outbound.QUEUE, ttl = 10, owner = "ping", noWhisperFallback = true,
+            key = "pong " .. distribution })
         FD.Debug:Log("ping", "answered", distribution)
         return
     end

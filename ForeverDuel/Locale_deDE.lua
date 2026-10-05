@@ -160,6 +160,7 @@ FD.Locale:Register("deDE", {
     ["Move closer and target this player, then click Duel again."] = "Geh näher heran, nimm den Spieler ins Ziel und klicke erneut auf 'Duell'.",
     ["Too many pings are still waiting for an answer."] = "Zu viele Pings warten noch auf eine Antwort.",
     ["PING to %s via %s was not sent (%s)."] = "PING an %s über %s wurde nicht gesendet (%s).",
+    ["PING to %s via %s: no such player online."] = "PING an %s über %s: Dieser Spieler ist nicht online.",
     ["outbound queue full"] = "Sendewarteschlange voll",
     ["PING sent to %s via %s."] = "PING an %s über %s gesendet.",
     ["Addon messages are unavailable; the latency probe cannot run."] = "Addon-Nachrichten nicht verfügbar; die Latenzmessung kann nicht laufen.",

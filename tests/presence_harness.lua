@@ -260,9 +260,20 @@ function Harness.client(options)
         end
         return result
     end
-    function state:receive(payload, sender, distribution, localID)
+    -- Raw delivery, as the network does it.
+    function state:inject(payload, sender, distribution, localID)
         self:emit("CHAT_MSG_ADDON", "ForeverDuelZone2", payload, distribution or "WHISPER", sender, "", 0,
             localID or 0, "", 0)
+    end
+    -- A whispered FDP2 profile handed in by a spec models the answer to our
+    -- own query: Presence keeps an unsolicited whisper of an untrusted sender
+    -- out of its lookups (use inject for that case).
+    function state:receive(payload, sender, distribution, localID)
+        if (distribution or "WHISPER") == "WHISPER" and type(payload) == "string" and payload:sub(1, 5) == "FDP2|" then
+            local name = FD.Presence:Canonical(sender)
+            if name then FD.Presence.asked[name] = self.now end
+        end
+        self:inject(payload, sender, distribution, localID)
     end
     function state:systemMessage(text)
         for _, filter in ipairs(self.filters) do
@@ -313,7 +324,7 @@ function Harness.network(options)
         if packet.channel == "WHISPER" then
             local client = self:find(packet.target)
             if client then
-                client:receive(packet.payload, sender.fullName, "WHISPER")
+                client:inject(packet.payload, sender.fullName, "WHISPER")
             elseif self:findBot(packet.target) then
                 local bot = self:findBot(packet.target)
                 bot.received[#bot.received + 1] = { payload = packet.payload, at = self.now, from = sender.fullName }
@@ -329,12 +340,12 @@ function Harness.network(options)
             end
         elseif packet.channel == "CHANNEL" and self.channelDelivery then
             for _, client in ipairs(self.clients) do
-                if client.joined then client:receive(packet.payload, sender.fullName, "CHANNEL", client.channelID) end
+                if client.joined then client:inject(packet.payload, sender.fullName, "CHANNEL", client.channelID) end
             end
         elseif packet.channel == "PARTY" then
             for _, client in ipairs(self.clients) do
                 if client ~= sender and client.group == sender.group and client.group then
-                    client:receive(packet.payload, sender.fullName, "PARTY")
+                    client:inject(packet.payload, sender.fullName, "PARTY")
                 end
             end
         end
@@ -376,7 +387,7 @@ function Harness.network(options)
             if packet.fromBot then
                 local client = self:find(packet.target)
                 self.log[#self.log + 1] = { from = packet.fromBot.name, to = packet.target, payload = packet.payload, at = self.now }
-                if client then client:receive(packet.payload, packet.fromBot.name, packet.channel) end
+                if client then client:inject(packet.payload, packet.fromBot.name, packet.channel) end
             else
                 self:deliver(packet)
             end

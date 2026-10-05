@@ -84,10 +84,10 @@ Both clients on 0.6, solo, outdoors in the open world, same faction, ruleset det
 
 ## 5. Discovery, quiet mode and ping
 
-1. With both on one map, open `/duelrating zone`. Within a few seconds (or after **Refresh**) the other player is listed with level, mode and rating. Hovering them shows the rating line in the tooltip. Entries older than 45 s show "last seen N s ago".
+1. With both on one map, open `/duelrating zone`. Within a few seconds (or after **Refresh**) the other player is listed with level, mode and rating. Hovering them shows the rating line in the tooltip. Entries older than 90 s show "last seen N s ago"; a healthy peer never shows it.
 2. Status shows `Zone roster: ForeverDuel channel joined; N members known.` and a `Zone channel send: experiment: ...` line. Record that line. `Discovery route: CHANNEL broadcasts` appears only after another player's channel post arrived; this route is not yet verified live.
 3. `/duelrating quiet` on both. Status shows `Quiet mode: on`, and the `ForeverDuelZone2` Traffic counters stop growing. A rated duel against a visible player still works, and so does `/duelrating ping`. Turn quiet mode off again.
-4. `/duelrating ping` with the other player targeted: "PING sent to <other> via WHISPER." and then "PONG from <other> via WHISPER: N.NN s round trip". In a two-player group a PARTY probe runs at the same time.
+4. `/duelrating ping` with the other player targeted: "PING sent to <other> via WHISPER." and then "PONG from <other> via WHISPER: N.NN s round trip". In a two-player group a PARTY probe runs at the same time. `/duelrating ping Nosuchname` reports "PING to Nosuchname via WHISPER: no such player online." at once.
 
 ## 6. German client
 

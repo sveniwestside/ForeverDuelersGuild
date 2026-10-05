@@ -124,10 +124,16 @@ return function(_, equal)
     equal(packets(b, "PONG|"), 1, "a channel member is answered")
     net, a, b = pair({ latency = 0.2, jitter = 0 })
     b.units.target = nil
+    b:inject(b:profile({ guid = a.player.guid, classFile = "MAGE", level = 30 }), "Alpha One")
+    a:command("ping")
+    net:advance(2)
+    equal(packets(b, "PONG|"), 0, "a profile whispered without being asked earns no PONG")
+    net, a, b = pair({ latency = 0.2, jitter = 0 })
+    b.units.target = nil
     b:receive(b:profile({ guid = a.player.guid, classFile = "MAGE", level = 30 }), "Alpha One")
     a:command("ping")
     net:advance(2)
-    equal(packets(b, "PONG|"), 1, "a known presence player is answered")
+    equal(packets(b, "PONG|"), 1, "a known presence player (answer to our query) is answered")
     net, a, b = pair({ latency = 0.2, jitter = 0 })
     b.units.target = nil
     b:addUnit("party3", a.player)
@@ -175,4 +181,40 @@ return function(_, equal)
     c:start()
     c:command("ping Beta Two")
     equal(printed(c, "unavailable") ~= nil, true, "an unregistered prefix disables the probe visibly")
+
+    -- An offline or misspelled name: the server's not-found line answers the
+    -- probe at once instead of a misleading 90 s timeout.
+    c = Harness.client({ channel = false })
+    c:start(); c:advance(3)
+    c:command("ping Gone Player")
+    c:advance(0.3)
+    equal(c:systemMessage("No player named 'Gone Player' is currently playing."), true, "the not-found line stays hidden")
+    c:advance(0.1)
+    equal(printed(c, "PING to Gone Player via WHISPER: no such player online.") ~= nil, true,
+        "the probe reports the missing player at once")
+    equal(next(c.P.pings), nil, "the probe is closed")
+    c:advance(100)
+    equal(printed(c, "No PONG from Gone Player"), nil, "no timeout line follows")
+
+    -- A global PONG budget: several pingers within their per-sender gap cannot
+    -- take the shared whisper budget.
+    c = Harness.client({ channel = false })
+    c:start(); c:advance(3)
+    local pingers = {}
+    for index = 1, 4 do
+        pingers[index] = Harness.identity(900 + index, { name = "Pinger" .. index, surname = "Busy" })
+        c:receive(c:profile(pingers[index]), Harness.fullName(pingers[index]))
+    end
+    local seq, started = 0, c.now
+    while c.now - started < 60 do
+        for _, identity in ipairs(pingers) do
+            seq = seq + 1
+            c:receive(string.format("PING|%d|%d", seq, seq), Harness.fullName(identity))
+            c:advance(0.5)
+        end
+    end
+    local pongs = 0
+    for _, packet in ipairs(c.sent) do if packet.payload:sub(1, 5) == "PONG|" then pongs = pongs + 1 end end
+    equal(pongs <= 3 + 60 * 0.3 + 1, true, "at most 3 PONGs per 10 s in total (" .. pongs .. ")")
+    equal(pongs >= 15, true, "pingers within the budget are still answered (" .. pongs .. ")")
 end

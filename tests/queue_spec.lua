@@ -806,6 +806,23 @@ return function(_, equal, newNamespace)
     eq(w.c.queue.ticket.peer.guid ~= loser.profile.guid, true, "the invitee keeps its first match")
     w:noRatings()
 
+    scenario = "QUERY answers are spaced per sender"
+    w = world()
+    w.a.queue:Join()
+    local function profilesTo(c)
+        local n = 0
+        for _, m in ipairs(w.sent) do if m.from == w.a and m.to == c and m.kind == "PROFILE" then n = n + 1 end end
+        return n
+    end
+    local before = profilesTo(w.b)
+    for _ = 1, 5 do w.a.queue:Run(function() w.a.queue:Receive({ kind = "QUERY" }, w.b.profile.fullName) end) end
+    eq(profilesTo(w.b) - before, 1, "a burst of QUERYs gets one PROFILE")
+    w:advance(2.1)
+    before = profilesTo(w.b)
+    w.a.queue:Run(function() w.a.queue:Receive({ kind = "QUERY" }, w.b.profile.fullName) end)
+    eq(profilesTo(w.b) - before, 1, "a QUERY after the spacing is answered again")
+    w:noRatings()
+
     scenario = "a server BUSY notice reads as an invitation failure on the invitee"
     -- The invitee bound the ticket through the OFFER, but the server refuses
     -- the invitation because the invitee is grouped or invited elsewhere.

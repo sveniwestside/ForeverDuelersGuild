@@ -724,7 +724,17 @@ end
 function Queue:Receive(p, sender, channel)
     if type(p) ~= "table" or type(sender) ~= "string" then return end
     local now = self.env.now()
-    if p.kind == "QUERY" then return self:Announce(sender) end
+    if p.kind == "QUERY" then
+        -- One PROFILE (with our position) per sender per QUERY_SPACING,
+        -- however often it asks; QueryPeer itself asks a peer every 5 s or less.
+        self.answered = self.answered or {}
+        for name, at in pairs(self.answered) do
+            if now - at >= T.QUERY_SPACING then self.answered[name] = nil end
+        end
+        if self.answered[sender] then return end
+        self.answered[sender] = now
+        return self:Announce(sender)
+    end
     if p.kind == "PROFILE" then
         if not FD.QueueProtocol:ValidProfile(p) or not self.session or not self.ownProfile or p.guid == self.ownProfile.guid then return end
         if p.joinedAt > self.env.epoch() + 2 or p.joinedAt < self.env.epoch() - 86400 then return end

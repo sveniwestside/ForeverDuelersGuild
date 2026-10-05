@@ -200,4 +200,50 @@ return function(_, equal)
     end
     test.FD.Debug.Error = function() error("logger failed") end
     equal(pcall(function() test.P:Challenge("Beta Two") end), true, "logger failure stays isolated")
+
+    -- An unsolicited whisper from a sender that is neither a channel member,
+    -- a queue peer nor visible is cached but stays out of every lookup, so
+    -- the queue never sends that sender its position or queries it.
+    test = client()
+    p = test.P
+    local MAL = { guid = "Player-1-0000EEEE", name = "Mal", surname = "Evil", realm = "Forever",
+        classFile = "ROGUE", level = 30, faction = "Alliance" }
+    test:inject(test:profile(MAL), "Mal Evil")
+    test:inject(test:profile(MAL, nil, "FDQ2"), "Mal Evil")
+    equal(p.players["Mal Evil"] ~= nil, true, "the unsolicited claim is cached")
+    equal(p:FindByName("Mal Evil"), nil, "hidden from name lookups (queue transport)")
+    equal(p:GetPlayer(MAL.guid), nil, "hidden from GUID lookups")
+    equal(#p:Candidates(), 0, "hidden from queue candidates")
+    equal(#p:GetPlayers(), 0, "hidden from the zone browser")
+    equal(p:PongAllowed("Mal Evil"), false, "earns no PONG")
+    equal(#test:whispers(), 0, "and gets no reply")
+    test.R:AddMember("Mal Evil", MAL.guid, true)
+    equal(p:FindByName("Mal Evil") ~= nil, true, "a proven channel member becomes visible")
+    test = client()
+    p = test.P
+    test:receive(test:profile(MAL), "Mal Evil")
+    equal(p:FindByName("Mal Evil") ~= nil, true, "an answer to our own query is visible at once")
+
+    -- A loading screen keeps the STRANGER interval for names that never
+    -- answered, and the Forget suppression of offline names.
+    test = client({ joined = false })
+    test:advance(3)
+    test:addUnit("mouseover", Harness.identity(42, { name = "Nonaddon", surname = "Guy" }))
+    test.P:Observe("mouseover")
+    test:advance(4)
+    equal(#test:whispers("FDQ2|"), 1, "a tooltip asks a stranger once")
+    for _ = 1, 3 do
+        test:emit("PLAYER_LEAVING_WORLD"); test:advance(2); test:emit("PLAYER_ENTERING_WORLD"); test:advance(4)
+        test.P:Observe("mouseover")
+        test:advance(4)
+    end
+    equal(#test:whispers("FDQ2|"), 1, "loading screens do not reset the STRANGER interval")
+    test.P:Forget("Gone Player")
+    test:emit("PLAYER_LEAVING_WORLD"); test:advance(1); test:emit("PLAYER_ENTERING_WORLD")
+    equal(test.P.queries["Gone Player"] ~= nil, true, "the Forget suppression survives a loading screen")
+
+    -- "last seen" marks a missed refresh, not the wait for the next normal
+    -- one: above the CHANNEL heartbeat (60 s) and the member re-query
+    -- interval (45 s), below the profile expiry (180 s).
+    equal(test.P.STALE > 60 and test.P.STALE < 180, true, "STALE lies between the heartbeat and the expiry")
 end
