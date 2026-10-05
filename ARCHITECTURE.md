@@ -1,290 +1,310 @@
-# ForeverDuelersGuild architecture
+# ForeverDuelersGuild architecture (0.6.0)
 
-This document describes local development version 0.5.7, adding independent queue matchmaking, native-request fixes, guarded handshake diagnostics, exact-pair native party routes, an optional logged solo route and tolerant native group confirmation to the published 0.4.5 duel/discovery implementation. SavedVariables schema and rated-duel protocol remain version 2. A complete 0.5.6 solo result over ordinary WHISPER is live-confirmed; the latest user queue test confirms automatic invitation but fails before venue/travel confirmation. The full 0.5.7 queue requires paired live validation. [API_VERIFICATION.md](docs/API_VERIFICATION.md) separates source evidence from client tests. Historical observations and current acceptance are recorded in [IMPLEMENTATION_STATUS.md](docs/IMPLEMENTATION_STATUS.md).
+This is a current-state reference for the code in `ForeverDuel/`. Every value below was read from the source; when the code changes, update this file in the same commit. Dated history up to 0.5.7 is in [docs/investigations/](docs/investigations/) and [CHANGELOG.md](CHANGELOG.md).
 
-Installed 0.5.7 ingress diagnostics observe native receive entry before readability/channel gates, only during an active native duel request. Counts and allowlisted reasons distinguish an absent event from an early rejection. Protected initialization, observation and logging cannot interrupt the original receiver. Unrelated readable prefixes are ignored, restricted logged prefixes receive only a generic observation, and arbitrary native fields are never copied to this diagnostic. Passing entry gates is not peer proof. Bounded counts reset for a new match; traces deduplicate repeated reasons and preserve the existing 64-summary limit. No rated send route, nonce validation, consent or deadline is changed.
+Every file receives the private namespace through `local _, FD = ...`. The only persistent global is the per-character SavedVariable `ForeverDuelDB`. There is no network service and no third-party library.
 
-QueueWow classifies native groups as EXACT, SOLO, PENDING or CHANGED. EXACT retains the original full party identity proof; unreadable/throwing/incomplete flags, counts or identity remain PENDING, while a readable wrong opponent, third member or raid is CHANGED. GROUPING/PLANNING can wait for PENDING within their original 60-/20-second limits, retaining the separate 45-second peer watchdog. Authenticated receive callbacks enforce the same group/plan limits before mutation. StartTravel commits a deadline and permits GO/GO_ACK only after a fresh exact pair check; deferred confirmations do not reset time or provide ownership. Cleanup can adopt a newly proven exact pair only after bilateral reservation entered grouping, and rechecks native membership at leave. A positive change never grants automatic cleanup. Stable queue role/transition/group/planning summaries are persisted without tickets or coordinates. The coordinator remains the lower full GUID in lexical order, independent of enrollment order or rating, and alone attempts the native invitation after reservation confirmation.
+## Module map (TOC load order)
 
-## Boundaries
+| # | File | Area | Responsibility |
+| --- | --- | --- | --- |
+| 1 | `Constants.lua` | foundation | `FD.C` versions, rating rules and duel timings; the command, status and event registries; `FD.Copy`. |
+| 2 | `Locale.lua` | foundation | `FD.L[...]` / `FD.Locale:Format`: English source text is the key; a missing or broken translation falls back to English. |
+| 3 | `Locale_deDE.lua` | foundation | German translations registered for `deDE`. |
+| 4 | `Debug.lua` | foundation | Chat output, persisted lifecycle/transport rings, persisted Lua errors, traffic counters. |
+| 5 | `Commands.lua` | foundation | `/duelrating` dispatcher plus `help`, `debug`, `status`, `diagnose`, `errors`. |
+| 6 | `Outbound.lua` | foundation | The only sender of addon messages: prefix registration, priority lanes, token budgets, retries, PARTY->WHISPER fallback, counters. |
+| 7 | `Rating.lua` | data | Brackets, eligibility, level-weighted Elo, versioned `Rules()`. |
+| 8 | `Database.lua` | data | Schema-2 `ForeverDuelDB`: load-time ledger validation, schema-1 Legacy migration, archive of another character's table, repair with quarantine, commit, reset. |
+| 9 | `History.lua` | data | Read-only queries: recent, pages, series, details, overview statistics. |
+| 10 | `Protocol.lua` | duel | FD3 envelope: 15 strict fields plus optional `key=value` extensions; FD2 recognition; nonces; match IDs. |
+| 11 | `Results.lua` | duel | Pure parser for the localized countdown and winner system messages. |
+| 12 | `Duel.lua` | duel | Rated state machine: consent, freshness checks, evidence, finalization, CANCEL reasons. No game globals; the environment is injected. |
+| 13 | `Comms.lua` | duel | Duel packets to Outbound (drain validity, PARTY/WHISPER route), receive gates, own-PARTY-echo filter, status lines. |
+| 14 | `UI.lua` | duel | The rated panel (companion below Blizzard's popup or standalone), chat summary and history. |
+| 15 | `Profile.lua` | UI | Movable overview: mode selectors, chart, paged history, details, archive/quarantine notice. |
+| 16 | `Minimap.lua` | UI | Minimap button with saved angle. |
+| 17 | `Presence.lua` | discovery | On-demand profile whispers, CHANNEL experiment, profile cache, quiet mode, `ping`. |
+| 18 | `Roster.lua` | discovery | Membership of the `ForeverDuel` chat channel: join, member list, failure detection, selection restore. |
+| 19 | `Zone.lua` | UI | Players in zone browser: filters, Refresh, "last seen", Duel button. |
+| 20 | `Tooltip.lua` | UI | Rating line on player tooltips, only for corroborated profiles. |
+| 21 | `Wow.lua` | duel | Native adapter: identity, outgoing capture and acknowledgment, incoming resolution, system messages, hooks, `RequestDuel`, duel events. |
+| 22 | `QueueProtocol.lua` | queue | Queue protocol 2 (`ForeverDuelQ2`, wire `FQ2`): schemas, reasons, validation. |
+| 23 | `Venues.lua` | queue | Pure venue logic: eligibility, digest hashes, selection, travel estimate, same-spot test. |
+| 24 | `Queue.lua` | queue | Queue engine: forward transitions, one deadline per state, `Finish` with outcome classes. Environment is injected. |
+| 25 | `QueueWow.lua` | queue | Native queue adapter: ruleset, position, GUID group classification, invitations, co-location, tested places, waypoint. |
+| 26 | `QueueTransport.lua` | queue | Queue packets to Outbound; sender, PARTY and ticket checks on receive. |
+| 27 | `QueueUI.lua` | UI | Queue window. |
+| 28 | `QueueCore.lua` | queue | Queue wiring: events, 1 s pulse, tested-place sharing, `queue` command and status. |
+| 29 | `Core.lua` | foundation | Bootstrap, `FD:Safe` recovery, `ui`/`summary`/`history`/`reset`/`repair`, event frame. Loads last. |
 
-Each Lua file receives the shared private addon namespace through `local _, FD = ...`. The only intended externally visible persistent global is the declared per-character `ForeverDuelDB`; the slash-command registration and named dialog use WoW's standard UI facilities. There is no network service or third-party addon library.
+## Load order and bootstrap
 
-| File | Responsibility |
-| --- | --- |
-| `ForeverDuel.toc` | Interface/version metadata, per-character SavedVariable, dependency order. |
-| `Constants.lua` | Product/schema/protocol versions, Elo settings, tunable timeouts, queue limits, copying helper. |
-| `Core.lua` | Initialization, event dispatch, slash commands, error recovery, reset confirmation. |
-| `Wow.lua` | Native API adapter: readable identity, outgoing attempt/acknowledgment, incoming resolution, system messages, timers, native actions. |
-| `Duel.lua` | Explicit state machine, consent, frozen snapshots, evidence collection, finalization. Dependencies are injected through an environment for tests. |
-| `Comms.lua` | Registered addon prefix, bounded paced whisper queue, sender/channel checks, current-session queue invalidation. |
-| `Protocol.lua` | Strict versioned ASCII envelope, validation, nonce construction, deterministic match IDs. |
-| `Results.lua` | Pure localized format parsing and participant matching; no game globals. |
-| `Rating.lua` | Native-level bracket/eligibility rules and deterministic level-weighted integer Elo transfer. |
-| `Database.lua` | Schema-2 rating pools, validated schema-1 archive migration, SavedVariables, nonce counter, duplicate-safe commits, reset. |
-| `History.lua` | Per-mode copied history/page/detail/series queries, derived statistics, and labeled opponent-rating calculation. |
-| `UI.lua` | Addon-owned request/consent frame, deferred native popup suppression/restoration, chat summary/history. |
-| `Profile.lua` | Read-only movable overview, pool selectors, bounded rating chart, paged history/details, isolated presentation errors. |
-| `Presence.lua` | Advisory profile whispers, optional area route, bounded peer cache, map filtering, and native challenge requests. |
-| `Roster.lua` | Dedicated channel-member directory, asynchronous loading, bounded refresh, and native selection restoration. |
-| `Zone.lua` | Movable, paged Players in zone browser with dropdown filters and explicit native Duel button; isolated UI errors. |
-| `Tooltip.lua` | Cache-only player rating lines, visible-name/GUID checks, per-build deduplication, isolated errors. |
-| `Minimap.lua` | Addon-owned round-minimap shortcut, tooltip, drag positioning saved as `settings.minimapAngle`, isolated presentation errors. |
-| `Media/Icon.tga` | Original crossed-swords texture used by the manifest and minimap button. |
-| `Debug.lua` | Consistent prefix, optional chat logging and bounded persisted native-request summaries. |
-| `Queue.lua` | Injected-environment matchmaking, reservation, grouping, travel/readiness, deadlines, no-show policy and owned-party cleanup. |
-| `QueueProtocol.lua` | Separate version-1 queue envelope, profile/control validation and ticket/session binding. |
-| `Venues.lua` | Pure selection from local faction whitelists; map-to-world resolution and travel estimate. |
-| `QueueWow.lua` | Native ruleset/self-position, actual two-player party/phase/distance evidence, tested-place capture, invite/challenge/waypoint adapters and queue settings. |
-| `QueueTransport.lua` | Separate bounded, paced addon-whisper transport using discovery identities and current-ticket guards. |
-| `QueueUI.lua` | Separate movable queue panel, selected reach/level gap, read-only automatic ruleset, server-time countdowns and explicit optional actions; isolated errors. |
+- The TOC order above is the load order. Modules register commands, status sections and events at file scope; `Core.lua` loads last and registers every collected event on one frame.
+- `PLAYER_LOGIN` and `PLAYER_ENTERING_WORLD` call `FD:Initialize`. It waits for a readable native identity (15 retries, 2 s apart), loads `ForeverDuelDB`, then runs isolated steps: dialog, transport, duel, hooks, minimap, discovery, tooltip, queue. A failing step is saved as an error and the others still start.
+- If saved data cannot be loaded, rating stays disabled and the data stays untouched. `/duelrating repair` keeps it under `quarantine` and starts fresh. A table that belongs to another character GUID with the same name (for example a re-rolled Hardcore character) is moved to `archived[oldGUID]`, at most three archives.
+- `FD:Safe` runs every handler with `xpcall`, saves the error with its stack and calls `FD:RecoverDuel`. That runs `Duel:Abort`, which sends CANCEL and notifies the queue. Blizzard's popup is left alone.
+- Discovery, queue and window code use their own `Run` wrappers. Their errors are saved but never reach `FD:Safe`, so they cannot stop a rated duel.
 
-## Queue boundary and lifecycle (local 0.5.5)
+## Registries (Constants.lua)
 
-`FD.queue` is independent of `FD.duel`. Queue packets use prefix `ForeverDuelQ1` and wire `FDQ1`; they cannot create rated consent, native identity, a duel match ID, result evidence, rating or history. Discovery profiles and channel roster identities supply reachable recipients, with new queue profiles carrying their explicit enrollment and fresh self-reported positions. The native full-name transport rules remain unchanged. Native `C_GameRules.IsGameRuleActive` flags determine `NORMAL/PVP/RP/HARDCORE`; saved manual values, realms and surnames are not used to establish the ruleset. Queue UI renders this read-only result and a native-detection reason when unavailable.
+- **Commands:** `FD:RegisterCommand(name, run, help, order, anyState)`. `FD:Command` lowercases the subcommand and passes the argument with its original case. An empty command means `ui`; an unknown one prints the list. Without loadable saved data only `anyState` commands run: `help`, `status`, `diagnose`, `errors`, `repair`.
 
-States are `IDLE → SEARCHING → RESERVING → GROUPING → PLANNING → TRAVELLING → READY → DUEL → CLEANUP`; combat or missing search data can use `PAUSED`. Only an idle client can change criteria. Both contestants' scope and level-gap limits apply, alongside faction/ruleset/pool/cap equality. Each rating window independently widens at 120/300 seconds; the stricter window controls matching. GUID ordering chooses one coordinator, and queue sessions plus a shared ticket bind retried reservation/plan messages, preventing stale or competing reservations from starting a second match.
+  | Owner | Commands |
+  | --- | --- |
+  | Commands.lua | `help`, `debug`, `status`, `diagnose [lifecycle\|transport]`, `errors [clear]` |
+  | Core.lua | `ui`, `summary`, `history`, `reset [confirm]`, `repair [confirm]` |
+  | Zone.lua | `zone` |
+  | Presence.lua | `quiet`, `ping [name]` |
+  | QueueCore.lua | `queue [join\|leave\|status\|autoaccept on\|off\|help\|venue add\|import\|remove]` |
 
-Queue discovery, profiles, venue sharing and solo reservation use WHISPER. Ticket-bound controls select PARTY at drain only with the exact native non-raid two-player pair, current own GUID, original ticket owner/sessions and recipient. PARTY reception requires the current reverse ticket tuple and native peer sender before Queue:Receive, so it cannot discover or create a new reservation. Native ticket context permits grouped control reception after ordinary Presence expires. Explicit InvalidChatType/NotInGroup permits one WHISPER fallback, with runtime PARTY disable after InvalidChatType; throttle/unknown/exception does not duplicate sends. Both routes report actual route/result/time. The original 20-second reservation is enforced on bound receive callbacks as well as ticks; a late ACK/COMMIT/CONFIRM cannot obtain a fresh grouping clock. Invitation still follows bilateral confirmation. A separate budget/order adaptation is awaiting the user's selection.
+- **Status sections:** `FD:RegisterStatus(order, lines)`. `/duelrating status` prints them sorted: 10 Core (version and build, transport, state, debug, last error, traffic), 12 Database (archives, quarantine), 20 Wow (requests, native self and opponent, peer confirmation and version, discovery round trip), 25 Comms (queued packets, last send and receive, peer validation), 30 Presence (discovery status, route, quiet, roster), 40 QueueCore (queue state, last cancellation, criteria, opponent, place, queue send and receive). A failing section prints `status section failed` instead of breaking the command.
+- **Events:** `FD:OnEvent(event, run, always, optional)`. Core registers each event once (optional events through `pcall`, recorded in `FD.eventRegistered`) and calls the handlers in load order through `FD:Safe`. Handlers without `always` run only after initialization. Presence registers its handlers with `always` and wraps them in `Presence:Run`.
 
-The built-in venue catalog is empty. **Save tested place** captures coordinates, faction, the lower of the two tested character levels and zone level range automatically (native data, or bounded Classic metadata when absent) within five minutes of a successful ordinary native duel, within 40 yards of its finish spot, while idle, solo, outdoors and outside instances/combat. It sends the same record to that duel partner; accepting a shared record requires the receiver's own matching native-duel evidence, rather than trusting the sender's assertion. Advanced operator capture/import remains available. Records persist in `settings.queue.venues`; empty or unsuitable catalogs do not block enrollment, and search continues with a reason when an eligible peer has no suitable meeting place. All three scopes are available before joining, including the selected scope; broader discovery is best effort with no manual verification gate. Positions are exchanged before grouping because native map queries expose only self/party units. World coordinates are compared only with their continent identity; normalized map coordinates remain separate. Same-continent selection minimizes distance from the midpoint among permitted places, with a 5–15-minute walking/+60% mount estimate and buffer. Cross-continent ruleset matches select a tested faction hub and use 15 minutes.
+## Outbound: budgets and priorities
 
-Readiness requires three consecutive local arrival samples within 40 yards, fresh peer position/arrival signals, and native matched-party GUID/name, same instance/phase, visibility, horizontal proximity within 10 yards and vertical difference within 5 yards. Shared travel expiry is evaluated before becoming ready. The existing native request hooks then transfer a matched ordinary duel to `FD.duel`; bilateral rated clicks and all prior evidence barriers still apply. Queue start expiry is two minutes. Technical uncertainty has no rating or no-show penalty; an authoritative local missed arrival adds a two-minute queue cooldown, while the arrived contestant may retain waiting time on requeue.
+All three prefixes go through `FD.Outbound`: `ForeverDuel2` (rated duel), `ForeverDuelZone2` (discovery and ping) and `ForeverDuelQ2` (queue). No other module calls `SendAddonMessage`, and the addon never sends ordinary chat.
 
-Cleanup restores the earlier user waypoint only while the queue still owns the unchanged point, and leaves only the exact unchanged queue-created two-player party. After local rated finalization it retains the group until the peer reports a terminal result, with a 15-second upper bound, so the peer does not lose party-only native opponent identity during its result barrier. A peer's queue finish notification does not abort the local rated duel. Altered groups require manual cleanup; temporarily blocked owned-party leave can retry. Active queue state remains memory-only; only preferences, venue assertions and cooldown persist. Optional queue/UI errors never invoke Core's rated-duel abort handler.
+- **Lanes**, served strictly in this order: CONTROL (all rated-duel packets), QUEUE (queue ticket controls, tested-place packets, ping/pong), BACKGROUND (discovery queries, replies and CHANNEL posts; queue QUERY/PROFILE/LEAVE). BACKGROUND needs a spare token reserve, so it can never use up the budget that the other lanes need.
+- **Budgets:** one WHISPER bucket shared by every prefix, plus one bucket per prefix and group/CHANNEL route. Any two submissions are at least 0.1 s apart.
+- **Per item:** a `key` replaces a queued item with the same key, `isCurrent()` is checked at drain (obsolete packets are dropped), `route()` picks PARTY or WHISPER at drain time, and `ttl` bounds the wait. `onResult` reports `sent`, `failed`, `expired` or `dropped`.
+- **Results:** throttle results are retried with backoff until the TTL. `false`, `GeneralError` and `AddOnMessageLockdown` get up to three attempts. `InvalidChatType` or `NotInGroup` on a non-WHISPER route falls back to one WHISPER copy, unless the item forbids it (CHANNEL posts, ping). `InvalidChatType` also disables that route for the session.
+- `SendNow` submits at once without pacing or token checks. It carries the rated CANCEL on logout or when leaving the world, and every terminal queue CANCEL (sent before the queue party is left).
+- A rated packet marked mandatory (the first ACCEPT, the first RESULT) unrates the match when it fails or expires (`r=transport`). Redundant copies never do.
 
-## Establishing the actual duel
+## Rated duel (protocol 3)
 
-`DUEL_REQUESTED(playerName)` does not identify a GUID. `Wow:ResolveIncoming` compares the supplied name/full name with identities resolved from `target`, `mouseover`, `focus`, party/raid units, and nameplates. Multiple distinct matching GUIDs stop rated recovery for that request; an unavailable identity can be retried. Both cases leave native UI available. GUID and class come from local unit APIs, not from a random whisper.
+Wire format: `FD3|kind|nonce|echo|guid|peerGUID|role|rating|specId|classFile|wins|losses|verdict|level|maxLevel[|key=value...]`. The kinds are `HELLO`, `HELLO_ACK`, `ACCEPT`, `START`, `RESULT` and `CANCEL`. The known extensions are `v` (sender version, on HELLO and HELLO_ACK) and `r` (CANCEL reason). The fixed fields are strict. A malformed, unknown or duplicate extension is ignored, never the packet. An FD2 envelope from the current request's opponent (same sender and GUID) marks them as outdated, and nothing else is done with it. The match ID is `FD3:<lower GUID>:<its nonce>:<higher GUID>:<its nonce>`.
 
-An initially unresolved request retains its readable native name and original timestamp, displays a target-the-challenger hint, and retries local identity resolution every 0.5 seconds. Each retry requires the same pending object, no combat, age below 50 seconds, and a readable truthy `StaticPopup_Visible("DUEL_REQUESTED")` result. Missing popup support stops recovery and preserves ordinary play. Resolution starts negotiation with the original timestamp, so waiting cannot extend the pending deadline. Acceptance, decline/cancellation, countdown, completion, replacement, world exit/logout, combat, and adapter errors clear pending recovery. Neither directory profiles nor peer packets replace native identity evidence. Debug toggling controls diagnostic output only; `/duelrating status` includes the incoming recovery state even when logging is disabled.
-
-The challenger uses a secure post-hook of native `StartDuel` to capture the requested identity. A nonempty player-name argument must resolve uniquely through actual native units; only the exactly empty `/duel` string uses the current target. Nil and unknown explicit arguments never fall back to a random target. This creates a candidate, not a rated session. `Wow:DuelNotice` requires `ERR_DUEL_REQUESTED`, resolved from the documented `GetGameMessageInfo(errorType)` identifier on UI events or exact native localized text. Its deadline is the original 50-second request limit; the separate four-second presence check does not expire native capture. Cancellation identifiers clear the context. UI notices cannot supply countdown/result evidence.
-
-Messages cannot create a session without the captured local native context. Overlapping outgoing attempts invalidate the candidate, and a late acknowledgment cannot revive an expired candidate. The request notification lacks an opponent field; this correlation is a constrained integration assumption, not a general server-side opponent query. Debug output records capture, recognized acknowledgment source, and expiry without acknowledgment.
-
-Both native roles display a waiting dialog before discovery completes; Rated remains enabled only in READY/REMOTE_ACCEPTED. Receive diagnostics classify each existing sender, participant, role, level/class, request and frozen-profile guard without changing its predicate or response. `Comms.lastValidation` describes the latest receipt; `lastRejection` retains a pending-request rejection after manual decline and later idle messages. Ages and current match-object association prevent a previous request's validation from being displayed as the current one. Saved diagnostics contain bounded summaries, not payloads/nonces; no diagnostic can supply consent or result evidence. Identical transport summaries within five seconds and peer-validation summaries within ten seconds retain their first timestamp plus a repeat count and last timestamp, reducing eviction of native request evidence. Changed diagnoses are recorded immediately; the 64-entry bound remains.
-
-Native PARTY self-delivery is confirmed in the 0.5.4 live trace. Own echoes are ignored before peer diagnostics only when decoded GUID and canonical sender both match readable current native own identity. Surnames keep exact full spelling; ordinary bare own names require the native local realm. Missing/restricted/throwing identity cannot trigger this filter. Peer session, nonce, profile and explicit-consent checks remain unchanged.
-
-Identity objects retain `guid`, `name`, `realm`, `fullName`, `className`, and `classFile`, with optional specialization metadata. When `RegionalUniqueNamesEnabled()` is true, Forever's `UnitNameUnmodified` returns name/surname and `NameUtil.GetUnmodifiedUnitFullName` supplies the native full name. Both `name` and `fullName` store that full name, `nameFormat` is `"surname"`, and `realm` comes from `GetNormalizedRealmName()` rather than the surname. Missing required native naming helpers reject the identity. With regional unique names disabled or unsupported, Retail `name-realm` handling remains.
-
-The native full name supplies both the whisper target and exact expected sender. Locally observed `requestName`/`requestFullName` aliases may resolve the native incoming request only; they never qualify an addon sender or a winner message. Changing delimiters in arbitrary peer text is not identity proof. GUID/class still come from local unit resolution, and an ambiguous request name remains unrated.
-
-The local specialization comes from `C_SpecializationInfo`; a received specialization is marked `peer-self-report`. Unknown specialization is transmitted as zero. Restricted client values are rejected before string operations or logging. Version 0.1.3 addressed a live trace where the previous target had a hyphen between name/surname but the received sender had a space; the corrected happy path subsequently succeeded live. Other identity/transport combinations still require testing.
-
-## State machine
-
-`IDLE` is represented by no active match. `CANCELLED` is a logged terminal outcome before returning to `IDLE`, rather than a resumable active object.
+States: `CHECKING_ADDON` → `READY` (the peer echoed this request's nonce) → `LOCAL_ACCEPTED` or `REMOTE_ACCEPTED` → `RATED_CONFIRMED` (both consents) → `COUNTDOWN` → `IN_PROGRESS` → `FINISHING` → `FINISHED`. Any state before `FINISHED` can go to `UNRATED`, then `UNRATED_ACTIVE` once the duel runs. The challenger (OUTGOING) may also go from `LOCAL_ACCEPTED` to `COUNTDOWN`: see the tentative countdown below.
 
 ```mermaid
-flowchart TD
-    IDLE --> CHECKING_ADDON
-    CHECKING_ADDON --> READY
-    CHECKING_ADDON -->|four-second check elapsed| DISCOVERY_WAIT
-    DISCOVERY_WAIT -->|valid late discovery| READY
-    DISCOVERY_WAIT --> UNRATED
-    READY --> LOCAL_ACCEPTED
-    READY --> REMOTE_ACCEPTED
-    LOCAL_ACCEPTED --> PREPARED
-    REMOTE_ACCEPTED --> PREPARED
-    PREPARED -->|challenger| COMMIT_SENT
-    PREPARED -->|receiver gets COMMIT| RATED_CONFIRMED
-    COMMIT_SENT -->|gets CONFIRM| RATED_CONFIRMED
-    RATED_CONFIRMED -->|local native countdown| COUNTDOWN
-    COUNTDOWN -->|remaining seconds elapse| IN_PROGRESS
-    IN_PROGRESS --> FINISHING
-    FINISHING -->|all evidence agrees| FINISHED
-    FINISHED --> IDLE
-    CHECKING_ADDON --> UNRATED
-    READY --> UNRATED
-    RATED_CONFIRMED --> UNRATED
-    FINISHING --> UNRATED
-    UNRATED --> UNRATED_ACTIVE
-    UNRATED_ACTIVE --> IDLE
+sequenceDiagram
+    autonumber
+    actor PA as Player A
+    participant A as A addon (OUTGOING)
+    participant G as Game server
+    participant B as B addon (INCOMING)
+    actor PB as Player B
+    PA->>G: StartDuel (unit menu, /duel, addon button)
+    Note over A: StartDuel post-hook captures the target (candidate only)
+    G-->>A: ERR_DUEL_REQUESTED
+    Note over A: Begin OUTGOING, deadline = request + 50 s
+    G-->>B: DUEL_REQUESTED(name), Blizzard popup
+    Note over B: resolve name to a visible unit, Begin INCOMING
+    A->>B: HELLO (nonce a), at 0/1/3/7/15/31 s
+    B->>A: HELLO (nonce b), same schedule
+    B->>A: HELLO_ACK (echo a), at most 1 per 3 s per nonce
+    Note over A: echo binds peer: READY, match ID, panel shown
+    A->>B: HELLO_ACK (echo b)
+    Note over B: READY, companion panel below the popup
+    PA->>A: Propose RATED duel
+    A->>B: ACCEPT, retransmitted at 2/5/10/20 s
+    Note over B: REMOTE_ACCEPTED (either player may click first)
+    PB->>B: Accept as RATED duel
+    B->>A: ACCEPT
+    Note over B: RATED_CONFIRMED: both consents
+    B->>G: AcceptDuel(), then hide Blizzard popup
+    Note over A: RATED_CONFIRMED on B's ACCEPT
+    G-->>A: countdown system message
+    G-->>B: countdown system message
+    A->>B: START (again after 2 s)
+    B->>A: START (again after 2 s)
+    Note over A,B: IN_PROGRESS when the countdown ends
+    G-->>A: winner message + DUEL_FINISHED
+    G-->>B: winner message + DUEL_FINISHED
+    A->>B: RESULT(winner), retries 2/5/10/20 s
+    B->>A: RESULT(winner)
+    Note over A,B: same winner: commit once, FINISHED
+    alt any unrated path before the countdown
+        B-->>A: CANCEL r=choice / cancelled / combat / level / spec / expired / ...
+        Note over A,B: UNRATED, START and RESULT are suppressed
+    end
 ```
 
-Negotiating/active rated states also permit fail-safe transition to `UNRATED`. Cancellation, zoning, logout, replacement, and expiry can discard the active object. Timers capture that object and check identity before acting, preventing callbacks for a previous duel from mutating a rematch.
+Details the diagram leaves out:
 
-`DISCOVERY_WAIT` is a pending discovery state, not consent or an explicit unrated choice. After four seconds the incoming dialog keeps its normal accept/decline buttons and disables rated acceptance; the outgoing dialog also remains visible while waiting. A valid nonce-echoing acknowledgment may reach `READY` only for the same pending request before its 50-second limit. `UNRATED`, observed native acceptance/start, cancellation, replacement, and expiry cannot be revived by late discovery. The four-second deadline for corroborating a captured outgoing native attempt is unchanged; an addon packet cannot establish that native context.
+- **Binding:** a bare HELLO is answered but never binds, because it may belong to an older request. HELLOs whose nonce time is more than 10 s older than this request are rejected. The first HELLO_ACK that echoes the own nonce binds the peer's nonce and profile and fixes the match ID. The round trip from the first sent HELLO is shown in status.
+- **Panel:** it appears only after binding. The receiver's companion has only the rated button; its X keeps the duel unrated. Esc there reaches Blizzard's popup first, which declines the request. The challenger's panel has Propose/Accept RATED, Keep unrated, the X and Esc. Both show a 1 Hz expiry countdown. The rated button is disabled in combat and enabled again when combat ends.
+- **Native accept:** only the receiver calls `AcceptDuel`, and only from `RATED_CONFIRMED`. Every other accept (Blizzard's button or another addon), seen through the `AcceptDuel` hook, makes the duel unrated and sends `CANCEL r=choice`. If no countdown follows within 8 s of any accept, the match is released, with `CANCEL r=timeout` if it was still rated. After the addon's own accept, the receiver is told to ask for a new challenge.
+- **Tentative countdown:** the challenger's countdown can arrive before the receiver's ACCEPT. A countdown in `LOCAL_ACCEPTED` is therefore tentatively rated, and the chat says "Waiting for X to confirm the RATED duel". The RATED line appears only after the peer's ACCEPT, START or RESULT arrives. Every unrated path on the receiver sends CANCEL and suppresses START and RESULT, so a tentative countdown can never finalize without both consents.
+- **Expiry:** the 50 s request window is the only decision timer. A challenger that has already consented gets one extra 8 s grace, because the receiver's window starts later. No CANCEL is sent for timing reasons after a countdown.
+- **Results:** a bound RESULT also counts as the peer's START. Finalization needs: the local countdown, start and finish; a local winner message; the peer's START or RESULT; the same winner on both sides; unchanged own identity, level, spec and rating; and a successful `Database:Commit`. Otherwise the match times out after 30 s in `FINISHING` without a record. The last five finished matches answer late START or RESULT packets for 5 minutes, at most four times each.
+- **Rematch:** a new request while the previous match is still `FINISHING` parks that match in one slot. The new request waits until the parked result settles, so it announces the updated rating.
+- **Outgoing capture:** the `StartDuel` post-hook resolves the target or the typed name among visible units. A repeat to the same GUID replaces the capture. A different target is untracked until the first attempt's window ends; that window is never extended. A duel-related failure notice within 2 s (for example out of range) clears the capture so the player can retry. Duels to the death are never tracked. If tracking cannot attach to a request that went out, one chat line says why.
+- **Routes:** a packet goes over PARTY only when, at drain time, the group is exactly the player and the bound opponent (GUIDs and full name, no raid). Otherwise it is whispered. In such a group the first HELLO is also whispered once. PARTY packets from the bound opponent are accepted even when the own roster view is not exact yet, and own PARTY echoes are ignored.
 
-`READY` proves compatible discovery for this nonce pair. `LOCAL_ACCEPTED` and `REMOTE_ACCEPTED` distinguish the first consenting party. `PREPARED` requires both consent actions. The initiator coordinates the acknowledgment chain regardless of who first proposed rated status:
+## Queue (protocol 2)
 
-1. Both exchange `HELLO` and nonce-echoing `HELLO_ACK`. An unbound `HELLO` is answered but cannot bind the peer nonce, profile, or match ID; this requires a valid `HELLO_ACK` echoing the current local nonce. On the first valid acknowledgment that transitions `CHECKING_ADDON` or `DISCOVERY_WAIT` to `READY`, the client sends one `HELLO_ACK` back so the peer also receives proof of its nonce.
-2. Each explicit rated click sends `ACCEPT`; either player can click first.
-3. The challenger in `PREPARED` sends `COMMIT` and enters `COMMIT_SENT`.
-4. The receiver in `PREPARED` accepts `COMMIT`, enters `RATED_CONFIRMED`, and sends `CONFIRM`.
-5. The challenger accepts `CONFIRM`, enters `RATED_CONFIRMED`, and sends `START_OK`.
-6. The receiver accepts `START_OK` once and attempts `AcceptDuel()`.
+States: `IDLE` → `SEARCHING` (↔ `PAUSED` for combat, unreadable position or an unrelated duel) → `INVITING` (coordinator) or `INVITED` (invitee) → `GROUPING` → `PLANNING` (coordinator) → `TRAVELLING` → `READY` → `DUEL`. `Finish(reason)` is the only way out: it sends the terminal CANCEL, applies the outcome class and enters `CLEANUP`, then `IDLE` or a new search. Queue packets never create rated consent, native identity or result evidence.
 
-Receiving one proposal or pressing one rated button cannot trigger native acceptance. The handshake establishes local evidence under cooperative clients; it is not cryptographic proof or consensus over a reliable channel.
+Group state comes from one pure classifier (`Queue.ClassifyGroup`) over native readings. Only a raid, a third member or a readable `party1` GUID that differs from the opponent's is `CHANGED`. Missing or loading data is `PENDING`. Names are never compared.
 
-The reciprocal acknowledgment introduced in 0.1.2 remains: if one side's early `HELLO` attempts arrive before the other session exists, one later delivered `HELLO` can still complete mutual nonce proof. Duplicate acknowledgments do not trigger reciprocal acknowledgment loops. In `LOCAL_ACCEPTED` or `PREPARED`, version 0.4.5 can answer current-peer discovery retries by repeating the existing explicit `ACCEPT`, so a receiver's early consent can reach a challenger that finishes discovery later. This never creates consent or extends its deadline. Sender/GUID/role/profile/nonce and native snapshot checks still apply. Both clients must support protocol 2 (0.4.0 through 0.4.5); version-1 packets cannot establish compatible discovery.
-
-A secure post-hook of `AcceptDuel` immediately invalidates pending rated negotiation when another native/addon path accepts it. This prevents late handshake packets from converting an already accepted ordinary request. The addon's own agreed acceptance is identified by the incoming `RATED_CONFIRMED` state and its acceptance guard; no Blizzard callback is replaced.
-
-## Protocol
-
-Local 0.5.6 keeps ordinary WHISPER primary and adds one optional `C_ChatInfo.SendAddonMessageLogged` HELLO probe after four seconds without peer nonce confirmation for the same pending native match. The probe cannot run after ordinary acceptance, countdown/start, cancellation, replacement or the original request deadline. Core independently registers `CHAT_MSG_ADDON_LOGGED` under protection and derives the receive route from the event, never the native target field. Missing send API/receive registration disables the probe. Logged HELLO uses all existing native sender/GUID/role/profile guards and marks only its immediate matching HELLO_ACK reply for this route. Only a valid logged HELLO_ACK echoing the current own nonce and accepted by the duel engine selects the route for later consent/result packets of this match. A probe rejection/error does not cancel normal discovery; documented nil returns mean unknown submission and never grant peer proof. PARTY remains preferred with the exact native pair. Current-request acknowledgment age is measured from the first HELLO attempt, not presented as individual packet round-trip time. No route supplies native context, consent or result evidence; the existing prefix, schema and deadlines remain.
-
-Ordinary transport uses `C_ChatInfo.SendAddonMessage`, with prefix `ForeverDuel2`. WHISPER remains primary for solo discovery, with the optional confirmed logged route described above. PARTY is selected at drain time only when readable native membership confirms a non-raid group of exactly two, the current own GUID and the opponent's exact GUID/full name; the queued target must be this opponent. PARTY receipt requires the same native pair and retains canonical sender and all duel-protocol guards. Missing, restricted, erroneous or changed membership falls back to WHISPER for sends and rejects PARTY receipts. The addon does not create groups for ordinary duels. Finalized result retries may use PARTY while the exact pair still exists, otherwise the match's confirmed whisper route. No route supplies native duel context or consent. Prefix registration and ordinary send results are compared with native enum values, not treated as booleans; logged nil submissions remain unknown. The queue allows 24 entries and spaces sends by 0.15 seconds. It drops obsolete queued consent for cancelled/replaced sessions. Valid cancellation and already-committed result packets may drain after a session ends. Discovery sends an initial `HELLO`, retries after one second, then every two seconds only while the same object remains in `CHECKING_ADDON` or `DISCOVERY_WAIT` and before its original 50-second deadline. Ordinary acceptance/start, cancellation, replacement, and expiry stop retries. A cached immutable `RESULT` is retried twice, one and two seconds after its first report, while finishing or after successful local finalization. This recovers isolated packet drops without needing the completed active state. The remaining protocol is timeout-based and has no general acknowledgment/retransmission queue.
-
-The complete envelope contains **15 fields**, including the version marker:
-
-```text
-FD2|kind|nonce|echo|guid|peerGUID|role|rating|specId|classFile|wins|losses|verdict|level|maxLevel
+```mermaid
+sequenceDiagram
+    autonumber
+    participant C as Coordinator (lower GUID)
+    participant G as Game server
+    participant I as Invitee
+    Note over C,I: SEARCHING: discovered addon users get QUERY + PROFILE whispers (BACKGROUND)
+    C->>I: QUERY + PROFILE (session, rating, scope, position, venue digest)
+    I->>C: PROFILE
+    Note over C: eligible, PROFILE at most 15 s old, shared venue hash
+    C->>I: OFFER (ticket = C.session.I.session)
+    C->>G: InviteUnit(invitee)
+    Note over C: INVITING, 60 s
+    G-->>I: PARTY_INVITE_REQUEST(inviterGUID)
+    Note over I: INVITED, 60 s: chat line, sound, queue window
+    loop every 5 s until GROUP binds the ticket
+        C->>I: PROFILE + OFFER
+    end
+    I->>G: Accept (Blizzard dialog, or opt-in auto-accept)
+    Note over C,I: group EXACT: GROUPING, 45 s, controls now use PARTY
+    loop every 3 s until PLAN
+        I->>C: GROUP (position)
+    end
+    Note over C: venue from digest intersection, deadline = now + 5-15 min: PLANNING, 45 s
+    loop every 3 s until PLAN_ACK
+        C->>I: PLAN (venue, deadline, duration)
+    end
+    alt place resolves locally and fits
+        I->>C: PLAN_ACK
+        Note over C,I: TRAVELLING, waypoint set
+    else unknown place or mismatch
+        I->>C: PLAN_REJECT
+        Note over C: re-plan without that place, none left: PLAN_INVALID
+    end
+    loop every 3 s
+        C->>I: STATUS (position, ARRIVED/READY flags)
+        I->>C: STATUS
+    end
+    Note over C,I: both arrived: READY, start deadline = travel deadline + 120 s
+    C->>G: Request duel: StartDuel(party1) within 10 yd
+    Note over C,I: DUEL: the rated duel flow, with explicit consent on both sides
+    C->>I: CANCEL(FINISHED) on PARTY and WHISPER
+    I->>C: CANCEL(FINISHED) on PARTY and WHISPER
+    Note over C,I: CLEANUP: wait up to 15 s for the peer's CANCEL, leave the party after 1.5 s
 ```
 
-| Field | Contract |
-| --- | --- |
-| `FD2` | Exact wire version. Other versions are ignored. |
-| `kind` | `HELLO`, `HELLO_ACK`, `ACCEPT`, `COMMIT`, `CONFIRM`, `START_OK`, `START`, `RESULT`, `CANCEL`. |
-| `nonce` | Sender's session nonce: up to 48 lowercase hexadecimal/dot/hyphen characters, with a hexadecimal digit. |
-| `echo` | `-` for `HELLO`; otherwise the receiver's known session nonce. |
-| `guid`, `peerGUID` | Distinct `Player-hex-hex` identifiers, at most 64 bytes each. |
-| `role` | `INCOMING` or `OUTGOING`, opposite the receiver's local role. |
-| `rating` | Current mode's canonical signed decimal integer in `[-100000, 100000]`. |
-| `specId` | Integer `0..100000`; zero means unknown. |
-| `classFile` | A recognized Retail class token. |
-| `wins`, `losses` | Current mode's integers `0..1000000000`. |
-| `verdict` | `-` except for `RESULT`, which contains a participant GUID. |
-| `level`, `maxLevel` | Canonical integers with `1 <= level <= maxLevel <= 255`; mode is derived from equality with the cap. |
+- **Pairing:** the coordinator chooses the best eligible candidate it may coordinate (lower own GUID): smallest rating difference, then the earlier join, then GUID. A better candidate with a lower GUID invites us instead. Blizzard's invitation dialog is the pairing consent. An invitee that is already in a match answers `CANCEL(BUSY)`. A pair that is still blocked answers `DECLINED` and declines the open dialog. `ERR_DECLINE_GROUP_S` tells the coordinator about a decline. A declined, rescinded or expired invitation is never announced or auto-accepted late.
+- **Re-keying:** until a plan exists, the ticket follows the peer's newest session (`Rekey`). An OFFER that names our old session is answered with our current PROFILE (`Reintroduce`).
+- **Arrival:** own arrival latches after three consecutive samples within 40 yd before the deadline. The peer's arrival comes from its STATUS flag, or from native party distance once we have arrived. `READY` is symmetric. Only the coordinator's **Request duel** works, and it checks co-location first (same phase and instance, within 10 yd horizontally and 5 yd vertically). A failed check shows the reason and never cancels.
+- **Duel hand-off:** a native duel request against the ticket peer moves the queue to `DUEL`. A request withdrawn before its countdown returns to the previous state while its deadline holds. A peer's CANCEL during `DUEL` or `CLEANUP` is recorded but does not end the local result exchange.
+- **Leaving:** a terminal CANCEL is submitted synchronously on PARTY and WHISPER, and a failed whisper copy is re-queued at CONTROL priority. `PLAYER_LOGOUT` (also fired by `/reload`) sends `CANCEL(RELOAD)`. A loading screen does not cancel; it starts a 15 s grace. Only the exact queue-owned two-player group is ever left automatically. Otherwise cleanup ends with an advisory, and if the leftover group is exactly the queue pair, a **Leave group** button leaves it.
+- **Tested places:** `Save tested place` needs a duel that ended by knockout in friendly outdoor territory less than 5 minutes ago, saved within 40 yd of the spot while solo and out of combat. The record goes to the test partner as `VENUE`. The partner accepts it only against its own matching test and answers `VENUE_ACK` (with the ID it kept) or `VENUE_REJECT` (`NO_TEST`, `MISMATCH`, `METADATA`, `TERRITORY`, `BUSY`, `HUB`, `FULL`, `INVALID`). Records of one spot within 40 yd merge to the lexically smaller ID on both clients.
 
-The payload is printable ASCII and at most 255 bytes. Field count, integer encoding, version, lengths, identifiers, and message-specific fields are strictly validated. The full profile appears on every message. The lifecycle then checks normalized sender, both locally resolved GUIDs, opposite role, nonce pair, expected state, and equality with the original peer profile, including levels. Advertised levels must agree with the native opponent snapshot; peer messages cannot substitute a guessed native level. An otherwise well-formed packet is not permission to change state.
-
-`/duelrating status` reports addon version, local prefix-registration availability, any captured outgoing candidate awaiting native acknowledgment, retained timestamped outgoing-request diagnostics, the last actual transport send/result, and the last readable prefix/channel-matching packet received. Confirmed native cancellation/finish and world lifecycle clear outgoing capture/quarantine state while retaining diagnostics. Local accept/cancel hooks and adapter errors discard the captured candidate but retain its original acknowledgment ambiguity window, so a delayed unqualified native notice cannot confirm a rapid replacement request. Native countdown and combat also invalidate pending outgoing capture. The four-second native acknowledgment guard remains required. Receive diagnostics are recorded before active-session/sender validation, allowing a packet that arrived before session creation to be seen. They are observations, not proof that the packet passed lifecycle validation. A successful send result remains local submission rather than remote delivery.
-
-## Zone presence and player tooltips
-
-Presence uses the separate prefix `ForeverDuelZone2` for discovery whispers and optional local broadcasts where supported. The compact envelopes are:
-
-```text
-FDP2:guid:rating:mapID:classFile:level:maxLevel
-FDP2|guid|rating|mapID|classFile|level|maxLevel
-FDQ2|guid|rating|mapID|classFile|level|maxLevel
-```
-
-The colon-delimited profile uses bounded ASCII fields for local chat transport and is accepted over `YELL`, `SAY`, or the historically reported `UNKNOWN` distribution. The pipe-delimited envelopes retain whisper compatibility. `FDP2` is a profile; `FDQ2` is the same profile requesting a reply, accepted only over `WHISPER`. A valid query is cached and schedules a paced `FDP2` whisper reply; profiles never cause replies. The native sender argument supplies the full character name. Prefix, allowed distribution/envelope combination, payload shape, GUID, rating, map ID, Classic class, and bounded level/cap are checked before caching. Legacy `CHANNEL` profiles remain receive-only and require the current local channel number (event argument 7). `bracket` is derived from validated levels. The sender's GUID/rating/map/class/levels remain advisory self-reports. This stream never creates a rated session, grants consent, supplies a frozen match snapshot, or changes rating/history.
-
-Presence requires addon-message APIs and timers. The first `YELL` result equal to `Enum.SendAddonMessageResult.InvalidChatType` disables that route for the session, including later world/map/rating events. This is the observed Forever result 4. Other clients may retain the existing optional 15-second heartbeat with a five-second minimum attempt interval. Receipt never schedules a broadcast. No ordinary `SendChatMessage` is used.
-
-`Roster.lua` joins the dedicated `ForeverDuel` channel solely as a native member directory, retrying unavailable membership no more than every 30 seconds. It maps the local channel ID to its display index with `GetChannelDisplayInfo`; these are different identifiers. With the native channel UI hidden and a restorable current selection, it selects that row and reads `C_ChatInfo.GetChannelRosterInfo(displayIndex, memberIndex)` asynchronously. Channel count/roster events supply fresh counts, including when the display count remains nil or zero. A one-second poll has a five-second deadline; refresh requests are at least 30 seconds apart. Previous channel identity is resolved again before restoring its row. Opening the native channel UI or changing the selection gives control to the user. Missing APIs or unrestorable selection defer background requests; cached members and unit whispers remain usable.
-
-Only members of this dedicated channel are read, with at most 300 rows per pass. Valid native names and player GUIDs supply candidates for the existing whisper queue; membership alone does not create a profile. Self/malformed/restricted identities are skipped. Join events can supply candidates immediately. Error boundaries isolate roster work from the whisper scan and rated-duel recovery. World exit clears pending directory work, and stale timer callbacks cannot start another request.
-
-Whisper discovery scans readable player identities from target, focus, party1–4, raid1–40, and nameplate1–40 on relevant unit/group events and the five-second pulse. It does not scan mouseover or enumerate arbitrary nearby characters. Seeing a unit only schedules an `FDQ2` query; a received valid profile is required for a listing. Queries are paced per recipient at 45 seconds, replies at five seconds, with one queued discovery whisper sent per second. The queue holds at most 300 recipients, expires work after 120 seconds, retries failed sends after at least five seconds, and clears on world exit. Replies do not create a response loop. This queue is separate from rated-duel transport.
-
-The own profile reads the rating selected by its current native level bracket. Unknown or restricted level/cap prevents publication. Local successful submission does not establish remote delivery. Install 0.4.5 on both clients to include current request recovery and automatic directory discovery, introduced in 0.4.3; 0.4.1/0.4.2 peers can still exchange discovery whispers. Version 0.4.0 does not answer `FDQ2`, though its rated protocol remains compatible. On Forever, changed remote ratings are refreshed by the next paced whisper query.
-
-The ephemeral cache is capped at 300 remote profiles, expires records after 120 seconds without a fresh announcement, and returns copies to callers. It is not persisted. `GetPlayers` filters by the player's current `C_Map.GetBestMapForUnit("player")` map ID; missing map data yields no zone list. Reload starts discovery afresh. Directory/whisper reachability across realms/factions remains unverified live, and equal map IDs prove neither proximity, shared phase, nor completeness. No shared guild is required.
-
-`Zone.lua` displays eight names, levels, modes, and ratings per page and opens from the overview or `/duelrating zone`. Name search uses case-insensitive literal substring matching. Class, rating window, sorting, and rated eligibility use addon-owned dropdown menus with direct selection. The class menu contains All plus the nine Classic classes; Death Knight, Monk, Demon Hunter, and Evoker are excluded from discovery profiles and the filter. Rating windows are All, ±100, ±200, or ±400. Sorts are name, highest rating grouped by mode/cap, or closest to the local mode rating. Windows and rating distance never compare leveling with max level or different caps. The optional rated-eligible filter calls `Rating:Eligible` on advisory profiles. Selection closes the menu and resets the page; outside clicks dismiss it without activating underlying duel buttons. Refreshes clamp pagination, and empty filtered results explain how to reset.
-
-The Duel button revalidates the cached entry and current map, rejects combat/pending/active requests, resolves a local unit with the exact full name and GUID, and calls `StartDuel(unit, true)`. It remains available for ordinary duels outside rated level eligibility. The existing secure hook and native acknowledgment still establish the duel context; fresh native eligibility and both explicit rated choices remain necessary.
-
-`Tooltip.lua` uses the native unit-tooltip post-callback, confirms a readable player unit and matching GUID/full name/level/cap, then reads the fresh cache or the player's own current mode rating. It sends nothing on hover. A weak-key table plus `OnTooltipCleared` limits insertion to one **Duel Rating (mode, level)** line per native build. Forbidden/restricted identities, stale level announcements, inconsistent modes, and missing records produce no line. Presence/browser/tooltip errors are isolated from `Core:Safe`, preserving ongoing duels.
-
-`/duelrating status` includes discovery availability/status, `Zone roster` loading/restoration diagnostics, last area attempt, last discovery whisper (`lastWhisperSend`), and last receive alongside duel diagnostics. Sends identify the route/recipient and submission or retry status; receives identify the sender, distribution, and reported map. A stopped invalid area route is expected on Forever; successful directory discovery receives profiles over `WHISPER`. Targeting remains a fallback. See [MANUAL_TESTING.md](MANUAL_TESTING.md) for paired delivery and UI checks.
-
-## Match identity and snapshots
-
-Each side generates its own nonce from the hexadecimal server epoch, persisted monotonic counter, and random value. The counter survives reset. This provides practical collision resistance, not secrecy or authentication.
-
-Both sides sort the GUIDs while retaining each GUID's own nonce:
-
-```text
-FD2:<lower GUID>:<its nonce>:<higher GUID>:<its nonce>
-```
-
-The match ID is derived locally and need not occupy another wire field. Changing either nonce produces a new rematch ID. Names, timestamps, and realms alone never identify a match.
-
-Local identity, native level/cap, rating mode, rating, and W/L record are copied at session creation; the peer's profile is copied during discovery after checking it against the native opponent snapshot. Rating, specialization, and native level freshness are rechecked at consent, acknowledgment, and countdown barriers. Later packets must preserve the peer profile, including levels. The database refuses a commit if the pre-match rating no longer equals the selected pool's current rating. Specialization or level changes invalidate pending rated snapshots. Core refreshes the current runtime bracket after relevant world/level events.
-
-## Native start and result evidence
-
-There is no invented `DUEL_STARTED` or `DUEL_COUNTDOWN` event. Only the `CHAT_MSG_SYSTEM` adapter passes messages to `Results:Countdown` and `Results:Parse`; the new UI-event handlers do not. `Results:Countdown` parses the runtime localized `DUEL_COUNTDOWN` string format against a readable native system message. A countdown observed outside `RATED_CONFIRMED` makes the session unrated. After a valid countdown, the addon sends `START`, waits the remaining seconds, and enters `IN_PROGRESS`. `startedAt` is an inferred server-clock timestamp, not an official duel-start timestamp.
-
-`DUEL_FINISHED` contributes only finish evidence. `Results:Parse` accepts the runtime `DUEL_WINNER_KNOCKOUT` and `DUEL_WINNER_RETREAT` formats, escapes Lua pattern punctuation, honors positional arguments, and resolves both names to the snapshotted participants. Argument 1 is the winner even when a translation displays the loser first. Full names or distinct short names are accepted. Only recognized color/player-link wrappers with matching destination and label are unwrapped; arbitrary links and unrelated duel messages are rejected.
-
-Native finish and local winner messages may arrive in either order. The local result is sent only after both exist. Peer `START`/`RESULT` evidence can be retained during finishing, subject to the same session/profile validation. Finalization requires all of:
-
-- A rated-confirmed local countdown before the inferred start.
-- A locally reached start and a native finish event.
-- The peer's session-bound `START` evidence.
-- An unambiguous local native winner and the same peer-reported winner.
-- An unfinalized match and a database commit valid for the current rating.
-
-Contradictory or missing evidence cannot create a local rated record. Missing result evidence expires after eight seconds. Korean grammar selectors, Russian declensions, secret chat values, or unavailable native message routing can prevent completion and must not be guessed around.
-
-## Rating and persistence
-
-`Rating:Bracket(level, maxLevel)` returns `LEVELING` below the cap or `MAX_LEVEL` at the cap; unavailable, fractional, restricted, or out-of-range native values cannot establish rated eligibility. `Wow:Identity` uses `UnitLevel` and feature-detected `GetMaxPlayerLevel`, preserving ordinary-duel identity when level data is unavailable. `Rating:Eligible` requires valid levels, the same level cap, the same bracket, and an absolute difference no greater than 5. At a cap of 60, 59 versus 60 is unrated even though the difference is only one.
-
-Both pools start independently at 1500, with K=32. Expected score uses effective rating `rating + 20 * level`. The winner's expected score is `1 / (1 + 10 ^ ((effectiveLoser - effectiveWinner) / 400))`; one positive transfer is rounded with `floor(32 * (1 - expectedWinner) + 0.5)`. The winner receives that integer; the loser receives its negation. Equal ratings and levels transfer 16. At equal ratings, a winner five levels lower gains 20; a winner five levels higher gains 12. This avoids asymmetric rounding of signed deltas. There is no zero-rating floor, so transfers remain complementary. Archived schema-1 records retain the original unweighted calculation for validation and display.
-
-`ForeverDuelDB` is per character:
-
-```lua
-{
-    schemaVersion = 2,
-    player = { guid = "Player-...", ratings = {
-        LEVELING = { rating = 1500, wins = 0, losses = 0 },
-        MAX_LEVEL = { rating = 1500, wins = 0, losses = 0 },
-    } },
-    matches = {},        -- Oldest first; complete rated records only.
-    finalized = {},      -- [matchId] = true
-    settings = { debug = false },
-    nonceCounter = 0,
-    legacy = nil,       -- Optional fully validated schema-1 database archive.
-}
-```
-
-A finalized record contains addon/schema/protocol versions; match ID; both full identity snapshots with level/cap; `bracket`; confirmation/countdown/start/end timestamps; `startSource = "localized-countdown-plus-timer"`; winner/loser GUIDs; local `WIN`/`LOSS`; local rating before/after/delta; opponent rating before; `ratedConfirmed`; `resultSource`; and `evidence = { agreedBeforeStart = true, localResult = true, peerResult = true }`.
-
-`Database:Commit` validates identity, versions, levels, bracket eligibility, times, evidence, result consistency, computed weighted Elo, and the selected pool's current rating. It deep-copies serializable record data before changing history, the finalized index, and only that pool's counters. No callbacks or yields occur among those writes. Duplicate IDs, including archived IDs, return without a second change. Loading verifies each pool's historical rating chain, cumulative wins/losses, and finalized index.
-
-Migration fully validates an original schema-1 database before copying it into `legacy`. Both new pools start at 1500; old matches are never assigned fabricated historical levels. Settings and the monotonic nonce counter are copied into the schema-2 database. Subsequent loads validate the archive as well as current pools. Unsupported or damaged schemas are preserved and disabled, never silently reset. Confirmed reset clears both pools, current history, and the entire Legacy archive, retaining settings and the nonce counter.
-
-This is an atomic sequence of in-memory Lua mutations, not a distributed or disk transaction. SavedVariables flush belongs to the client. A crash can lose a local commit; dropped final messages can leave one participant committed while the other safely declines to commit. The current implementation does not roll back or reconcile such asymmetry.
-
-## Read-only overview
-
-`Profile.lua` owns a separate 960×812 movable, screen-clamped frame that scales down on opening to fit the current `UIParent` dimensions without changing the player's UI scale. `Leveling` and `Max level` selectors, plus `Legacy` when an archive exists, select the displayed pool. Four statistics cards and a progression chart sit above eight alternating history rows and a persistent right-hand details panel. Gold styling and an arrow identify the selected row. `/duelrating` and `/duelrating ui` toggle it; a Close button and `UISpecialFrames` registration support dismissal. `/duelrating summary` retains the chat summary, and `/duelrating history` still prints up to 20 recent records with match IDs.
-
-`History:Overview(bracket)` derives current rating, W/L, win percentage, total matches, best retained rating including the initial rating, and the newest consecutive win/loss streak. `History:Page(page, pageSize, bracket)` returns bounded newest-first pages with copied records. `History:Series(bracket, limit)` returns chronological rating points in finalization order, starting with the rating before the first included duel. The chart requests the latest 40 duels, bounds its line count, and pads the vertical range so a flat history remains readable. Each mode, including Legacy, has an independent series; changing the view does not select the rated matchmaking mode. `History:Details(matchId)` returns a copied match, winner/loser identities, duration, saved local rating values, and a calculated opponent rating delta/after value marked `opponentRatingSource = "calculated"`. That projection uses saved pre-match snapshots and the recorded result; it does not verify the opponent's current or committed rating.
-
-The details panel shows both players, their stored levels and classes, rating mode, client-local date, duration, stored knockout/retreat outcome when available, and rating before/after/delta. Specialization uses the saved name or a lookup of the saved spec ID; absent metadata is not invented. Empty history has explanatory text rather than an invented win percentage. No damage, healing, spell, or timeline data is captured or reconstructed.
-
-The overview reads schema-2 records and the retained schema-1 archive without writing rating or consent state. Reopening resets the view to its newest page. Lifecycle render callbacks and a confirmed reset refresh it only while visible. `Profile:Run()` isolates display failures: it hides the overview and reports the chat-summary fallback without invoking duel-abort recovery. The 0.2.0 window worked in the reported live test; the 0.4.0 selectors, chart, expanded layout, scaling, and long-name rendering require a new in-game visual check. The external UI simulator remains deferred at the user's request.
-
-## Popup integration and failures
-
-The addon creates a functional native-styled frame before suppression. For an incoming request it schedules `C_Timer.After(0, ...)`, rechecks the active request/frame/combat state, then calls `StaticPopup_Hide("DUEL_REQUESTED")`. It never changes `StaticPopupDialogs.DUEL_REQUESTED` or unregisters Blizzard handlers. An outgoing consent frame does not replace the incoming native popup.
-
-Continue-unrated and decline remain available during discovery/negotiation, including a combat entry that invalidates rated negotiation. Native acceptance is attempted only after the agreement barrier; a reported action error invalidates rating and attempts native restoration. Failed native decline also attempts restoration. A missing countdown times out the attempted start. Core error recovery clears the active rated flow independently of potentially failing render/transport callbacks and attempts restoration. Lifecycle/transport/deferred-popup timer callbacks run through guarded recovery.
-
-The initial pending watchdog is 50 seconds. It invalidates rated status and attempts native restoration for an unaccepted incoming request before discarding the session. If combat prevents restoration, it retains the addon-owned ordinary accept/decline buttons in `UNRATED` until native completion or user action. Restoration allows a five-second grace past this watchdog, but does not restore after observed countdown/acceptance or during combat. The 55-second local bound is not a query of native server state; actual expiry remains a live-client test requirement.
-
-The native game's expiry, actual action protection, and event ordering remain integration constraints. `pcall` catches errors; it does not grant protected-action permissions or prove server acceptance. Deferred callbacks, combat entry, Escape handling, replacement requests, and expired requests are explicit manual-test cases.
-
-| Constant | Default | Purpose |
+| CANCEL reason | Typical trigger | Outcome class and effect |
 | --- | --- | --- |
-| `PRESENCE_TIMEOUT` | 4 s | Initial discovery check; strict outgoing native-attempt acknowledgment window. |
-| `NEGOTIATION_TIMEOUT` | 12 s | Consent through native countdown. |
-| `PENDING_TIMEOUT` | 50 s | Bound an unresolved pending request. |
-| `START_TIMEOUT` | 8 s | Await countdown after native acceptance attempt. |
-| `RESULT_TIMEOUT` | 8 s | Collect matching finish/result evidence. |
-| `RESULT_RETRIES`, `RESULT_RETRY_INTERVAL` | 2, 1 s | Retry the immutable local result after one and two seconds. |
-| `MATCH_TIMEOUT` | 1200 s | Bound an abandoned active session. |
+| `CANCELLED` | a player left the queue | decision: the leaver goes idle, the other requeues; the pair is blocked for 2 min on both sides |
+| `DECLINED` | invitation declined, or the pair is still blocked | decision: requeue, pair blocked 2 min |
+| `GROUP_TIMEOUT` | invitation not accepted within 60 s | decision: coordinator requeues and blocks the pair. An invitee that saw the dialog and did not join blocks and leaves the queue. Unseen or rescinded: requeue and retry. |
+| `TRAVEL_TIMEOUT` | travel deadline passed | no-show, judged from the own position: arrived requeues and keeps the wait; absent gets a 2 min queue pause; unknown goes idle |
+| `START_TIMEOUT`, `DUEL`, `FINISHED` | no duel before the start deadline / duel ended without rating / match completed | ended: idle |
+| `BUSY`, `INVITE_FAILED`, `PEER_SILENT`, `GROUP_CHANGED`, `OPPONENT_LEFT`, `NO_VENUE`, `PLAN_INVALID`, `ERROR`, `RELOAD` | technical or circumstantial | transient: requeue with the waiting time kept; the same opponent again after 15 s; three failures with one opponent block the pair for 2 min; an `ERROR` repeated within 60 s goes idle |
 
-These are tunable initial values, not certified values for Forever's latency or native request lifetime.
+Each reason has a local sentence and a form for the other side ("Your opponent's client cancelled because ..."). The player's own leave prints no extra line.
 
-## Future verification boundary
+## Discovery (Presence and Roster)
 
-The website has a separate Class Rating for the level-60 max-level pool. It uses an immutable manually initialized matchup matrix, a 1,500 starting rating and complementary K=32 transfers. Overall Elo is retained unchanged; Leveling class boards rank by their ordinary Elo. Matrix selection follows match end time during deterministic replay, so late imports use the documented historical version. Confirmed reports establish one stable class per GUID; contradictory new class claims are rejected atomically. Ranks are calculated before search and pagination. The website exposes both profile histories and aggregate class comparisons, with official class icons, English copy and the existing light/dark toggle.
+Profiles (`FDP2|guid|rating|mapID|classFile|level|maxLevel`, queries `FDQ2|...`) are advisory self-reports, keyed by the sender name the server reports. They never supply consent, snapshots or results.
 
-An administrative NumPy/SciPy tool estimates centered character abilities and matchup offsets from equal-level, same-ruleset data. Two consecutive 14-day 50–59 windows, bounded repeated-pair contributions, fixed-seed character-cluster intervals, sample thresholds and separate max-level counterevidence constrain proposals. Publishing a report does not activate a matrix; each later version requires explicit administrator approval and fresh validation data. Centering assumes comparable average player populations and cannot disentangle all gear, specialization or selection effects. The implementation and initial hypotheses are documented in [web/CLASS_RATING.md](web/CLASS_RATING.md). These web projections and offline analyses cannot write the addon's local ratings or SavedVariables.
+- **Queries** go out only on demand: to the target or mouseover (same faction, readable) while the zone window is open, or when their tooltip shows; to channel members while the zone window is open, the queue is `SEARCHING` or `PAUSED`, or for 10 s after **Refresh**. Nothing is queried while a duel request or a queue ticket exists. There is no nameplate, party or raid fan-out.
+- **Replies** go only to trusted senders: queue peers, channel members and visible units with that name. A query from an unknown sender waits up to 20 s for a roster read to prove membership. The real map ID goes to visible units and queue peers, and to members that reported the same map; everyone else gets map 0.
+- **CHANNEL:** after joining, one profile per session is posted to the channel as an experiment. Only another player's CHANNEL profile proves that channel delivery works. While that holds and our own post was accepted, posts every 60 s replace member queries. Profile changes are pushed at most every 30 s.
+- **Roster:** the `ForeverDuel` channel is joined (temporary) only after the default channels exist. Password, ban, missing-after-join and manual-leave failures are detected. A fully readable roster read replaces the member list. Loading the list may briefly change the native channel selection; it is restored, and it is never touched while the Channels window is open.
+- **Quiet mode** (`settings.quiet`) stops every Presence and Roster send and drops pending work. Only `ping` and its PONG stay, because they are the measurement.
+- **Ping:** `PING|seq|ms` is answered with `PONG|seq|ms`, at most once per 2 s per sender and route, and only to cached players, channel members, the target or party members. The round trip is measured on the pinging client.
 
-The record supports two independent uploads with the same match ID, identities, pre-match snapshots, and winner. A separate local prototype under `web/server` validates and reconciles these reports and recomputes its own level-weighted Elo ratings; it does not use client rating totals as central balances. The website presents the ladder, duel register and optional Blizzard character enrichment; `web/README.md` describes the local preview and configuration. Blizzard enrichment uses server-side OAuth and explicit administrator mappings to actual API IDs. Verified profile data stay separate from duel identities and ratings; they do not prove ownership or duel outcomes. Forever has no verified profile namespace in this implementation, so the default makes no upstream requests or guessed Armory links. An offline exporter under `tools/export-history.py` reads SavedVariables as data without executing Lua. None of these components is loaded by the addon, and no automatic upload or in-game central-rating synchronization has been added.
+## Diagnostics (Debug.lua)
 
-Bearer tokens can bind an upload to a provisioned GUID, but token provisioning does not establish native character ownership. Two matching uploaded reports and client `evidence` booleans are community corroboration, not cryptographic or WoW-server proof. Public hosting, ownership verification, abuse detection, seasons and server-authoritative Glicko-2 remain future work.
+- **Rings:** `settings.requestDiagnostics` (lifecycle) and `settings.transportDiagnostics` (transport) keep 64 entries each, so transport noise cannot push out lifecycle evidence. Each entry has the version and build, server and client time, topic and a detail of at most 320 characters. Identical repeats within 5–10 s are compacted into a repeat count, never across an episode boundary (`duel detected`, `state`, `queue state`, `outgoing request`, `incoming native name`, `session`).
+- **Topics:** lifecycle holds request capture and resolution, duel states, peer validation, unrated reasons, received CANCELs, `session` (login, reload or world transition), errors, queue state/group/planning/cancel/invite/venue, prefix registration, version mismatch, and `UI_INFO_MESSAGE`/`UI_ERROR_MESSAGE` for `ERR_DUEL*` IDs only. Transport holds duel and queue sends and receipts, rejected packets, `outbound` failures and expiries, `ping`, and only rare discovery facts: the CHANNEL experiment, changed CHANNEL outcomes, the route becoming audible, and the first whisper failure of each kind. Routine discovery whispers are chat-debug only (`zone traffic`).
+- **Errors:** `settings.errorDiagnostics` keeps 10 Lua errors with context, message (400 characters), stack (900), version and time. Repeats are counted. They are always saved and announced in chat once per session.
+- **Traffic counters:** per prefix and channel, counts of submitted, success, throttled, failed, dropped and expired, plus a rolling minute with unique recipients. `settings.trafficCounters` keeps the totals and the last complete minute, with only the number of recipients.
+- **Privacy bounds:** diagnostics never contain packet payloads, nonces, queue sessions or tickets, or positions, and the counters keep no recipient names. Some topics keep only their first arguments for this reason. Diagnostic entries do contain character names and GUIDs of opponents and recipients. Never saved at all: the discovery cache, channel members, and the active duel and queue state (only queue preferences, tested places, pair blocks and the cooldown persist). `FD.C.BUILD` comes from the `X-Build` TOC line written by `tools/install-addon.ps1`.
+
+## Saved data
+
+`ForeverDuelDB` (schema 2) holds `player.ratings.LEVELING` and `MAX_LEVEL`, `player.initialRatings`, `matches` (oldest first), `finalized[matchId]`, `settings`, `nonceCounter`, and optionally `legacy`, `archived` and `quarantine`. Each record stores the rating rules it was calculated with. Loading checks each pool as a ledger: structure, the chain from the initial rating, before plus delta equals after, the sign matches WIN or LOSS, totals, the finalized index, duplicate IDs and bracket against the stored levels. It never recomputes old records with today's constants; only records with rules version 1 are recomputed, with their own stored rules. `Commit` rejects a stale `ratingBefore` and duplicate match IDs, and writes in one sequence without callbacks. Reset clears ratings, history and Legacy and keeps settings, archives and quarantine. Queue preferences, tested places, pair blocks and the no-show cooldown live in `settings.queue`.
+
+## Safety invariants
+
+1. A rated record requires both explicit rated clicks, each bound to both request nonces, before the native countdown. A peer packet alone never creates consent.
+2. Native identity (GUID, class, level, cap) comes from local unit APIs at the start of the request. Peer packets must match it and can never replace it.
+3. The addon never hides or changes Blizzard's duel popup before its own `AcceptDuel`, and never edits `StaticPopupDialogs`. Every other native accept makes the duel unrated.
+4. Unrating a match sends CANCEL with a reason to a bound peer (an outdated FD2 peer cannot read it and gets none), and START and RESULT are suppressed from then on. No timing CANCEL is sent after a countdown.
+5. Finalization needs the local countdown, start, finish and winner, the peer's START or RESULT, and agreement. Each match ID commits at most once.
+6. Discovery profiles, queue packets and diagnostics never supply consent, snapshots or results.
+7. Errors in discovery, the queue or the windows never enter `FD:Safe`. A rated-flow error ends the flow with a CANCEL and leaves Blizzard's popup usable.
+8. PARTY is used only for the exact two-player group with the bound opponent. Automatic cleanup leaves only the exact queue-owned group.
+9. Saved data is never reset silently: damaged data is quarantined on request, another character's data is archived, and rule changes never invalidate stored history.
+
+## Timing and budget reference
+
+Read from the source. `Comms.lua` has no timing constants of its own: duel packets use the `FD.C` values and Outbound.
+
+| Source | Constant | Value | Meaning |
+| --- | --- | --- | --- |
+| Constants.lua | `PENDING_TIMEOUT` | 50 s | Native request window; the only decision timer. |
+| Constants.lua | `OUTGOING_TIMEOUT` | 50 s (= `PENDING_TIMEOUT`) | Capture window for a StartDuel attempt; untracked-attempt block. |
+| Constants.lua | `INCOMING_RETRY_INTERVAL` | 0.5 s | Retry resolving the challenger while the popup is visible. |
+| Constants.lua | `HELLO_SCHEDULE` | 0, 1, 3, 7, 15, 31 s | HELLO sends after Begin (same nonce, keyed). |
+| Constants.lua | `ACCEPT_SCHEDULE` | 0, 2, 5, 10, 20 s | ACCEPT sends after the own rated click. |
+| Constants.lua | `ACK_INTERVAL` | 3 s | At most one HELLO_ACK per peer nonce. |
+| Constants.lua | `DELAY_NOTICE` | 8 s | "Addon messages to X are delayed" line (known addon users only). |
+| Constants.lua | `STALE_HELLO` | 10 s | Reject HELLOs from requests older than this request. |
+| Constants.lua | `START_TIMEOUT` | 8 s | Release after an accept without countdown; challenger grace after expiry. |
+| Constants.lua | `START_REPEAT` | 2 s | Second START after the countdown. |
+| Constants.lua | `RESULT_TIMEOUT` | 30 s | `FINISHING` window; TTL of the mandatory RESULT. |
+| Constants.lua | `RESULT_SCHEDULE` | 2, 5, 10, 20 s | RESULT retries while finishing; also the answer limit (4). |
+| Constants.lua | `RECENT_MATCHES`, `RECENT_TTL` | 5, 300 s | Finished matches answering late START/RESULT, at least 1 s apart. |
+| Constants.lua | `MATCH_TIMEOUT` | 1200 s | Drop a match whose `DUEL_FINISHED` was missed. |
+| Constants.lua | `FAILURE_WINDOW` | 2 s | Failure notice after StartDuel clears the capture. |
+| Constants.lua | `K_FACTOR`, `LEVEL_RATING_WEIGHT`, `MAX_LEVEL_DIFFERENCE`, `INITIAL_RATING` | 32, 20, 5, 1500 | Rating rules (stored per record). |
+| Duel.lua | first ACCEPT TTL | remaining request window (at least 1 s) | Mandatory: a failure unrates with `r=transport`. |
+| Duel.lua | first RESULT TTL | `RESULT_TIMEOUT` | Mandatory; retries are redundant. |
+| Duel.lua | other duel packets | Outbound default 10 s | Redundant copies. |
+| Queue.lua | `T.PROFILE_FRESHNESS`, `T.PROFILE_RETENTION` | 15 s, 120 s | PROFILE age to start a match; forget a queue peer. |
+| Queue.lua | `T.QUERY_SPACING` | 2 s | At most one QUERY+PROFILE per 2 s. |
+| Queue.lua | `T.ACTIVE_QUERY_INTERVAL`, `T.DISCOVERY_QUERY_INTERVAL` | 5 s, 30 s | Per-candidate query interval: queue peers / other addon users. |
+| Queue.lua | `T.INVITE_RECOGNITION` | 60 s | Remembered invitation, OFFER or PROFILE age for binding. |
+| Queue.lua | `T.INVITE` | 60 s | `INVITING`/`INVITED` deadline: `GROUP_TIMEOUT`. |
+| Queue.lua | `T.GROUPING`, `T.PLANNING` | 45 s, 45 s | State deadlines: `PEER_SILENT`. |
+| Queue.lua | `T.OFFER_RETRY` | 5 s | Coordinator repeats PROFILE+OFFER until GROUP. |
+| Queue.lua | `T.RETRY` | 3 s | GROUP and PLAN repeat; Reintroduce spacing. |
+| Queue.lua | `T.STATUS` | 3 s | STATUS while travelling or ready. |
+| Queue.lua | `T.SILENT` | 30 s | No packet and no native presence while travelling: `PEER_SILENT`. |
+| Queue.lua | `T.SOLO_GRACE` | 5 s | Group dissolved: `OPPONENT_LEFT`. |
+| Queue.lua | `T.LOAD_GRACE` | 15 s | No arrival or silence verdict after a loading screen. |
+| Queue.lua | `T.CLOCK_SKEW` | 5 s | Allowed PLAN deadline skew. |
+| Queue.lua | `T.START_WINDOW` | 120 s | Start deadline after the travel deadline: `START_TIMEOUT`. |
+| Queue.lua | `DUEL` limit | `MATCH_TIMEOUT` + 60 = 1260 s | `DUEL` state deadline. |
+| Queue.lua | `T.RESULT_WAIT` | 15 s | Keep the group for the peer's result after `FINISHED`. |
+| Queue.lua | `T.CLEANUP`, `T.LEAVE_DELAY` | 20 s, 1.5 s | Cleanup bound; leave the party after the CANCEL. |
+| Queue.lua | `T.BLOCK`, `T.COOLDOWN`, `T.RETRY_DELAY` | 120 s, 120 s, 15 s | Pair block; no-show pause; retry the same opponent. |
+| Queue.lua | `T.RADIUS`, `T.LEAVE_LIMIT` | 40 yd, 10 | Arrival radius (3 samples); LEAVE recipients. |
+| Queue.lua | rating window | ±100, ±200 after 120 s, ±400 after 300 s | The stricter of both players applies. |
+| QueueCore.lua | pulse | 1 s | Queue tick. |
+| QueueTransport.lua | TTL | QUERY 8, PROFILE 8, LEAVE 10, CANCEL 30, VENUE* 20, other 10 s | Queue packet lifetimes. |
+| QueueWow.lua | co-location; tested place | 10 yd / 5 yd vertical; 5 min and 40 yd, 100 places | Request duel check; save window and catalog size. |
+| Venues.lua | travel time | max(300, 1.5 × walk + 120) s at 7 yd/s (11.2 from level 40), at most 900 s; cross-continent 900 s | Plan duration; digest at most 8 places. |
+| Presence.lua | `TICK`, `PULSE` | 2 s, 5 s | Minimum tick spacing; housekeeping cadence. |
+| Presence.lua | `EXPIRY`, `STALE`, `FORGET`, `MAX_PLAYERS` | 180 s, 45 s, 600 s, 300 | Profile validity; "last seen" marker; forget; cache size. |
+| Presence.lua | `HEARTBEAT`, `STRANGER` | 45 s, 600 s | Query interval for known users and members / for names that never answered. |
+| Presence.lua | `ASK_GAP`, `MANUAL` | 3 s, 10 s | Tooltip query spacing; Refresh window. |
+| Presence.lua | `MIN_REPLY`, `HOLD`, `GREET_GAP` | 5 s, 20 s, 10 s | Replies per sender; wait for membership proof; CHANNEL newcomer greeting. |
+| Presence.lua | `WORK_LIMIT`, `WORK_TTL`, `QUERY_BACKLOG` | 30, 30 s, 6 | Pending whispers (one in flight); their lifetime; member queries waiting. |
+| Presence.lua | `ANNOUNCE_GAP`, `BROADCAST`, `CHANNEL_STALE`, `CHANNEL_RETRY` | 30 s, 60 s, 180 s, 600 s | Profile push; CHANNEL heartbeat; CHANNEL mode ends; retry a rejected route. CHANNEL post TTL 20 s. |
+| Presence.lua | `NOT_FOUND_WINDOW` | 5 s | Hide "No player named ..." for own recent whispers. |
+| Presence.lua | `PING_TIMEOUT`, `PONG_GAP`, `MAX_PINGS` | 90 s, 2 s, 20 | Ping wait; PONG rate per sender and route; open pings. Ping TTL 10 s. |
+| Roster.lua | `REFRESH`, `MANUAL`, `WAIT`, `RECENT`, `LIMIT` | 60 s, 10 s, 5 s, 15 s, 300 | Roster requests; selection hold; keep event-proven joins; member cap. |
+| Roster.lua | `JOIN_CHECK`, `JOIN_RETRY`, `JOIN_FALLBACK`, `UI_SETTLE` | 5 s, 60 s, 15 s, 3 s | Channel join checks and gating. |
+| Outbound.lua | `SPACING` | 0.1 s | Between any two submissions. |
+| Outbound.lua | `LANE_LIMIT` | 48 / 48 / 30 | CONTROL / QUEUE / BACKGROUND queue length; a full lane drops new items. |
+| Outbound.lua | `DEFAULT_TTL` | 10 s | Item lifetime unless set. |
+| Outbound.lua | `BUCKETS.WHISPER` | 8 burst, +1/s | Shared by all prefixes. |
+| Outbound.lua | `BUCKETS.group` | 10 burst, +1/s | Per prefix and PARTY/CHANNEL route. |
+| Outbound.lua | `BACKGROUND_RESERVE` | 3 | BACKGROUND needs 4 tokens. |
+| Outbound.lua | retries | throttle: 2, 4, 8, 8 ... s until TTL; transient: 3 attempts | Result handling. |
+| Debug.lua | `RING_LIMIT`, `ERROR_LIMIT` | 64 per ring, 10 | Persisted diagnostics. |
+| Core.lua | initialization; reset | 15 retries × 2 s; 15 s | Identity wait; reset confirmation. |
