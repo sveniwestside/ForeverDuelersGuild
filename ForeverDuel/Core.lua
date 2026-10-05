@@ -184,6 +184,9 @@ end, "Delete this character's rating and history (asks for confirmation).", 70)
 -- unavailable, not the saved data. Try again instead of repairing.
 local function retryInitialize()
     if FD:Initialize() then say(FD.L["Saved data is valid; nothing to repair."])
+    elseif FD.databaseError then
+        -- The identity is readable now and the data really is damaged.
+        say(FD.L["Saved data unavailable; rating is disabled. Type /duelrating repair to start a fresh rating while keeping a copy of the old data."])
     else say(FD.L["Character identity is unavailable; rated duels are disabled until /reload."]) end
 end
 
