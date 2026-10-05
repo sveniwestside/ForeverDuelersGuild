@@ -76,6 +76,7 @@ _Review-driven rework. Simulated in the test suites; the live two-client run ([M
 ### Development
 
 - Tests run on every push. A CurseForge upload runs only from a `v*` tag in the `curseforge` environment; the workflow stops unless that environment has required reviewers, and the uploader refuses a version without a recorded passed live test (`validation.userReportedTesting`). The release script refuses to upload from uncommitted changes other than the test results its own offline run records, and the release workflow installs the analysis test dependencies it runs.
+- The local web ladder (`web/`) imports 0.6 records (protocol 3, `FD3:` match IDs) as well as 0.5 records, and shows the addon version from the TOC.
 - `tools/install-addon.ps1` installs a committed build for testers, writes the commit into the installed TOC, backs up the previous copy and verifies the files.
 
 ## [0.5.7] - 2026-10-05
