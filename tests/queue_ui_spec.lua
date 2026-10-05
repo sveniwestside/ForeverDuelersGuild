@@ -207,13 +207,24 @@ return function(_, equal)
     c.status.queuedAt, c.status.ratingWindow, c.status.discovered = c.now - 63, 200, 7
     ui:RefreshIfShown()
     equal(ui.timer.text, "Waiting: 1:03  /  Rating +/-200", "queue wait and current widened window use server time")
-    equal(#c.timers, 1, "a displayed countdown keeps one pending refresh")
+    -- The engine's 1 s pulse renders the window while searching or pairing.
+    c:tick()
+    for _, state in ipairs({ "SEARCHING", "PAUSED", "INVITING", "INVITED", "GROUPING", "PLANNING" }) do
+        c.status.state = state
+        ui:RefreshIfShown()
+        equal(#c.timers, 0, state .. " is refreshed by the engine pulse alone, never twice per second")
+    end
+    c.status.state, c.status.deadline = "TRAVELLING", c.now + 300
+    ui:RefreshIfShown()
+    equal(ui.timer.text, "Time remaining: 5:00", "travel deadline shown")
+    equal(#c.timers, 1, "a travel countdown the engine does not render keeps one pending refresh")
     reads, c.now = c.reads, c.now + 1
     c:tick()
     equal(c.reads, reads + 1, "the ticker refreshes once per second")
-    equal(ui.timer.text, "Waiting: 1:04  /  Rating +/-200", "the wait advances without a queue render")
+    equal(ui.timer.text, "Time remaining: 4:59", "the countdown advances without a queue render")
     ui:RefreshIfShown()
     equal(#c.timers, 1, "queue renders never stack a second ticker")
+    c.status.state, c.status.deadline = "SEARCHING", nil
     ui.frame:Hide()
     reads = c.reads
     c:tick()

@@ -36,7 +36,7 @@ Every file receives the private namespace through `local _, FD = ...`. The only 
 | 26 | `Queue.lua` | queue | Queue engine: forward transitions, one deadline per state, `Finish` with outcome classes. Environment is injected. |
 | 27 | `QueueWow.lua` | queue | Native queue adapter: ruleset, position, GUID group classification, invitations, co-location, tested places, waypoint. |
 | 28 | `QueueTransport.lua` | queue | Queue packets to Outbound; sender, PARTY and ticket checks on receive. |
-| 29 | `QueueUI.lua` | UI | Queue window. While shown it refreshes at 1 Hz whenever the queue is not `IDLE`; when idle, only while a cooldown, a notice, the ruleset detection, a cleanup advisory, the **Leave group** button or the profile count can change without a queue render. |
+| 29 | `QueueUI.lua` | UI | Queue window. The engine's 1 s pulse renders it while searching or pairing (`SEARCHING` to `PLANNING`); in `TRAVELLING`, `READY`, `DUEL` and `CLEANUP` its own ticker refreshes it at 1 Hz; when idle, only while a cooldown, a notice, the ruleset detection, a cleanup advisory, the **Leave group** button or the profile count can change without a queue render. |
 | 30 | `QueueCore.lua` | queue | Queue wiring: events, 1 s pulse, tested-place sharing, `queue` command and status. |
 | 31 | `Core.lua` | foundation | Bootstrap, `FD:Safe` recovery, `ui`/`summary`/`history`/`reset`/`repair`, event frame. Loads last. |
 

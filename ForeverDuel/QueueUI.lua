@@ -18,6 +18,12 @@ local STATE_NAMES = {
     READY = "Both players have arrived", DUEL = "Duel in progress", CLEANUP = "Finishing the queue match",
 }
 
+-- The engine's 1 s pulse already renders the window in these states
+-- (Queue:Search, Queue:Tick); a second UI ticker would refresh it twice per
+-- second.
+local ENGINE_RENDERED = { SEARCHING = true, PAUSED = true, INVITING = true, INVITED = true,
+    GROUPING = true, PLANNING = true }
+
 local function duration(value)
     value = math.max(0, math.floor(value))
     return string.format("%d:%02d", math.floor(value / 60), value % 60)
@@ -232,12 +238,13 @@ function QueueUI:Refresh()
     end
     -- Queue texts can change without a queue render (Queue:Tick clears a
     -- cleanup advisory silently, profile counts age, a countdown runs), so
-    -- the window refreshes at 1 Hz while queued or matched. When idle only a
+    -- the window refreshes at 1 Hz while matched in a state the engine pulse
+    -- does not render (TRAVELLING, READY, DUEL, CLEANUP). When idle only a
     -- cooldown, a notice's expiry, the pending ruleset detection, a cleanup
     -- advisory, the Leave group button or an ageing profile count can change.
-    local live = state ~= "IDLE" or timer ~= "" or self.notice ~= nil
+    local live = not ENGINE_RENDERED[state] and (state ~= "IDLE" or timer ~= "" or self.notice ~= nil
         or (idle and (not settings.ruleset or status.cleanupStatus ~= nil or status.groupAction == true
-            or number(status.discovered) and status.discovered > 0))
+            or number(status.discovered) and status.discovered > 0)))
     if number(status.ratingWindow) and state == "SEARCHING" then
         timer = timer .. (timer ~= "" and "  /  " or "") .. FD.Locale:Format("Rating +/-%d", status.ratingWindow)
     end
