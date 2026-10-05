@@ -20,10 +20,17 @@ local _, FD = ...
 -- and Roster send: queries, replies, broadcasts, channel joins and roster
 -- requests. Only the explicit latency probe and its PONG stay available,
 -- because they are the measurement.
+--
+-- Diagnostics: routine per-whisper traffic is chat-debug only ("zone
+-- traffic") and counted by FD.Outbound. The persisted transport ring gets
+-- only rare facts: the CHANNEL experiment, changed CHANNEL outcomes, the
+-- CHANNEL route becoming audible and the first whisper failure of each kind,
+-- so a busy channel cannot evict duel and queue evidence.
 FD.Presence = { players = {}, suspended = false, queries = {}, replies = {}, held = {}, whispered = {},
-    work = {}, workCount = 0, seq = 0, pings = {}, pongs = {}, pingSeq = 0,
+    forgotten = {}, failures = {}, work = {}, workCount = 0, seq = 0, pings = {}, pongs = {}, pingSeq = 0,
     -- Forever rejects addon YELL/SAY with InvalidChatType (live 0.4.2), so
-    -- the area route was removed; this flag only documents that fact.
+    -- the area route was removed. Dead flag, kept only while adapter_spec
+    -- (another workstream) still asserts it.
     areaUnsupported = true }
 local Presence = FD.Presence
 local PREFIX = "ForeverDuelZone2"
@@ -39,7 +46,7 @@ local MIN_REPLY, HOLD = 5, 20       -- per-sender replies; wait for an unverifie
 local GREET_GAP = 10                -- at most one whisper greeting per 10 s to CHANNEL newcomers
 local WORK_LIMIT, WORK_TTL = 30, 30 -- pending discovery whispers and their lifetime
 local QUERY_BACKLOG = 6             -- member queries waiting at once (refilled every Tick)
-local ANNOUNCE_GAP, BROADCAST, CHANNEL_STALE = 30, 60, 180
+local ANNOUNCE_GAP, BROADCAST, CHANNEL_STALE, CHANNEL_RETRY = 30, 60, 180, 600
 local NOT_FOUND_WINDOW, PING_TIMEOUT, PONG_GAP, MAX_PINGS = 5, 90, 2, 20
 Presence.STALE = 45                 -- the zone browser marks older entries as "last seen"
 local classes = { WARRIOR = true, PALADIN = true, HUNTER = true, ROGUE = true,
@@ -65,6 +72,12 @@ local function fresh(player, at)
 end
 
 local function say(text) FD.Debug:Print(text) end
+local function traffic(...) FD.Debug:Log("zone traffic", ...) end -- Not a persisted topic.
+
+-- Whisper delivery ignores case; names typed by the player may differ.
+local function sameName(a, b)
+    return type(a) == "string" and type(b) == "string" and a:lower() == b:lower()
+end
 
 -- Discovery/UI errors must never enter Core:Safe, which cancels rated flow.
 function Presence:Run(callback)
@@ -92,8 +105,25 @@ function Presence:Busy()
     return FD.duel ~= nil and FD.duel.active ~= nil or type(queue) == "table" and queue.ticket ~= nil
 end
 
+function Presence:ChannelHeard(at)
+    return self.lastChannelReceive ~= nil and (at or GetTime()) - self.lastChannelReceive < CHANNEL_STALE
+end
+
+-- CHANNEL replaces member whispers only while another player's CHANNEL
+-- message arrived recently and our own last CHANNEL submission was accepted.
+-- A client whose broadcasts are rejected keeps querying, or nobody in
+-- CHANNEL mode would ever learn about it.
 function Presence:ChannelMode()
-    return self.lastChannelReceive ~= nil and GetTime() - self.lastChannelReceive < CHANNEL_STALE
+    return self.channelSend == "sent" and self:ChannelHeard()
+end
+
+-- Why discovery may query members and load the roster right now.
+function Presence:Reason(at)
+    local zone = FD.Zone and FD.Zone.IsShown and FD.Zone:IsShown() or false
+    local queue = FD.queue
+    local searching = type(queue) == "table" and (queue.state == "SEARCHING" or queue.state == "PAUSED")
+    local manual = self.manualUntil ~= nil and at < self.manualUntil
+    return zone or searching or manual, zone, manual
 end
 
 function Presence:MapID()
@@ -361,7 +391,7 @@ function Presence:Done(name, entry, item, status, code)
     if self.work[name] == entry then self.work[name], self.workCount = nil, self.workCount - 1 end
     local at, kind = GetTime(), entry.reply and "profile" or "query"
     if status == "sent" then
-        self.whispered[name] = at
+        self.whispered[name], self.forgotten[name] = at, nil
         if entry.reply then self.replies[name] = at else self.queries[name] = at end
     elseif status == "failed" and code == FD.Outbound:Code("TargetOffline") then
         self:Forget(name) -- Offline recipients are never retried.
@@ -369,8 +399,14 @@ function Presence:Done(name, entry, item, status, code)
         self.queries[name] = at -- An expired or dropped query is not re-added at once.
     end
     self.lastWhisper = FD.Locale:Format(entry.reply and "Profile to %s: %s" or "Query to %s: %s", name, FD.L[status])
-    if status == "sent" then FD.Debug:Log("zone send", kind, "WHISPER", status)
-    else FD.Debug:Log("zone send", kind, "WHISPER", status, FD.Outbound:CodeName(code)) end
+    local codeName = status == "sent" and "Success" or FD.Outbound:CodeName(code)
+    local failure = status ~= "sent" and status .. " " .. codeName
+    if failure and not self.failures[failure] then
+        self.failures[failure] = true
+        FD.Debug:Log("zone send", kind, "WHISPER", status, codeName)
+    else
+        traffic("send", kind, "WHISPER", status, codeName)
+    end
     self:Pump()
 end
 
@@ -480,13 +516,16 @@ function Presence:Receive(prefix, payload, distribution, sender, _, _, localID)
     local at = GetTime()
     if channel then
         -- Only another player's CHANNEL message proves channel delivery.
-        if not self.lastChannelReceive then FD.Debug:Log("zone receive", "first profile via CHANNEL") end
+        if not self:ChannelHeard(at) then
+            FD.Debug:Log("zone receive", self.lastChannelReceive and "profile via CHANNEL after silence"
+                or "first profile via CHANNEL")
+        end
         self.lastChannelReceive = at
-        if FD.Roster then FD.Roster:AddMember(name, player.guid) end
+        if FD.Roster then FD.Roster:AddMember(name, player.guid, true) end
     end
     local known = self:Store(name, player)
     self.lastReceive = FD.Locale:Format(query and "Query from %s via %s" or "Profile from %s via %s", name, distribution)
-    FD.Debug:Log("zone receive", query and "query" or "profile", "via " .. distribution)
+    traffic("receive", query and "query" or "profile", "via " .. distribution)
     if query then self:Answer(name, player.guid)
     elseif channel and not known and at - (self.lastGreet or -math.huge) >= GREET_GAP then
         -- A newcomer's broadcast is answered directly, so it learns existing
@@ -505,8 +544,12 @@ function Presence:Answer(name, guid)
     local count = 0
     for _ in pairs(self.held) do count = count + 1 end
     if count >= WORK_LIMIT or self:Quiet() then return end
-    self.held[name] = self.held[name] or GetTime()
-    if FD.Roster then FD.Roster:Request(false) end
+    local at = GetTime()
+    self.held[name] = self.held[name] or at
+    -- Loading the roster briefly changes the native channel selection, so a
+    -- stranger's query may trigger it only while discovery runs anyway;
+    -- otherwise join events and roster updates must prove membership.
+    if FD.Roster and self:Reason(at) then FD.Roster:Request(false) end
 end
 
 function Presence:ResolveHeld(at)
@@ -532,7 +575,16 @@ function Presence:Broadcast(own, reason)
         onResult = function(status, code)
             local codeName = FD.Outbound:CodeName(code)
             self.lastChannelSend = FD.Locale:Format("%s: %s (%s)", FD.L[reason], FD.L[status], codeName)
-            FD.Debug:Log("zone send", "CHANNEL", reason, status, codeName)
+            -- Only a native verdict changes the route; an item dropped for a
+            -- duel or expired in the queue says nothing about CHANNEL.
+            if status == "sent" or status == "failed" then self.channelSend = status end
+            local outcome = status .. " " .. codeName
+            if reason == "experiment" or outcome ~= self.channelOutcome then
+                FD.Debug:Log("zone send", "CHANNEL", reason, status, codeName)
+            else
+                traffic("send", "CHANNEL", reason, status, codeName)
+            end
+            self.channelOutcome = outcome
         end })
 end
 
@@ -554,20 +606,20 @@ function Presence:Announce(own, at)
         end
     elseif channel and at - (self.lastBroadcast or -math.huge) >= BROADCAST then
         self:Broadcast(own, "heartbeat")
+    elseif not channel and self:ChannelHeard(at) and at - (self.lastBroadcast or -math.huge) >= CHANNEL_RETRY then
+        -- Others' broadcasts arrive but ours were not accepted: retry rarely.
+        self:Broadcast(own, "retry")
     end
 end
 
 function Presence:Discover(own, at)
-    local zone = FD.Zone and FD.Zone.IsShown and FD.Zone:IsShown()
-    local queue = FD.queue
-    local searching = type(queue) == "table" and (queue.state == "SEARCHING" or queue.state == "PAUSED")
-    local manual = self.manualUntil ~= nil and at < self.manualUntil
+    local active, zone, manual = self:Reason(at)
     if zone or manual then
         self:Ask("target")
         self:Ask("mouseover")
     end
     -- A working CHANNEL route replaces per-member query whispers.
-    if not (zone or searching or manual) or self:ChannelMode() and not manual or not FD.Roster then return end
+    if not active or self:ChannelMode() and not manual or not FD.Roster then return end
     FD.Roster:Request(manual)
     -- Keep only a short query backlog and refill it with the members asked
     -- longest ago, so a large channel is swept fairly instead of starving.
@@ -602,7 +654,9 @@ function Presence:Tick()
     end
     for name, last in pairs(self.queries) do if at - last >= FORGET then self.queries[name] = nil end end
     for name, last in pairs(self.replies) do if at - last >= MIN_REPLY then self.replies[name] = nil end end
-    for name, last in pairs(self.whispered) do if at - last >= NOT_FOUND_WINDOW then self.whispered[name] = nil end end
+    for name, last in pairs(self.whispered) do
+        if at - last >= NOT_FOUND_WINDOW then self.whispered[name], self.forgotten[name] = nil, nil end
+    end
     for seq, probe in pairs(self.pings) do
         if at - probe.queuedAt >= PING_TIMEOUT then
             self.pings[seq] = nil
@@ -671,12 +725,15 @@ function Presence:Enter()
     self:Wake(0)
 end
 
+-- A loading screen only suspends: the cache (hidden while suspended) and the
+-- channel members survive, so the zone change that follows still reaches
+-- trusted peers through Announce.
 function Presence:Leave(logout)
     if FD.Roster then FD.Roster:Reset() end
-    self.players, self.suspended = {}, true
+    self.suspended = true
     self.queries, self.replies = {}, {}
     self:DropWork()
-    if logout then self.stopped = true end
+    if logout then self.stopped, self.players = true, {} end
     self:Refresh()
 end
 
@@ -691,11 +748,15 @@ function Presence:NotFound(message)
     end
     local name = self.notFoundPattern and message:match(self.notFoundPattern)
     if not name then return false end
+    -- Every chat frame that shows system messages runs the filter for the
+    -- same line: the verdict is a pure lookup, and Forget runs once per name.
     local at = GetTime()
     for whispered, sent in pairs(self.whispered) do
         if at - sent < NOT_FOUND_WINDOW and (whispered == name or whispered:match("^[^%-]+") == name) then
-            self.whispered[whispered] = nil
-            self:Forget(whispered)
+            if not self.forgotten[whispered] then
+                self.forgotten[whispered] = true
+                self:Forget(whispered)
+            end
             return true
         end
     end
@@ -792,6 +853,16 @@ function Presence:SendPing(name, route)
     FD.Debug:Log("ping", "sent", route)
 end
 
+-- Prefer the server's spelling of a typed name when discovery knows it.
+function Presence:KnownName(name)
+    if self.players[name] or FD.Roster and FD.Roster:IsMember(name) then return name end
+    for known in pairs(self.players) do if sameName(known, name) then return known end end
+    if FD.Roster then
+        for known in pairs(FD.Roster.members) do if sameName(known, name) then return known end end
+    end
+    return name
+end
+
 function Presence:Ping(text)
     local L = FD.L
     if not self.available then return say(L["Addon messages are unavailable; the latency probe cannot run."]) end
@@ -804,9 +875,10 @@ function Presence:Ping(text)
     else
         name = self:Canonical(text)
         if not name then return say(L["That is not a valid character name."]) end
+        name = self:KnownName(name)
     end
     local own = FD.Wow:Identity("player")
-    if own and own.fullName == name then return say(L["Ping another player, not yourself."]) end
+    if own and sameName(own.fullName, name) then return say(L["Ping another player, not yourself."]) end
     self:SendPing(name, "WHISPER")
     if self:GroupedWith(name) then self:SendPing(name, "PARTY") end
 end
@@ -828,7 +900,9 @@ function Presence:ReceivePing(payload, distribution, name)
         return
     end
     local probe = self.pings[seq]
-    if not probe or probe.target ~= name or probe.route ~= distribution then return end
+    -- The PONG sender is the server-canonical name; the probe may hold the
+    -- name as typed.
+    if not probe or not sameName(probe.target, name) or probe.route ~= distribution then return end
     self.pings[seq] = nil
     local rtt = at - (probe.sentAt or probe.queuedAt)
     say(FD.Locale:Format("PONG from %s via %s: %.2f s round trip", name, distribution, rtt))

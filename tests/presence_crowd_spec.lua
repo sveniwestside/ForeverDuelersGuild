@@ -116,4 +116,33 @@ return function(_, equal)
             last[packet.target] = packet.at
         end
     end
+    local zoneEntries = 0
+    for _, entry in ipairs(a:trace("transport")) do
+        if entry.event == "zone send" or entry.event == "zone receive" then zoneEntries = zoneEntries + 1 end
+    end
+    equal(zoneEntries <= 6, true, "ten crowded minutes persist only a few discovery facts")
+
+    -- A busy discovery session never evicts duel and queue transport
+    -- evidence from the bounded persisted ring.
+    local quiet = Harness.network({ latency = 0.3, jitter = 0.3, seed = 9, channelDelivery = false })
+    local members = {}
+    for i = 1, 60 do
+        local identity = Harness.identity(i)
+        quiet:bot(identity)
+        members[#members + 1] = { name = Harness.fullName(identity, true), guid = identity.guid }
+    end
+    local c = quiet:add(Harness.client({ joined = true }))
+    c.members = members
+    c:start()
+    quiet:advance(5)
+    c.FD.Debug:Log("transport receive", "HELLO", "WHISPER")
+    c.FD.Zone.shown = true
+    quiet:advance(360)
+    local kept = false
+    for _, entry in ipairs(c:trace("transport")) do
+        if entry.event == "transport receive" then kept = true end
+    end
+    equal(#c:whispers("FDQ2") >= 120, true, "the discovery session was busy")
+    equal(#c.P:GetPlayers(), 60, "and found every answering member")
+    equal(kept, true, "the duel receipt survives six busy minutes of discovery")
 end

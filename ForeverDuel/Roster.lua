@@ -5,9 +5,12 @@ local _, FD = ...
 -- lets Presence decide whom to answer. The channel itself is untrusted: it
 -- is joined only after the client's default channels, join failures are
 -- reported, and the member list is loaded only when discovery needs it.
-FD.Roster = { CHANNEL = "ForeverDuel", members = {}, memberCount = 0 }
+-- members: name -> GUID. seen: last confirmation of any kind (eviction
+-- order); heard: when a join event or CHANNEL message proved membership.
+FD.Roster = { CHANNEL = "ForeverDuel", members = {}, memberCount = 0, seen = {}, heard = {} }
 local Roster = FD.Roster
 local CHANNEL, LIMIT = Roster.CHANNEL, 300
+local RECENT = 15                         -- event-proven members a roster read may not list yet
 local REFRESH, MANUAL, WAIT = 60, 10, 5   -- roster requests, explicit refresh, selection hold
 local JOIN_CHECK, JOIN_RETRY, JOIN_FALLBACK, UI_SETTLE = 5, 60, 15, 3
 
@@ -90,38 +93,79 @@ function Roster:IsMember(name)
     return type(name) == "string" and self.members[name] ~= nil
 end
 
-function Roster:AddMember(name, guid)
-    if not FD.Wow:Readable(name, guid) or type(name) ~= "string" or not FD.Protocol:ValidGUID(guid) then return end
+local function valid(name, guid)
+    return FD.Wow:Readable(name, guid) and type(name) == "string" and FD.Protocol:ValidGUID(guid)
+end
+
+-- `event` marks proof from a join event or a CHANNEL message. At the cap the
+-- longest-unconfirmed member makes room, so current members always fit.
+function Roster:AddMember(name, guid, event)
+    if not valid(name, guid) then return end
+    local at = GetTime()
     if self.members[name] == nil then
-        if self.memberCount >= LIMIT then return end
+        if self.memberCount >= LIMIT then
+            local oldest, oldestAt
+            for other in pairs(self.members) do
+                local seen = self.seen[other] or -math.huge
+                if not oldestAt or seen < oldestAt then oldest, oldestAt = other, seen end
+            end
+            self:RemoveMember(oldest)
+        end
         self.memberCount = self.memberCount + 1
     end
-    self.members[name] = guid
+    self.members[name], self.seen[name] = guid, at
+    if event then self.heard[name] = at end
 end
 
 function Roster:RemoveMember(name)
     if type(name) == "string" and self.members[name] ~= nil then
         self.members[name], self.memberCount = nil, self.memberCount - 1
     end
+    if type(name) == "string" then self.seen[name], self.heard[name] = nil, nil end
 end
 
--- Returns true when every listed row was readable.
+function Roster:Clear()
+    self.members, self.memberCount, self.seen, self.heard = {}, 0, {}, {}
+end
+
+-- Returns true when every listed row was readable. Such a read is
+-- authoritative: members who left without a leave event drop out, and only
+-- event-proven members the client roster may not list yet are kept.
 function Roster:Read(index, count)
     if not C_ChatInfo or type(C_ChatInfo.GetChannelRosterInfo) ~= "function"
         or not FD.Wow:Readable(count) or not integer(count, 1, 1000000) then return false end
-    local own = ownGUID()
-    local read, complete = 0, true
+    local own, at = ownGUID(), GetTime()
+    local rows, complete = {}, true
     for row = 1, math.min(count, LIMIT) do
         local name, _, _, guid = C_ChatInfo.GetChannelRosterInfo(index, row)
         if FD.Wow:Readable(name, guid) and type(name) == "string" and name ~= "" then
-            read = read + 1
-            if own == nil or guid ~= own then self:AddMember(FD.Presence:Canonical(name), guid) end
+            if own == nil or guid ~= own then rows[#rows + 1] = { FD.Presence:Canonical(name), guid } end
         else
             complete = false
         end
     end
-    if complete then self.problem = nil end
-    return complete
+    if not complete then
+        for _, row in ipairs(rows) do self:AddMember(row[1], row[2]) end
+        return false
+    end
+    local members, seen, heard, n = {}, {}, {}, 0
+    for _, row in ipairs(rows) do
+        local name, guid = row[1], row[2]
+        if valid(name, guid) and members[name] == nil then
+            members[name], seen[name], n = guid, at, n + 1
+        end
+    end
+    for name, since in pairs(self.heard) do
+        if at - since < RECENT then
+            heard[name] = since
+            if members[name] == nil and self.members[name] ~= nil and n < LIMIT then
+                members[name], seen[name], n = self.members[name], self.seen[name], n + 1
+            end
+        end
+    end
+    self.members, self.seen, self.heard, self.memberCount = members, seen, heard, n
+    self.problem = nil
+    return true
 end
 
 -- Hidden roster loading needs a temporary native selection change. It runs
@@ -212,7 +256,9 @@ function Roster:Tick(quiet)
             or FD.Locale:Format("ForeverDuel channel joined; %d members known.", self.memberCount)
         return
     end
+    -- Without the channel nobody can be proven a member.
     self.joinedAt = nil
+    if self.memberCount > 0 then self:Clear() end
     if quiet then self.status = L["Quiet mode: the ForeverDuel channel is not joined."]; return end
     if self.failure == "password" then
         self.status = L["The ForeverDuel channel asks for a password; the directory is unavailable. Target discovery remains available."]
@@ -251,7 +297,7 @@ function Roster:OnEvent(event, ...)
         name = FD.Presence:Canonical(name)
         if not name then return end
         if event == "CHAT_MSG_CHANNEL_JOIN" then
-            if FD.Wow:Readable(guid) and guid ~= ownGUID() then self:AddMember(name, guid) end
+            if FD.Wow:Readable(guid) and guid ~= ownGUID() then self:AddMember(name, guid, true) end
         elseif event == "CHAT_MSG_CHANNEL_LEAVE" then self:RemoveMember(name) end
     elseif event == "CHANNEL_ROSTER_UPDATE" or event == "CHANNEL_COUNT_UPDATE" then
         local index, count = ...
@@ -264,7 +310,7 @@ function Roster:OnEvent(event, ...)
         if not FD.Wow:Readable(notice) or not ours(channelName) then return end
         if notice == "WRONG_PASSWORD" then self.failure = "password"
         elseif notice == "BANNED" then self.failure = "banned"
-        elseif notice == "YOU_LEFT" then self.failure = "left" end -- Respect a manual /leave.
+        elseif notice == "YOU_LEFT" then self.failure = "left"; self:Clear() end -- Respect a manual /leave.
     elseif event == "CHANNEL_PASSWORD_REQUEST" then
         if ours((...)) then self.failure = "password" end
     end

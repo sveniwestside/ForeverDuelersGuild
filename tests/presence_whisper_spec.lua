@@ -247,6 +247,23 @@ return function(_, equal)
     c.P.whispered["Delta Four"] = c.now - 6
     equal(c:systemMessage("No player named 'Delta Four' is currently playing."), false, "only whispers of the last five seconds are hidden")
     equal(c:systemMessage("Something else entirely."), false, "unrelated system messages pass")
+    -- Every chat frame that shows system messages (main window, whisper
+    -- popouts) runs the filter for the same line: all of them hide it, and
+    -- the name is forgotten only once.
+    c = started({ channel = false })
+    c.FD.Zone.shown = true
+    c:addUnit("target", BETA)
+    c:advance(3)
+    equal(#to(c, "Beta Two", "FDQ2"), 1, "the target was queried")
+    local forgets, forget = 0, c.P.Forget
+    c.P.Forget = function(self, name) forgets = forgets + 1; return forget(self, name) end
+    local line = "No player named 'Beta Two' is currently playing."
+    equal(c:systemMessage(line), true, "the main chat frame hides the addon-caused line")
+    equal(c:systemMessage(line), true, "a second SYSTEM chat frame hides the same line")
+    equal(c:systemMessage(line), true, "and so does any further frame")
+    equal(forgets, 1, "the unknown name is forgotten once")
+    c:advance(6)
+    equal(c:systemMessage(line), false, "after five seconds the line is shown again")
 
     -- Privacy: replies go only to trusted senders; the map only to those who
     -- are visible, queue partners or channel members on the same map.
@@ -256,26 +273,45 @@ return function(_, equal)
     end
     c = started({ joined = true })
     c.sendResult = function(packet) return packet.channel == "CHANNEL" and 7 or 0 end
+    c.members = { { name = "Stranger Five", guid = "Player-1-0000EEEE" } }
     c:advance(5)
     c:receive("FDQ2|Player-1-0000EEEE|1500|37|MAGE|30|60", "Stranger Five")
     c:advance(10)
     equal(reply(c, "Stranger Five"), nil, "an unverified stranger gets no reply")
-    equal(c.selections[1].index, 9, "an unverified query requests one roster refresh")
-    equal(c.selections[2].index, 1, "and the previous channel selection is restored")
-    equal(#c.selections, 2, "exactly one selection round trip")
+    equal(#c.selections, 0, "an idle client never changes the channel selection for a stranger's query")
+    equal(#c.reads, 0, "nor reads the roster for it")
     c:emit("CHAT_MSG_CHANNEL_JOIN", "", "Stranger Five", "", "", "", "", 0, 6, "ForeverDuel", 0, 0, "Player-1-0000EEEE")
     c:receive("FDQ2|Player-1-0000EEEE|1500|37|MAGE|30|60", "Stranger Five")
     c:advance(4)
     equal(reply(c, "Stranger Five").payload, "FDP2|Player-1-0000AAAA|1500|37|MAGE|30|60",
         "a sender who joined the channel is answered, with the map they share")
+    -- A held query is answered when a roster update the client already has
+    -- lists the sender, without touching the selection.
     local held = started({ joined = true })
     held.sendResult = function(packet) return packet.channel == "CHANNEL" and 7 or 0 end
     held.members = { { name = "Late Seven", guid = "Player-1-0000EFEF" } }
     held:advance(5)
     held:receive("FDQ2|Player-1-0000EFEF|1500|37|MAGE|30|60", "Late Seven")
-    equal(#to(held, "Late Seven"), 0, "an unverified query waits for the roster")
+    equal(#to(held, "Late Seven"), 0, "an unverified query waits for proof of membership")
+    held.loaded = true
+    held:emit("CHANNEL_COUNT_UPDATE", 9, 1)
     held:advance(6)
     equal(#to(held, "Late Seven", "FDP2"), 1, "the held query is answered once the roster lists the sender")
+    equal(#held.selections, 0, "the client roster update needed no selection change")
+    held:receive("FDQ2|Player-1-0000ACDC|1500|37|MAGE|30|60", "Never Listed")
+    held:advance(25)
+    equal(#to(held, "Never Listed"), 0, "a sender that is never proven is dropped after the hold")
+    equal(held.P.held["Never Listed"], nil, "the hold expires")
+    -- While discovery runs anyway (zone window open), an unverified query
+    -- may load the roster once; the selection is restored.
+    held = started({ joined = true })
+    held.sendResult = function(packet) return packet.channel == "CHANNEL" and 7 or 0 end
+    held:advance(5)
+    held.FD.Zone.shown = true
+    held.members = { { name = "Late Seven", guid = "Player-1-0000EFEF" } }
+    held:receive("FDQ2|Player-1-0000EFEF|1500|37|MAGE|30|60", "Late Seven")
+    held:advance(6)
+    equal(#to(held, "Late Seven", "FDP2"), 1, "the held query is answered after the roster load")
     equal(held.selected, 1, "the native selection is restored after the roster read")
     c.R:AddMember("Member Six", "Player-1-0000FFFF")
     c:receive("FDQ2|Player-1-0000FFFF|1500|99|MAGE|30|60", "Member Six")
@@ -326,6 +362,32 @@ return function(_, equal)
     equal(#c:whispers("FDP2") - pushes, 3, "pushes are rate limited to one per 30 seconds")
     c:advance(30)
     equal(#c:whispers("FDP2") - pushes, 6, "the latest map is pushed after the rate limit")
+
+    -- Most zone changes pass a loading screen (hearthstone, portal, boat,
+    -- instance). The cache and the channel members survive it, so the new
+    -- map still reaches the trusted peers.
+    c = started({ joined = true })
+    c.sendResult = function(packet) return packet.channel == "CHANNEL" and 7 or 0 end
+    c:advance(5)
+    for i = 1, 2 do
+        local identity = Harness.identity(i)
+        c.R:AddMember(Harness.fullName(identity, true), identity.guid)
+        c:receive(c:profile(identity), Harness.fullName(identity, true))
+    end
+    c:advance(40)
+    pushes = #c:whispers("FDP2")
+    c:emit("PLAYER_LEAVING_WORLD")
+    c.mapID = 41
+    c:advance(8)
+    equal(#c:whispers("FDP2"), pushes, "nothing is sent during the loading screen")
+    c:emit("PLAYER_ENTERING_WORLD")
+    c:emit("ZONE_CHANGED_NEW_AREA")
+    c:advance(8)
+    equal(#c:whispers("FDP2") - pushes, 2, "a zone change through a loading screen reaches the trusted peers")
+    local push = c:whispers("FDP2")[#c:whispers("FDP2")]
+    equal(push.payload, "FDP2|Player-1-0000AAAA|1500|0|MAGE|30|60",
+        "members still listed on the old map learn that we left it (map 0)")
+    equal(c.R:IsMember("Peer1 Crowd"), true, "channel members survive the loading screen")
 
     -- CPU: events only schedule; one Tick at most every two seconds; one
     -- own-profile computation per Tick; no periodic roster polling.

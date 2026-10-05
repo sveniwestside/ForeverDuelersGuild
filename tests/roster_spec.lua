@@ -87,8 +87,10 @@ return function(_, equal)
     c = started()
     c:advance(5)
     equal(c.joined, true, "joined")
+    c.R:AddMember("Beta Two", "Player-1-0000BBBB", true)
     c.joined = false
     c:emit("CHAT_MSG_CHANNEL_NOTICE", "YOU_LEFT", "", "", "6. ForeverDuel", "", "", 0, 6, "ForeverDuel")
+    equal(c.R:IsMember("Beta Two"), false, "leaving the channel forgets its members")
     c:advance(300)
     equal(#c.joins, 1, "leaving the channel manually is respected")
     equal(c.R.status:find("/join ForeverDuel", 1, true) ~= nil, true, "status explains how to rejoin")
@@ -286,8 +288,63 @@ return function(_, equal)
     equal(c.R:IsMember("Gamma Three"), false, "a member who leaves is removed")
     for i = 1, 320 do c.R:AddMember("Member" .. i .. " Crowd", string.format("Player-1-%08X", 0x5000 + i)) end
     equal(c.R.memberCount, 300, "the member list is bounded")
+    equal(c.R:IsMember("Member320 Crowd"), true, "at the cap a new member replaces the longest-unconfirmed one")
+    c:advance(1)
+    c.R:AddMember("Member5 Crowd", string.format("Player-1-%08X", 0x5005))
+    c:advance(1)
+    c.R:AddMember("Newest Crowd", "Player-1-0000F00F")
+    equal(c.R:IsMember("Member5 Crowd") and c.R:IsMember("Newest Crowd"), true, "a reconfirmed member is not evicted")
+    equal(c.R.memberCount, 300, "the bound holds")
     c = started({ regionalNames = false })
     c:advance(5)
     c:emit("CHAT_MSG_CHANNEL_JOIN", "", "Gamma", "", "", "", "", 0, 6, "ForeverDuel", 0, 0, "Player-1-0000C0C0")
     equal(c.R:IsMember("Gamma-Forever"), true, "realm-local member names are canonicalized")
+
+    -- Churn: a fully readable roster is authoritative, so members who left
+    -- without a leave event drop out and current members always fit.
+    c = started()
+    c:advance(5)
+    c.loaded = true
+    local function crowd(base)
+        c.members = {}
+        for i = 1, 150 do
+            local identity = Harness.identity(base + i)
+            c.members[i] = { name = Harness.fullName(identity, true), guid = identity.guid }
+        end
+        c:emit("CHANNEL_COUNT_UPDATE", 9, 150)
+        c:advance(3)
+    end
+    crowd(0)
+    equal(c.R.memberCount, 150, "a full read lists the channel")
+    crowd(200)
+    equal(c.R.memberCount, 150, "members who left without a leave event drop out at the next full read")
+    equal(c.R:IsMember("Peer1 Crowd"), false, "a former member is no longer trusted")
+    crowd(400)
+    equal(c.R:IsMember("Peer550 Crowd"), true, "a current member is always known")
+    c:receive("FDQ2|" .. Harness.identity(550).guid .. "|1500|37|ROGUE|30|60", "Peer550 Crowd")
+    c:advance(5)
+    local answered = 0
+    for _, packet in ipairs(c:whispers("FDP2")) do if packet.target == "Peer550 Crowd" then answered = answered + 1 end end
+    equal(answered, 1, "the current member's query is answered")
+    equal(#c.selections, 0, "client roster updates need no selection change")
+    -- A join the client roster does not list yet survives one read.
+    c:emit("CHAT_MSG_CHANNEL_JOIN", "", "Fresh Joiner", "", "", "", "", 0, 6, "ForeverDuel", 0, 0, "Player-1-0000F00D")
+    c:emit("CHANNEL_COUNT_UPDATE", 9, 150)
+    c:advance(3)
+    equal(c.R:IsMember("Fresh Joiner"), true, "a recent join event outlives a lagging roster read")
+    c:advance(20)
+    c:emit("CHANNEL_COUNT_UPDATE", 9, 150)
+    c:advance(3)
+    equal(c.R:IsMember("Fresh Joiner"), false, "a later read that still omits the joiner removes it")
+    -- An unreadable roster proves nothing and removes nobody.
+    c.loaded = false
+    c:emit("CHANNEL_COUNT_UPDATE", 9, 151)
+    c:advance(3)
+    equal(c.R.memberCount, 150, "an unreadable roster removes nobody")
+    -- Losing the channel forgets every member.
+    c.joined = false
+    c.preventJoin = true
+    c:advance(6)
+    equal(c.R.memberCount, 0, "a vanished channel forgets its members")
+    equal(c.R:IsMember("Peer550 Crowd"), false, "nobody stays trusted without the channel")
 end

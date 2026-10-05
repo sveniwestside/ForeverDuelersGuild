@@ -98,9 +98,58 @@ return function(_, equal)
     c:receive("FDP2|Player-1-0000DDDD|1550|38|MAGE|30|60", "Delta-OtherRealm")
     equal(c.P:FindByName("Delta-OtherRealm").mapID, 38, "a qualified sender keeps the remote realm")
 
-    -- CHANNEL profiles count only from our own joined channel.
+    -- The live client rejects a CHANNEL send without the channel number as
+    -- target (TargetRequired). The pinned FD.Outbound:Resolve drops every
+    -- non-WHISPER target, so with it the experiment is expected to fail live;
+    -- passing the CHANNEL target is a requested foundation fix. Both outcomes
+    -- are asserted, and the working-route scenarios below run against a
+    -- modelled fix (`routed`) until the real one lands, then against it.
     c = started({ joined = true })
-    c:advance(1)
+    c:advance(30)
+    equal(count(c, "CHANNEL"), 1, "one experimental CHANNEL broadcast after joining")
+    local experiment = c:packets("CHANNEL")[1]
+    local targeted = experiment.target == "6"
+    equal(experiment.prefix, "ForeverDuelZone2", "experiment uses the discovery prefix")
+    equal(experiment.payload, "FDP2|Player-1-0000AAAA|1500|37|MAGE|30|60", "experiment carries the public profile")
+    if targeted then
+        equal(experiment.result, 0, "a CHANNEL send with its channel number is accepted")
+        equal(traced(c, "zone send CHANNEL experiment sent Success"), true, "the experiment result code is recorded")
+    else
+        equal(experiment.target, nil, "the pinned Outbound drops the CHANNEL target")
+        equal(experiment.result, 6, "the client rejects CHANNEL without its channel number")
+        equal(traced(c, "zone send CHANNEL experiment failed TargetRequired"), true, "the live outcome is recorded")
+        equal(c.P.lastChannelSend:find("TargetRequired", 1, true) ~= nil, true, "status shows the rejection code")
+    end
+    equal(count(c, "WHISPER"), 0, "the experiment never addresses a player")
+    if not targeted then
+        -- Hearing other clients cannot switch a client whose own broadcasts
+        -- are rejected: it keeps querying, or nobody would learn about it.
+        c.members = { { name = "Beta Two", guid = BETA.guid } }
+        c:receive(WIRE, "Beta Two", "CHANNEL", 6)
+        equal(c.P:ChannelMode(), false, "a rejected CHANNEL route keeps whisper discovery")
+        c.FD.Zone.shown = true
+        c:advance(60)
+        equal(count(c, "WHISPER", "FDQ2") >= 1, true, "members are still queried by whisper")
+        preserved(c, "rejected CHANNEL target")
+    end
+
+    local function routed(options)
+        local client = Harness.client(options)
+        if not targeted then
+            local resolve = client.FD.Outbound.Resolve
+            client.FD.Outbound.Resolve = function(self, item)
+                local channel, target = resolve(self, item)
+                if channel == "CHANNEL" and target == nil then target = item.target end
+                return channel, target
+            end
+        end
+        equal(client:start(), true, "discovery initializes")
+        return client
+    end
+
+    -- CHANNEL profiles count only from our own joined channel.
+    c = routed({ joined = true })
+    c:advance(30)
     c:receive(WIRE, "Beta Two", "CHANNEL", 8)
     equal(c.P:FindByName("Beta Two"), nil, "another channel number cannot deliver profiles")
     c:receive(WIRE, "Beta Two", "CHANNEL", c.secret)
@@ -114,13 +163,11 @@ return function(_, equal)
     equal(traced(c, "zone receive first profile via CHANNEL"), true, "the first CHANNEL receipt is recorded")
 
     -- CHANNEL experiment: exactly one broadcast per session after joining.
-    c = started({ joined = true })
+    c = routed({ joined = true })
     c:advance(30)
     equal(count(c, "CHANNEL"), 1, "one experimental CHANNEL broadcast after joining")
-    local experiment = c:packets("CHANNEL")[1]
-    equal(experiment.prefix, "ForeverDuelZone2", "experiment uses the discovery prefix")
-    equal(experiment.payload, "FDP2|Player-1-0000AAAA|1500|37|MAGE|30|60", "experiment carries the public profile")
-    equal(experiment.target == nil or experiment.target == "6", true, "experiment never addresses a player")
+    experiment = c:packets("CHANNEL")[1]
+    equal(experiment.target, "6", "the experiment addresses the channel number, never a player")
     equal(traced(c, "zone send CHANNEL experiment sent Success"), true, "the experiment result code is recorded")
     c:receive(experiment.payload, "Alpha One", "CHANNEL", 6)
     equal(c.P:ChannelMode(), false, "the own echo does not prove delivery to others")
@@ -134,22 +181,32 @@ return function(_, equal)
     equal(count(c, "CHANNEL"), 1, "the experiment runs once per session, not per loading screen")
 
     -- Rejected experiment: the result is recorded and never becomes a whisper.
-    c = started({ joined = true, sendResult = function(packet) return packet.channel == "CHANNEL" and 7 or 0 end })
+    c = routed({ joined = true, sendResult = function(packet) return packet.channel == "CHANNEL" and 7 or 0 end })
     c:advance(30)
     equal(count(c, "CHANNEL"), 1, "rejected experiment is attempted once")
     equal(count(c, "WHISPER"), 0, "a rejected CHANNEL route never falls back to a whisper")
     equal(traced(c, "zone send CHANNEL experiment failed InvalidChannel"), true, "the rejection code is recorded")
     equal(c.P:ChannelMode(), false, "a rejected route keeps whisper discovery")
+    -- Others' broadcasts arrive, ours are rejected: whispers continue and
+    -- CHANNEL is retried only every ten minutes.
+    c.members = { { name = "Beta Two", guid = BETA.guid } }
+    c.FD.Zone.shown = true
+    for _ = 1, 12 do
+        c:receive(WIRE, "Beta Two", "CHANNEL", 6)
+        c:advance(55)
+    end
+    equal(c.P:ChannelMode(), false, "hearing CHANNEL never switches a client whose broadcasts fail")
+    equal(count(c, "WHISPER", "FDQ2") >= 1, true, "the member is still queried by whisper")
+    equal(count(c, "CHANNEL"), 2, "one rare CHANNEL retry within ten minutes")
     preserved(c, "rejected experiment")
 
     -- Working route between two real clients: broadcasts replace member
     -- query whispers; a newcomer is greeted once by whisper.
     local net = Harness.network({ latency = 0.4, jitter = 0.3, seed = 7 })
-    local a = net:add(Harness.client({ joined = true }))
-    local b = net:add(Harness.client({ joined = true, guid = BETA.guid, name = "Beta", surname = "Two", classFile = "ROGUE" }))
+    local a = net:add(routed({ joined = true }))
+    local b = net:add(routed({ joined = true, guid = BETA.guid, name = "Beta", surname = "Two", classFile = "ROGUE" }))
     a.members = { { name = "Beta Two", guid = BETA.guid } }
     b.members = { { name = "Alpha One", guid = a.player.guid } }
-    a:start(); b:start()
     net:advance(10)
     equal(a.P:ChannelMode() and b.P:ChannelMode(), true, "both clients observed the other's CHANNEL message")
     equal(a.P:FindByName("Beta Two").rating, 1500, "first client discovered the second over CHANNEL")
@@ -164,6 +221,11 @@ return function(_, equal)
     local broadcasts = count(a, "CHANNEL")
     equal(broadcasts >= 4 and broadcasts <= 6, true, "heartbeat broadcasts run about every 60 seconds")
     equal(#a.P:GetPlayers(), 1, "heartbeats keep the peer fresh")
+    local zoneEntries = 0
+    for _, entry in ipairs(a:trace("transport")) do
+        if entry.event == "zone send" or entry.event == "zone receive" then zoneEntries = zoneEntries + 1 end
+    end
+    equal(zoneEntries <= 3, true, "routine heartbeats and receipts are not persisted")
     a.mapID = 38
     a:emit("ZONE_CHANGED_NEW_AREA")
     net:advance(3)
@@ -192,10 +254,9 @@ return function(_, equal)
 
     -- Submitted but never delivered: whisper discovery stays in place.
     net = Harness.network({ channelDelivery = false })
-    a = net:add(Harness.client({ joined = true }))
-    b = net:add(Harness.client({ joined = true, guid = BETA.guid, name = "Beta", surname = "Two", classFile = "ROGUE" }))
+    a = net:add(routed({ joined = true }))
+    b = net:add(routed({ joined = true, guid = BETA.guid, name = "Beta", surname = "Two", classFile = "ROGUE" }))
     a.members = { { name = "Beta Two", guid = BETA.guid } }
-    a:start(); b:start()
     net:advance(60)
     equal(a.P:ChannelMode() or b.P:ChannelMode(), false, "undelivered CHANNEL messages never switch the route")
     equal(count(a, "CHANNEL"), 1, "only the single experiment was broadcast")
@@ -205,14 +266,17 @@ return function(_, equal)
     c:receive(WIRE, "Beta Two")
     c:emit("PLAYER_LEAVING_WORLD")
     equal(c.P.suspended, true, "leaving world suspends discovery")
-    equal(c.P:FindByName("Beta Two"), nil, "leaving world clears discovered peers")
-    c:receive(WIRE, "Beta Two")
+    equal(c.P:FindByName("Beta Two"), nil, "leaving world hides discovered peers")
+    equal(#c.P:Candidates(), 0, "no queue candidates while suspended")
+    c:receive("FDP2|Player-1-0000BBBB|1700|37|ROGUE|30|60", "Beta Two")
     equal(c.P:FindByName("Beta Two"), nil, "profiles received during transition are ignored")
     c:emit("PLAYER_ENTERING_WORLD")
     equal(c.P.suspended, false, "entering world resumes discovery")
+    equal(c.P:FindByName("Beta Two").rating, 1642, "the cache survives a loading screen without the ignored profile")
     c:receive(WIRE, "Beta Two")
     equal(#c.P:GetPlayers(), 1, "discovery accepts peers after world transition")
     c:emit("PLAYER_LOGOUT")
+    equal(next(c.P.players), nil, "logout clears the cache")
     c:advance(60)
     equal(#c.timers, 0, "logout retires all discovery timers")
     equal(#c.sent, 0, "logout sends nothing")

@@ -133,7 +133,10 @@ function Harness.client(options)
             if state.failSend then error("native send failed") end
             local packet = { prefix = prefix, payload = payload, channel = channel, target = target, at = state.now }
             local result = 0
-            if type(state.sendResult) == "function" then result = state.sendResult(packet)
+            -- Targeted chat types need a target (the channel number for
+            -- CHANNEL); the client rejects them with TargetRequired otherwise.
+            if (channel == "CHANNEL" or channel == "WHISPER") and (type(target) ~= "string" or target == "") then result = 6
+            elseif type(state.sendResult) == "function" then result = state.sendResult(packet)
             elseif state.sendResult ~= nil then result = state.sendResult end
             packet.result = result
             state.sent[#state.sent + 1] = packet
@@ -298,8 +301,12 @@ function Harness.network(options)
         self.bots[bot.name] = bot
         return bot
     end
+    -- Like the server, whisper delivery ignores the case of the name.
     function net:find(name)
-        for _, client in ipairs(self.clients) do if client.fullName == name then return client end end
+        for _, client in ipairs(self.clients) do if client.fullName:lower() == name:lower() then return client end end
+    end
+    function net:findBot(name)
+        for botName, bot in pairs(self.bots) do if botName:lower() == name:lower() then return bot end end
     end
     function net:deliver(packet)
         local sender = packet.from
@@ -307,8 +314,8 @@ function Harness.network(options)
             local client = self:find(packet.target)
             if client then
                 client:receive(packet.payload, sender.fullName, "WHISPER")
-            elseif self.bots[packet.target] then
-                local bot = self.bots[packet.target]
+            elseif self:findBot(packet.target) then
+                local bot = self:findBot(packet.target)
                 bot.received[#bot.received + 1] = { payload = packet.payload, at = self.now, from = sender.fullName }
                 if bot.answers and packet.payload:sub(1, 5) == "FDQ2|" then
                     self:schedule({ fromBot = bot, payload = string.format("FDP2|%s|1500|%d|ROGUE|30|60",
