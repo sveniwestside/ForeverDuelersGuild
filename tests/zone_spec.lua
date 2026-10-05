@@ -155,6 +155,28 @@ return function(FD, equal)
     FD.Zone:RefreshIfShown()
     equal(FD.Zone.empty:IsShown(), true, "last peer expiry restores empty state")
     equal(FD.Zone.rows[1].key, nil, "last peer expiry clears clickable identity")
+    -- The empty state names what discovery asks and suggests the directory
+    -- community until one is joined.
+    local empty = FD.Zone.empty.text
+    equal(empty:find("join the in-game community ForeverDuelersGuild (/duelrating community)", 1, true) ~= nil, true,
+        "without the community module the default community is suggested")
+    local community = { DEFAULT = "ForeverDuelersGuild", name = "Duelists", ready = false }
+    function community:Name() return self.name end
+    function community:Ready() return self.ready end
+    FD.Community = community
+    FD.Zone:RefreshIfShown()
+    equal(FD.Zone.empty.text:find("join the in-game community Duelists", 1, true) ~= nil, true,
+        "the configured community is suggested while not joined")
+    community.ready = true
+    FD.Zone:RefreshIfShown()
+    equal(FD.Zone.empty.text:find("members of the Duelists community in this zone are asked", 1, true) ~= nil, true,
+        "a joined community is named as a discovery source")
+    equal(FD.Zone.empty.text:find("join the in-game", 1, true), nil, "and no longer suggested")
+    community.name = nil
+    FD.Zone:RefreshIfShown()
+    equal(FD.Zone.empty.text:find("join the in-game community ForeverDuelersGuild", 1, true) ~= nil, true,
+        "a disabled directory suggests the default community")
+    FD.Community = nil
     preserved("browser navigation and clicks")
 
     local function peer(id, name, rating, level, class, cap)

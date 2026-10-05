@@ -32,8 +32,15 @@ local function byName(a, b)
     return left == right and a.guid < b.guid or left < right
 end
 
+-- Names what discovery asks right now; without a joined directory community
+-- it suggests joining one, the only route that spans the mega-realm.
 local function emptyText()
-    return L("No ForeverDuelersGuild players discovered in this zone yet.\n\nWhile this window is open, ForeverDuel channel members and your target are asked for their profiles. Click Refresh to ask again; targeting a player also works.")
+    local community = FD.Community
+    local name = community and community:Name()
+    if name and community:Ready() then
+        return Format("No ForeverDuelersGuild players discovered in this zone yet.\n\nWhile this window is open, your target, nearby players, ForeverDuel channel members and members of the %s community in this zone are asked for their profiles. Click Refresh to ask again.", name)
+    end
+    return Format("No ForeverDuelersGuild players discovered in this zone yet.\n\nWhile this window is open, your target, nearby players and ForeverDuel channel members are asked for their profiles. To find addon players on the whole realm, join the in-game community %s (/duelrating community).", name or (community and community.DEFAULT) or "ForeverDuelersGuild")
 end
 
 -- A failed browser or challenge must never enter Core's duel-aborting recovery.

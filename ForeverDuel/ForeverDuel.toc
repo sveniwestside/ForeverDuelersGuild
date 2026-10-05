@@ -27,6 +27,7 @@ Profile.lua
 Minimap.lua
 Presence.lua
 Roster.lua
+Community.lua
 Zone.lua
 Tooltip.lua
 Wow.lua

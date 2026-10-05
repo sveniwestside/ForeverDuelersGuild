@@ -216,6 +216,30 @@ FD.Locale:Register("deDE", {
     ["Waiting for the default chat channels before joining ForeverDuel."] = "Vor dem Beitritt zu ForeverDuel wird auf die Standard-Chatkanäle gewartet.",
     ["Joining the ForeverDuel player directory..."] = "Beitritt zum ForeverDuel-Spielerverzeichnis...",
 
+    -- Community.lua (read-only directory community; "Community"/"Communitys"
+    -- as in the German client)
+    ["Community: off. Type /duelrating community on to use it again."] = "Community: aus. Gib /duelrating community on ein, um sie wieder zu nutzen.",
+    ["Community: not available on this client."] = "Community: auf diesem Client nicht verfügbar.",
+    ["Community: waiting for the game to load your communities."] = "Community: Warten, bis das Spiel deine Communitys geladen hat.",
+    ["Community: communities are disabled on this client."] = "Community: Communitys sind auf diesem Client deaktiviert.",
+    ["Community: communities are restricted for this account."] = "Community: Communitys sind für diesen Account eingeschränkt.",
+    ["Community: you are not a member of a community named %s."] = "Community: Du bist kein Mitglied einer Community namens %s.",
+    ["Community: %s is not a character community; only character communities are used."] = "Community: %s ist keine Charakter-Community; nur Charakter-Communitys werden genutzt.",
+    ["Community: temporarily unavailable."] = "Community: vorübergehend nicht verfügbar.",
+    ["Community: %s | loading the member list..."] = "Community: %s | Mitgliederliste wird geladen...",
+    ["Community: the member list is protected right now (chat lockdown); retrying."] = "Community: Die Mitgliederliste ist gerade geschützt (Chatsperre); neuer Versuch folgt.",
+    ["Community: %s | %d members, %d online, %d in your zone"] = "Community: %s | %d Mitglieder, %d online, %d in deiner Zone",
+    ["Community: the member list is protected right now (chat lockdown); using the last readable list."] = "Community: Die Mitgliederliste ist gerade geschützt (Chatsperre); die zuletzt lesbare Liste wird genutzt.",
+    ["Community: %d communities are named %s; the one with the lowest ID is used."] = "Community: %d Communitys heißen %s; die mit der niedrigsten ID wird genutzt.",
+    ["Community: %d member names could not be resolved and are skipped."] = "Community: %d Mitgliedsnamen konnten nicht aufgelöst werden und werden übersprungen.",
+    ["Community: only the first %d of %d members are read."] = "Community: Nur die ersten %d von %d Mitgliedern werden gelesen.",
+    ["Community: %d profiles came from a name other than the member list shows; please report this."] = "Community: %d Profile kamen von einem anderen Namen als in der Mitgliederliste; bitte melde das.",
+    ["Community directory off. Discovery no longer reads a community."] = "Community-Verzeichnis aus. Die Suche liest keine Community mehr.",
+    ["A community name has 1 to 48 characters and no | sign."] = "Ein Community-Name hat 1 bis 48 Zeichen und kein |-Zeichen.",
+    ["Join the in-game community %s to find addon players on the whole realm: open the Communities window and accept an invitation or an invite link from a member. The addon cannot join for you and only reads the member list."] =
+        "Tritt im Spiel der Community %s bei, um Addon-Spieler auf dem ganzen Realm zu finden: Öffne das Communityfenster und nimm eine Einladung oder einen Einladungslink eines Mitglieds an. Das Addon kann nicht für dich beitreten und liest nur die Mitgliederliste.",
+    ["Show the community used to find players realm-wide (community <name> | on | off)."] = "Zeigt die Community, über die Spieler realmweit gefunden werden (community <Name> | on | off).",
+
     -- Tooltip.lua
     ["Duel Rating (%s, Lv %d)"] = "Duellwertung (%s, St. %d)",
 
@@ -596,7 +620,10 @@ FD.Locale:Register("deDE", {
     ["Name"] = "Name",
     ["Highest rating / mode"] = "Beste Wertung / Modus",
     ["Closest to your rating"] = "Nah an deiner Wertung",
-    ["No ForeverDuelersGuild players discovered in this zone yet.\n\nWhile this window is open, ForeverDuel channel members and your target are asked for their profiles. Click Refresh to ask again; targeting a player also works."] = "Noch keine ForeverDuelersGuild-Spieler in dieser Zone gefunden.\n\nSolange dieses Fenster offen ist, werden ForeverDuel-Kanalmitglieder und dein Ziel nach ihren Profilen gefragt. Klicke auf 'Neu laden', um erneut zu fragen; ein Spieler im Ziel funktioniert auch.",
+    ["No ForeverDuelersGuild players discovered in this zone yet.\n\nWhile this window is open, your target, nearby players, ForeverDuel channel members and members of the %s community in this zone are asked for their profiles. Click Refresh to ask again."] =
+        "Noch keine ForeverDuelersGuild-Spieler in dieser Zone gefunden.\n\nSolange dieses Fenster offen ist, werden dein Ziel, Spieler in der Nähe, ForeverDuel-Kanalmitglieder und Mitglieder der Community %s in dieser Zone nach ihren Profilen gefragt. Klicke auf 'Neu laden', um erneut zu fragen.",
+    ["No ForeverDuelersGuild players discovered in this zone yet.\n\nWhile this window is open, your target, nearby players and ForeverDuel channel members are asked for their profiles. To find addon players on the whole realm, join the in-game community %s (/duelrating community)."] =
+        "Noch keine ForeverDuelersGuild-Spieler in dieser Zone gefunden.\n\nSolange dieses Fenster offen ist, werden dein Ziel, Spieler in der Nähe und ForeverDuel-Kanalmitglieder nach ihren Profilen gefragt. Um Addon-Spieler auf dem ganzen Realm zu finden, tritt im Spiel der Community %s bei (/duelrating community).",
     ["Could not display players in your zone. Try /duelrating zone again."] = "Spieler in deiner Zone konnten nicht angezeigt werden. Versuche /duelrating zone erneut.",
     ["PLAYERS IN ZONE  /  ForeverDuelersGuild discovery"] = "SPIELER IN DER ZONE  /  ForeverDuelersGuild-Suche",
     ["Refresh"] = "Neu laden",

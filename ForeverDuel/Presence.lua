@@ -6,9 +6,12 @@ local _, FD = ...
 -- Traffic policy: discovery is on demand. Whisper queries go only to the
 -- current target/mouseover (shown in a tooltip or while the zone window is
 -- open), to other visible players while the zone window is open (all same
--- faction, paced), and to ForeverDuel channel members while the zone window
--- is open or the queue is searching. The channel only reaches characters of
--- the same home realm. A query proves the sender runs the addon,
+-- faction, paced), to ForeverDuel channel members while the zone window
+-- is open or the queue is searching, and to online same-faction members of
+-- the directory community (FD.Community): those in the own zone while the
+-- zone window is open, those the queue scope reaches while it searches. The
+-- channel only reaches characters of the same internal server; the
+-- community spans the mega-realm. A query proves the sender runs the addon,
 -- so every query is answered (rate limited); the own map is disclosed only to
 -- senders that reported the same map or are visible or queue partners. Our
 -- profile is posted to the channel after joining and every minute while
@@ -130,7 +133,21 @@ function Presence:Reason(at)
     local queue = FD.queue
     local searching = type(queue) == "table" and (queue.state == "SEARCHING" or queue.state == "PAUSED")
     local manual = self.manualUntil ~= nil and at < self.manualUntil
-    return zone or searching or manual, zone, manual
+    return zone or searching or manual, zone, manual, searching
+end
+
+-- The queue's search scope; anything unreadable counts as the narrowest.
+function Presence:QueueScope()
+    local queue = FD.queue
+    if type(queue) ~= "table" or type(queue.Settings) ~= "function" then return "ZONE" end
+    local ok, settings = pcall(queue.Settings, queue)
+    local scope = ok and type(settings) == "table" and settings.scope
+    return (scope == "CONTINENT" or scope == "RULESET") and scope or "ZONE"
+end
+
+-- A ForeverDuel channel member or a member of the directory community.
+function Presence:Member(name)
+    return FD.Roster ~= nil and FD.Roster:IsMember(name) or FD.Community ~= nil and FD.Community:IsMember(name)
 end
 
 function Presence:MapID()
@@ -277,8 +294,8 @@ function Presence:NativeUnit(name, guid)
 end
 
 -- Who may receive our profile: a current queue peer or ticket partner, a
--- ForeverDuel channel member, or a visible native unit with this name.
--- Cheap table checks run before native unit lookups.
+-- ForeverDuel channel member or directory community member, or a visible
+-- native unit with this name. Cheap table checks run before native lookups.
 function Presence:Trust(name, guid)
     local queue = FD.queue
     if type(queue) == "table" then
@@ -290,7 +307,7 @@ function Presence:Trust(name, guid)
             end
         end
     end
-    if FD.Roster and FD.Roster:IsMember(name) then return "member" end
+    if self:Member(name) then return "member" end
     if self:NativeUnit(name, guid) then return "native" end
 end
 
@@ -585,6 +602,7 @@ function Presence:Receive(prefix, payload, distribution, sender, _, _, localID, 
         return
     end
     self:Ingress(route, "accepted")
+    if FD.Community then FD.Community:Observe(name, player.guid) end
     local at = GetTime()
     self:Count(channel and "channel" or query and "query" or "profile", distribution)
     if channel then
@@ -708,28 +726,52 @@ function Presence:AskNearby()
     return false
 end
 
+-- Online same-faction members of the directory community worth a query:
+-- those in the own zone while the zone window is open (or after Refresh),
+-- and while the queue searches those its scope reaches (ZONE: the own zone,
+-- CONTINENT and RULESET: everyone, because member info has no continent).
+function Presence:CommunityTargets(browsing, searching)
+    local community = FD.Community
+    if not community or not community:Ready() or not (browsing or searching) then return {} end
+    local everyone = searching and self:QueueScope() ~= "ZONE"
+    return community:Online({ sameFaction = true, zone = not everyone and community:OwnZones() or nil })
+end
+
 function Presence:Discover(own, at)
-    local active, zone, manual = self:Reason(at)
+    local active, zone, manual, searching = self:Reason(at)
     if zone or manual then
         self:Ask("target")
         self:Ask("mouseover")
         self:AskNearby()
     end
-    -- A working CHANNEL route replaces per-member query whispers.
-    if not active or self:ChannelMode() and not manual or not FD.Roster then return end
-    FD.Roster:Request(manual)
+    if not active then return end
+    -- A working CHANNEL route replaces query whispers to channel members.
+    local channel = self:ChannelMode() and not manual
+    if FD.Roster and not channel then FD.Roster:Request(manual) end
     -- Keep only a short query backlog and refill it with the members asked
-    -- longest ago, so a large channel is swept fairly instead of starving.
+    -- longest ago, so a large channel or community is swept fairly instead
+    -- of starving. Channel and community members share the backlog.
     local room = QUERY_BACKLOG
     for _, entry in pairs(self.work) do if not entry.reply then room = room - 1 end end
     if room <= 0 then return end
-    local due = {}
-    for name, guid in pairs(FD.Roster.members) do
-        if name ~= own.fullName and guid ~= own.guid and not self.work[name] then
+    local due, listed = {}, {}
+    -- Channel members run the addon (it joined them): HEARTBEAT. A community
+    -- member may not: one that never answered is asked again after STRANGER.
+    local function consider(name, guid, interval)
+        if name ~= own.fullName and guid ~= own.guid and not self.work[name] and not listed[name] then
             local player, last = self.players[name], self.queries[name]
-            if (not player or at - player.lastSeen >= HEARTBEAT) and (not last or at - last >= HEARTBEAT) then
-                due[#due + 1] = name
+            if (not player or at - player.lastSeen >= HEARTBEAT) and (not last or at - last >= interval) then
+                due[#due + 1], listed[name] = name, true
             end
+        end
+    end
+    if FD.Roster and not channel then
+        for name, guid in pairs(FD.Roster.members) do consider(name, guid, HEARTBEAT) end
+    end
+    for _, member in ipairs(self:CommunityTargets(zone or manual, searching)) do
+        -- Channel members on our server already hear our CHANNEL posts.
+        if not (channel and FD.Roster and FD.Roster:IsMember(member.name)) then
+            consider(member.name, member.guid, self.players[member.name] and HEARTBEAT or STRANGER)
         end
     end
     table.sort(due, function(x, y)
@@ -738,7 +780,13 @@ function Presence:Discover(own, at)
         return x < y
     end)
     for index = 1, math.min(room, #due) do
-        if not self:Enqueue(due[index], false) then break end
+        local name = due[index]
+        if not self:Enqueue(name, false) then break end
+        -- Persisted once per session: the community route was used.
+        if not self.communityQueried and FD.Community and FD.Community:IsMember(name) then
+            self.communityQueried = true
+            FD.Debug:Log("zone send", "first community query")
+        end
     end
 end
 
@@ -746,6 +794,13 @@ function Presence:Tick()
     local at = GetTime()
     self.lastTick = at
     if not self:Live() then return end
+    -- The community member cache is maintained even while discovery is idle
+    -- or quiet (it trusts incoming queries); it never sends anything. Quiet
+    -- discovery is inactive, so leaving quiet mode is a demand like opening
+    -- the zone window.
+    local active = self:Reason(at) and not self:Quiet()
+    if FD.Community then FD.Community:Update(at, active, active and not self.discovering) end
+    self.discovering = active
     for name, player in pairs(self.players) do
         if type(player) ~= "table" or type(player.lastSeen) ~= "number" or at - player.lastSeen >= FORGET then self.players[name] = nil end
     end
@@ -939,10 +994,10 @@ function Presence:GroupedWith(name)
 end
 
 -- A cached player (not one known only from an unsolicited whisper), a
--- channel member, the target or a party member.
+-- channel or community member, the target or a party member.
 function Presence:PongAllowed(name)
     local player = self.players[name]
-    if player and self:Visible(player) or FD.Roster and FD.Roster:IsMember(name) then return true end
+    if player and self:Visible(player) or self:Member(name) then return true end
     for _, unit in ipairs({ "target", "party1", "party2", "party3", "party4" }) do
         local identity = FD.Wow:Identity(unit)
         if identity and identity.fullName == name then return true end
@@ -976,10 +1031,9 @@ end
 
 -- Prefer the server's spelling of a typed name when discovery knows it.
 function Presence:KnownName(name)
-    if self.players[name] or FD.Roster and FD.Roster:IsMember(name) then return name end
-    for known in pairs(self.players) do if sameName(known, name) then return known end end
-    if FD.Roster then
-        for known in pairs(FD.Roster.members) do if sameName(known, name) then return known end end
+    if self.players[name] or self:Member(name) then return name end
+    for _, map in ipairs({ self.players, FD.Roster and FD.Roster.members or {}, FD.Community and FD.Community.members or {} }) do
+        for known in pairs(map) do if sameName(known, name) then return known end end
     end
     return name
 end
@@ -1093,6 +1147,10 @@ FD:RegisterStatus(30, function()
     if Presence.lastChannelSend then lines[#lines + 1] = Format("Zone channel send: %s", Presence.lastChannelSend) end
     if Presence.lastWhisper then lines[#lines + 1] = Format("Zone whisper: %s", Presence.lastWhisper) end
     if FD.Roster and FD.Roster.status then lines[#lines + 1] = Format("Zone roster: %s", FD.Roster.status) end
+    if FD.Community then
+        local ok, community = pcall(FD.Community.Status, FD.Community)
+        for _, line in ipairs(ok and community or {}) do lines[#lines + 1] = line end
+    end
     if Presence.lastReceive then lines[#lines + 1] = Format("Zone receive: %s", Presence.lastReceive) end
     local received = Presence.received
     lines[#lines + 1] = Format("Zone received: %d profiles, %d queries, %d channel posts | own channel echo: %s | channel members known: %d",

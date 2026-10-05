@@ -1,7 +1,8 @@
 -- Shared simulated client for the discovery specs (not a spec itself).
 -- Each client loads the real Constants, Locale, Debug, Commands, Outbound,
--- Protocol, Rating, Database, Wow, Roster and Presence modules into a
--- private environment with fake native APIs. A network object moves addon
+-- Protocol, Rating, Database, Wow, Roster, Presence and Community modules
+-- into a private environment with fake native APIs (options.clubs adds a
+-- read-only C_Club). A network object moves addon
 -- messages between clients with per-message latency, loss and throttling.
 local Harness = {}
 
@@ -66,7 +67,12 @@ function Harness.client(options)
     env.C_Map = { GetBestMapForUnit = function(token)
         if state.failMap then error("map API failed") end
         return token == "player" and state.mapID or nil
+    end, GetMapInfo = function(id)
+        local name = state.mapNames and state.mapNames[id]
+        if name then return { mapID = id, name = name } end
     end }
+    state.zoneText = options.zoneText or "Elwynn Forest"
+    env.GetRealZoneText = function() return state.zoneText end
     env.UnitGUID = function(token)
         count("UnitGUID")
         if state.failIdentity then error("unit API failed") end
@@ -123,7 +129,75 @@ function Harness.client(options)
         SendAddonMessageResult = { Success = 0, InvalidPrefix = 1, InvalidMessage = 2, AddonMessageThrottle = 3,
             InvalidChatType = 4, NotInGroup = 5, TargetRequired = 6, InvalidChannel = 7, ChannelThrottle = 8,
             GeneralError = 9, NotInGuild = 10, AddOnMessageLockdown = 11, TargetOffline = 12 },
+        ClubType = { BattleNet = 0, Character = 1, Guild = 2, Other = 3 },
+        ClubMemberPresence = { Unknown = 0, Online = 1, OnlineMobile = 2, Offline = 3, Away = 4, Busy = 5 },
+        ClubRestrictionReason = { None = 0, Unavailable = 1 },
+        PvPFaction = { Horde = 0, Alliance = 1 },
     }
+    -- Read-only C_Club after the pinned ClubDocumentation.lua: every function
+    -- returns nothing until the clubs are initialized (ReturnNothing), lists
+    -- and member info are secret during chat lockdown, and every write call
+    -- fails the spec. options.clubs may be shared by several clients; a
+    -- member is the client itself when its GUID matches (isSelf).
+    if options.clubs then
+        state.clubs, state.clubsReady, state.membersReady = options.clubs, options.clubsReady ~= false, true
+        local function ready(name) count(name); return state.clubsReady end
+        local function club(id)
+            for _, entry in ipairs(state.clubs) do if entry.clubId == id then return entry end end
+        end
+        env.C_Club = {
+            IsEnabled = function() if ready("IsEnabled") then return state.clubsEnabled ~= false end end,
+            ShouldAllowClubType = function() if ready("ShouldAllowClubType") then return true end end,
+            IsRestricted = function() if ready("IsRestricted") then return state.clubRestriction or 0 end end,
+            GetSubscribedClubs = function()
+                if not ready("GetSubscribedClubs") then return end
+                if state.clubLockdown then return state.secret end
+                local list = {}
+                for _, entry in ipairs(state.clubs) do
+                    list[#list + 1] = { clubId = entry.clubId, name = entry.name, clubType = entry.clubType or 1,
+                        memberCount = #entry.members }
+                end
+                return list
+            end,
+            GetClubMembers = function(id)
+                if not ready("GetClubMembers") then return end
+                if state.clubLockdown then return state.secret end
+                local ids = {}
+                for index, member in ipairs(club(id) and club(id).members or {}) do ids[#ids + 1] = member.memberId or index end
+                return ids
+            end,
+            GetMemberInfo = function(id, memberId)
+                if not ready("GetMemberInfo") then return end
+                if state.clubLockdown then return state.secret end
+                if state.failMemberInfo then error("member info failed") end
+                for index, member in ipairs(club(id) and club(id).members or {}) do
+                    if (member.memberId or index) == memberId then
+                        if member.hidden then return state.secret end
+                        local info = { memberId = memberId, isSelf = member.guid == state.player.guid, name = member.name,
+                            guid = member.guid, presence = member.presence or 1, zone = member.zone, faction = member.faction,
+                            level = member.level, classID = member.classID, clubType = 1 }
+                        for _, field in ipairs(member.secret or {}) do info[field] = state.secret end
+                        return info
+                    end
+                end
+            end,
+            AreMembersReady = function() if ready("AreMembersReady") then return state.membersReady end end,
+            FocusMembers = function() count("FocusMembers"); state.membersReady = true end,
+            DoesCommunityHaveMembersOfTheOppositeFaction = function(id)
+                if ready("DoesCommunityHaveMembersOfTheOppositeFaction") then return club(id) and club(id).crossFaction == true or false end
+            end,
+        }
+        for _, name in ipairs({ "SendMessage", "EditMessage", "DestroyMessage", "CreateClub", "EditClub", "DestroyClub",
+            "SendInvitation", "SendCharacterInvitation", "AcceptInvitation", "DeclineInvitation", "RevokeInvitation",
+            "LeaveClub", "KickMember", "RedeemTicket", "CreateTicket", "SetClubMemberNote", "AssignMemberRole",
+            "SetClubPresenceSubscription", "ClearClubPresenceSubscription", "UnfocusMembers", "SetFavorite",
+            "SetSocialQueueingEnabled", "AddClubStreamChatChannel", "CreateStream", "SetAvatarTexture" }) do
+            env.C_Club[name] = function()
+                state.clubWrites = (state.clubWrites or 0) + 1
+                error("C_Club." .. name .. " must never be called")
+            end
+        end
+    end
     env.C_ChatInfo = {
         RegisterAddonMessagePrefix = function(prefix)
             state.prefix = prefix
@@ -210,7 +284,7 @@ function Harness.client(options)
     end
     -- Only discovery handlers are dispatched by state:emit.
     FD.eventHandlers = {}
-    for _, name in ipairs({ "Roster", "Presence" }) do load(name) end
+    for _, name in ipairs({ "Roster", "Presence", "Community" }) do load(name) end
     if options.tooltip then load("Tooltip") end
     FD.Database:Initialize(nil, FD.Wow:Identity("player"))
     state.FD, state.env, state.P, state.R = FD, env, FD.Presence, FD.Roster
