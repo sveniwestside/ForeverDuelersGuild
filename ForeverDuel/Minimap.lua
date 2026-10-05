@@ -3,19 +3,11 @@ FD.Minimap = {}
 local MinimapButton = FD.Minimap
 local DEFAULT_ANGLE = 225
 local ICON = "Interface\\AddOns\\ForeverDuel\\Media\\Icon.tga"
-
-local function finite(value)
-    return type(value) == "number" and value == value
-        and value ~= math.huge and value ~= -math.huge
-end
+local readable, finite = FD.Native.Readable, FD.Native.Finite
 
 local function settings()
     local db = FD.Database and FD.Database.data
     return db and type(db.settings) == "table" and db.settings or nil
-end
-
-local function readable(...)
-    return not FD.Wow or FD.Wow:Readable(...)
 end
 
 -- A launcher failure must not enter Core:Safe, which aborts an active duel.
@@ -37,14 +29,13 @@ end
 function MinimapButton:Angle()
     local saved = settings()
     local angle = saved and saved.minimapAngle
-    return readable(angle) and finite(angle) and angle % 360 or DEFAULT_ANGLE
+    return finite(angle) and angle % 360 or DEFAULT_ANGLE
 end
 
 function MinimapButton:Position(angle)
     if not self.button or not Minimap or not finite(angle) then return false end
     local width, height = Minimap:GetWidth(), Minimap:GetHeight()
-    if not readable(width, height) or not finite(width) or not finite(height)
-        or width <= 0 or height <= 0 then return false end
+    if not finite(width) or not finite(height) or width <= 0 or height <= 0 then return false end
     angle = angle % 360
     local radians = angle * math.pi / 180
     self.button:ClearAllPoints()
@@ -59,8 +50,8 @@ function MinimapButton:UpdateDrag()
     local x, y = GetCursorPosition()
     local centerX, centerY = Minimap:GetCenter()
     local scale = Minimap:GetEffectiveScale()
-    if not readable(x, y, centerX, centerY, scale) or not finite(x) or not finite(y)
-        or not finite(centerX) or not finite(centerY) or not finite(scale) or scale <= 0 then return end
+    if not finite(x) or not finite(y) or not finite(centerX) or not finite(centerY)
+        or not finite(scale) or scale <= 0 then return end
     local dx, dy = x / scale - centerX, y / scale - centerY
     if dx == 0 and dy == 0 then return end
     -- math.atan2 returns radians; WoW's global atan2 wrapper returns degrees.

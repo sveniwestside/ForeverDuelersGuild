@@ -2,11 +2,10 @@ local _, FD = ...
 FD.QueueUI = {}
 local QueueUI = FD.QueueUI
 local L = FD.L
+local Native, Widgets = FD.Native, FD.Widgets
+local readable, plain, number = Native.Readable, Native.Plain, Native.Finite
 local WIDTH, HEIGHT = 800, 812
-local GOLD = { 0.94, 0.75, 0.38 }
-local MUTED = { 0.61, 0.65, 0.70 }
-local WHITE = { 0.92, 0.94, 0.97 }
-local GREEN = { 0.36, 0.85, 0.61 }
+local GOLD, MUTED, WHITE, GREEN = Widgets.GOLD, Widgets.MUTED, Widgets.WHITE, Widgets.GREEN
 local NOTICE = { 1.00, 0.55, 0.35 }
 local NOTICE_SECONDS = 10
 local SCOPES = { "ZONE", "CONTINENT", "RULESET" }
@@ -19,69 +18,19 @@ local STATE_NAMES = {
     READY = "Both players have arrived", DUEL = "Duel in progress", CLEANUP = "Finishing the queue match",
 }
 
-local function readable(value)
-    return not FD.Wow or FD.Wow:Readable(value)
-end
-
-local function plain(value)
-    if not readable(value) then return L["Unavailable"] end
-    return (tostring(value or ""):gsub("|", "||"))
-end
-
-local function number(value)
-    return readable(value) and type(value) == "number" and value == value
-        and value > -math.huge and value < math.huge
-end
-
 local function duration(value)
     value = math.max(0, math.floor(value))
     return string.format("%d:%02d", math.floor(value / 60), value % 60)
 end
 
-local function serverTime()
-    if type(GetServerTime) ~= "function" then return nil end
-    local ok, value = pcall(GetServerTime)
-    return ok and number(value) and value or nil
-end
-
-local function surface(frame, fill, border)
-    frame:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8x8",
-        edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = 1 })
-    frame:SetBackdropColor(fill[1], fill[2], fill[3], fill[4] or 1)
-    border = border or { 0.20, 0.23, 0.28 }
-    frame:SetBackdropBorderColor(border[1], border[2], border[3], 1)
-end
-
+-- Queue texts wrap onto further lines.
 local function label(parent, font, x, y, width, height, rgb)
-    local text = parent:CreateFontString(nil, "OVERLAY", font)
-    text:SetPoint("TOPLEFT", x, -y)
-    text:SetSize(width, height)
-    text:SetJustifyH("LEFT")
-    text:SetJustifyV("TOP")
-    text:SetWordWrap(true)
-    rgb = rgb or WHITE
-    text:SetTextColor(rgb[1], rgb[2], rgb[3])
-    return text
-end
-
-local function panel(parent, x, y, width, height)
-    local frame = CreateFrame("Frame", nil, parent, "BackdropTemplate")
-    frame:SetPoint("TOPLEFT", x, -y)
-    frame:SetSize(width, height)
-    surface(frame, { 0.075, 0.09, 0.115 })
-    return frame
+    return Widgets.Label(parent, font, x, y, width, height, rgb, true)
 end
 
 -- Queue presentation and optional actions must not enter duel-aborting recovery.
 function QueueUI:Run(callback)
-    local ok, result, reason = pcall(callback)
-    if ok then return true, result, reason end
-    if self.frame then pcall(self.frame.Hide, self.frame) end
-    pcall(function()
-        FD.Debug:Print(L["Could not display the duel queue. Try /duelrating queue again."])
-        if readable(result) then FD.Debug:Log("queue window error", result) end
-    end)
-    return false
+    return Widgets.Run(self, callback, L["Could not display the duel queue. Try /duelrating queue again."], "queue window error")
 end
 
 function QueueUI:GetStatus()
@@ -97,7 +46,7 @@ end
 -- change or after a few seconds, so they never hide the live queue status.
 function QueueUI:Notice(text)
     self.notice = text
-    self.noticeAt = serverTime()
+    self.noticeAt = Native.Epoch()
     self.noticeState = self:GetStatus().state
 end
 
@@ -133,100 +82,31 @@ function QueueUI:CaptureVenue()
     self:Refresh()
 end
 
-function QueueUI:CloseDropdown()
-    if self.openDropdown then self.openDropdown.menu:Hide() end
-    self.openDropdown = nil
-    if self.dropdownDismiss then self.dropdownDismiss:Hide() end
-end
+QueueUI.CloseDropdown = Widgets.CloseDropdown
 
 function QueueUI:ToggleDropdown(control)
     local wasOpen = self.openDropdown == control
     self:CloseDropdown()
     if wasOpen or self:GetStatus().state ~= "IDLE" then return end
-    local selected = control.selected()
-    for index, item in ipairs(control.items) do
-        local chosen = index == selected
-        item.caption:SetText((chosen and "> " or "   ") .. control.options[index])
-        local rgb = chosen and GOLD or WHITE
-        item.caption:SetTextColor(rgb[1], rgb[2], rgb[3])
-    end
-    self.openDropdown = control
-    self.dropdownDismiss:Show()
-    control.menu:Show()
+    Widgets.OpenDropdown(self, control)
 end
 
 function QueueUI:Create()
     if self.frame then return end
-    local frame = CreateFrame("Frame", "ForeverDuelQueue", UIParent, "BackdropTemplate")
-    frame:SetSize(WIDTH, HEIGHT)
-    frame:SetPoint("CENTER")
-    frame:SetFrameStrata("HIGH")
-    surface(frame, { 0.055, 0.065, 0.085, 0.98 }, { 0.46, 0.36, 0.19 })
-    frame:SetMovable(true)
-    frame:EnableMouse(true)
-    frame:SetClampedToScreen(true)
-    frame:RegisterForDrag("LeftButton")
-    frame:SetScript("OnDragStart", function() frame:StartMoving() end)
-    frame:SetScript("OnDragStop", function() frame:StopMovingOrSizing() end)
-    frame:SetScript("OnHide", function()
-        frame:StopMovingOrSizing()
+    local frame = Widgets.Window("ForeverDuelQueue", WIDTH, HEIGHT, function()
         self:CloseDropdown()
-        self.elapsed, self.notice = 0, nil
+        self.notice = nil
     end)
-    frame:SetScript("OnUpdate", function(_, elapsed)
-        if not frame:IsShown() then return end
-        self.elapsed = (self.elapsed or 0) + elapsed
-        if self.elapsed >= 1 then
-            self.elapsed = 0
-            self:RefreshIfShown()
-        end
-    end)
-    frame:Hide()
     self.frame = frame
 
     local function button(parent, text, width, x, y, handler)
-        local b = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
-        b:SetSize(width, 26)
-        b:SetPoint("TOPLEFT", x, -y)
-        b:SetText(text)
-        b:SetScript("OnClick", function()
+        return Widgets.Button(parent, text, width, x, y, function()
             self:Run(function() handler(); self:CloseDropdown() end)
         end)
-        return b
     end
-    self.dropdownDismiss = CreateFrame("Button", nil, frame)
-    self.dropdownDismiss:SetPoint("TOPLEFT", UIParent, "TOPLEFT")
-    self.dropdownDismiss:SetPoint("BOTTOMRIGHT", UIParent, "BOTTOMRIGHT")
-    self.dropdownDismiss:SetFrameStrata("DIALOG")
-    self.dropdownDismiss:SetScript("OnClick", function() self:Run(function() self:CloseDropdown() end) end)
-    self.dropdownDismiss:Hide()
+    Widgets.DismissLayer(self, frame)
     local function dropdown(parent, width, x, y, options, selected, choose)
-        local control = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
-        control:SetSize(width, 26)
-        control:SetPoint("TOPLEFT", x, -y)
-        control:SetScript("OnClick", function() self:Run(function() self:ToggleDropdown(control) end) end)
-        label(control, "GameFontHighlightSmall", width - 17, 7, 12, 16, MUTED):SetText("v")
-        control.options, control.selected, control.items = options, selected, {}
-        local menu = CreateFrame("Frame", nil, self.dropdownDismiss, "BackdropTemplate")
-        menu:SetPoint("TOPLEFT", control, "BOTTOMLEFT", 0, -2)
-        menu:SetSize(width, #options * 26 + 8)
-        menu:EnableMouse(true)
-        menu:SetClampedToScreen(true)
-        surface(menu, { 0.065, 0.075, 0.095, 1 }, { 0.46, 0.36, 0.19 })
-        for index, text in ipairs(options) do
-            local choice = index
-            local item = CreateFrame("Button", nil, menu)
-            item:SetSize(width - 8, 26)
-            item:SetPoint("TOPLEFT", 4, -(4 + (index - 1) * 26))
-            item:SetHighlightTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight")
-            item.caption = label(item, "GameFontHighlightSmall", 6, 7, width - 20, 18)
-            item.caption:SetText(text)
-            item:SetScript("OnClick", function() self:Run(function() choose(choice) end) end)
-            control.items[index] = item
-        end
-        control.menu = menu
-        menu:Hide()
-        return control
+        return Widgets.Dropdown(self, parent, nil, width, x, y, options, selected, choose, true)
     end
     label(frame, "GameFontNormalLarge", 24, 23, 470, 25, GOLD):SetText("ForeverDuelersGuild")
     label(frame, "GameFontHighlightSmall", 24, 51, 460, 18, MUTED):SetText(L["RATED DUEL QUEUE"])
@@ -236,7 +116,7 @@ function QueueUI:Create()
     end)
     self.close = button(frame, L["Close"], 72, 704, 25, function() frame:Hide() end)
 
-    local criteria = panel(frame, 24, 85, 752, 212)
+    local criteria = Widgets.Panel(frame, 24, 85, 752, 212)
     label(criteria, "GameFontHighlightSmall", 16, 13, 710, 18, GOLD):SetText(L["SEARCH CRITERIA  /  Change before joining"])
     self.scopes = {}
     for index, scope in ipairs(SCOPES) do
@@ -263,7 +143,7 @@ function QueueUI:Create()
         :SetText(L["Accept the group invitation of a matched queue opponent automatically"])
 
     self.help = label(frame, "GameFontHighlightSmall", 24, 308, 752, 52, MUTED)
-    local statusPanel = panel(frame, 24, 366, 752, 168)
+    local statusPanel = Widgets.Panel(frame, 24, 366, 752, 168)
     self.status = label(statusPanel, "GameFontHighlightLarge", 16, 13, 720, 27, GOLD)
     self.reason = label(statusPanel, "GameFontHighlightSmall", 16, 45, 720, 34, WHITE)
     self.lastMatch = label(statusPanel, "GameFontHighlightSmall", 16, 81, 720, 30, MUTED)
@@ -273,7 +153,7 @@ function QueueUI:Create()
     self.discovery = label(statusPanel, "GameFontHighlightSmall", 498, 150, 238, 16, MUTED)
     self.discovery:SetJustifyH("RIGHT")
 
-    local matchPanel = panel(frame, 24, 546, 752, 156)
+    local matchPanel = Widgets.Panel(frame, 24, 546, 752, 156)
     self.opponent = label(matchPanel, "GameFontHighlight", 16, 13, 720, 28)
     self.venue = label(matchPanel, "GameFontHighlightSmall", 16, 48, 720, 32, GOLD)
     self.arrival = label(matchPanel, "GameFontHighlightSmall", 16, 91, 720, 20, MUTED)
@@ -313,7 +193,7 @@ function QueueUI:Refresh()
     local status = self:GetStatus()
     local state, settings = status.state or "IDLE", status.settings or {}
     local idle = state == "IDLE" and not status.unavailable
-    local now = serverTime()
+    local now = Native.Epoch()
     if state ~= "IDLE" then self:CloseDropdown() end
     if self.notice and (state ~= self.noticeState or not now or not self.noticeAt or now - self.noticeAt >= NOTICE_SECONDS) then
         self.notice = nil
@@ -350,6 +230,9 @@ function QueueUI:Refresh()
     elseif now and number(status.queuedAt) and state ~= "IDLE" then
         timer = FD.Locale:Format("Waiting: %s", duration(now - status.queuedAt))
     end
+    -- Only a countdown, a notice's expiry or the pending ruleset detection
+    -- changes without a queue render; those alone keep the 1 Hz ticker going.
+    local live = timer ~= "" or self.notice ~= nil or (idle and not settings.ruleset)
     if number(status.ratingWindow) and state == "SEARCHING" then
         timer = timer .. (timer ~= "" and "  /  " or "") .. FD.Locale:Format("Rating +/-%d", status.ratingWindow)
     end
@@ -383,13 +266,24 @@ function QueueUI:Refresh()
         and now ~= nil and number(status.deadline) and now < status.deadline)
     self.leaveGroup:SetEnabled(not status.unavailable and status.groupAction == true)
     self.saveVenue:SetEnabled(idle)
+    if live then self:Tick() end
+end
+
+-- At most one pending refresh; the chain ends once the window is hidden or
+-- nothing time-dependent is displayed any more.
+function QueueUI:Tick()
+    if self.ticking or type(C_Timer) ~= "table" or type(C_Timer.After) ~= "function" then return end
+    self.ticking = true
+    C_Timer.After(1, function()
+        self.ticking = nil
+        self:RefreshIfShown()
+    end)
 end
 
 function QueueUI:Show()
     return self:Run(function()
         self:Create()
-        local scale = math.min(1, (UIParent:GetWidth() - 40) / WIDTH, (UIParent:GetHeight() - 40) / HEIGHT)
-        self.frame:SetScale(math.max(0.1, scale))
+        Widgets.Fit(self.frame, WIDTH, HEIGHT)
         self:Refresh()
         self.frame:Show()
         if FD.Profile and FD.Profile.frame then FD.Profile.frame:Hide() end
@@ -397,11 +291,4 @@ function QueueUI:Show()
     end)
 end
 
-function QueueUI:Toggle()
-    if self.frame and self.frame:IsShown() then return self:Run(function() self.frame:Hide() end) end
-    return self:Show()
-end
-
-function QueueUI:RefreshIfShown()
-    if self.frame and self.frame:IsShown() then return self:Run(function() self:Refresh() end) end
-end
+QueueUI.Toggle, QueueUI.RefreshIfShown = Widgets.Toggle, Widgets.RefreshIfShown

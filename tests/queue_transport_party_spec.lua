@@ -75,7 +75,7 @@ return function(_, equal, newNamespace)
                     return result
                 end,
             }
-            for _, name in ipairs({ "Outbound", "QueueWow", "QueueTransport" }) do
+            for _, name in ipairs({ "Native", "Outbound", "QueueWow", "QueueTransport" }) do
                 local module = assert(loadfile("ForeverDuel/" .. name .. ".lua"))
                 setfenv(module, api)("ForeverDuel", fd)
             end

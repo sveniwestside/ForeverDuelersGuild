@@ -60,9 +60,11 @@ return function(_, equal)
             if state.failCursor then error("cursor failed") end
             return state.cursorX, state.cursorY
         end
-        local chunk = assert(loadfile("ForeverDuel/Minimap.lua"))
-        setfenv(chunk, env)
-        chunk("ForeverDuel", FD)
+        for _, module in ipairs({ "Native", "Minimap" }) do
+            local chunk = assert(loadfile("ForeverDuel/" .. module .. ".lua"))
+            setfenv(chunk, env)
+            chunk("ForeverDuel", FD)
+        end
         state.FD, state.env, state.active = FD, env, active
         function state:fire(event, ...)
             local button = self.FD.Minimap.button

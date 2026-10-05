@@ -190,7 +190,7 @@ return function(_, equal)
         end }
         env.DUEL_WINNER_KNOCKOUT = "%1$s has defeated %2$s in a duel"
         env.DUEL_WINNER_RETREAT = "%2$s has fled from %1$s in a duel"
-        for _, name in ipairs({ "Constants", "Locale", "Protocol", "Rating", "Results", "Outbound",
+        for _, name in ipairs({ "Constants", "Locale", "Native", "Protocol", "Rating", "Results", "Outbound",
             "QueueProtocol", "Venues", "Queue", "QueueWow", "QueueTransport" }) do load(name) end
         FD.QueueTransport:Initialize()
         state.env, state.FD, state.own, state.peer, state.vector = env, FD, own, peer, vector

@@ -9,6 +9,7 @@
 Constants.lua
 Locale.lua
 Locale_deDE.lua
+Native.lua
 Debug.lua
 Commands.lua
 Outbound.lua
@@ -19,6 +20,7 @@ Protocol.lua
 Results.lua
 Duel.lua
 Comms.lua
+Widgets.lua
 UI.lua
 Profile.lua
 Minimap.lua

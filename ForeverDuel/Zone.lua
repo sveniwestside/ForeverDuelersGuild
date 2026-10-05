@@ -1,10 +1,10 @@
 local _, FD = ...
 FD.Zone = { page = 1, pageSize = 8, search = "", classIndex = 1, windowIndex = 1, sortIndex = 1 }
 local Zone = FD.Zone
+local Widgets = FD.Widgets
+local label, plain = Widgets.Label, FD.Native.Plain
 local WIDTH, HEIGHT = 800, 676
-local GOLD = { 0.94, 0.75, 0.38 }
-local MUTED = { 0.61, 0.65, 0.70 }
-local WHITE = { 0.92, 0.94, 0.97 }
+local GOLD, MUTED, WHITE = Widgets.GOLD, Widgets.MUTED, Widgets.WHITE
 local CLASS_FILTERS = { "ALL", "WARRIOR", "PALADIN", "HUNTER", "ROGUE", "PRIEST",
     "SHAMAN", "MAGE", "WARLOCK", "DRUID" }
 local CLASS_NAMES = { ALL = "All", WARRIOR = "Warrior", PALADIN = "Paladin", HUNTER = "Hunter",
@@ -32,44 +32,13 @@ local function byName(a, b)
     return left == right and a.guid < b.guid or left < right
 end
 
-local function plain(value)
-    return (tostring(value or ""):gsub("|", "||"))
-end
-
-local function surface(frame, fill, border)
-    frame:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8x8",
-        edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = 1 })
-    frame:SetBackdropColor(fill[1], fill[2], fill[3], fill[4] or 1)
-    border = border or { 0.20, 0.23, 0.28 }
-    frame:SetBackdropBorderColor(border[1], border[2], border[3], 1)
-end
-
-local function label(parent, font, x, y, width, height, rgb)
-    local text = parent:CreateFontString(nil, "OVERLAY", font)
-    text:SetPoint("TOPLEFT", x, -y)
-    text:SetSize(width, height)
-    text:SetJustifyH("LEFT")
-    text:SetJustifyV("TOP")
-    text:SetWordWrap(false)
-    rgb = rgb or WHITE
-    text:SetTextColor(rgb[1], rgb[2], rgb[3])
-    return text
-end
-
 local function emptyText()
     return L("No ForeverDuelersGuild players discovered in this zone yet.\n\nWhile this window is open, ForeverDuel channel members and your target are asked for their profiles. Click Refresh to ask again; targeting a player also works.")
 end
 
 -- A failed browser or challenge must never enter Core's duel-aborting recovery.
 function Zone:Run(callback)
-    local ok, result = pcall(callback)
-    if ok then return true, result end
-    if self.frame then pcall(self.frame.Hide, self.frame) end
-    pcall(function()
-        FD.Debug:Print(L("Could not display players in your zone. Try /duelrating zone again."))
-        if not FD.Wow or FD.Wow:Readable(result) then FD.Debug:Log("zone browser error", result) end
-    end)
-    return false
+    return Widgets.Run(self, callback, L("Could not display players in your zone. Try /duelrating zone again."), "zone browser error")
 end
 
 function Zone:IsShown()
@@ -116,93 +85,29 @@ function Zone:FiltersChanged()
     self:Refresh()
 end
 
-function Zone:CloseDropdown()
-    if self.openDropdown then self.openDropdown.menu:Hide() end
-    self.openDropdown = nil
-    if self.dropdownDismiss then self.dropdownDismiss:Hide() end
-end
+Zone.CloseDropdown = Widgets.CloseDropdown
 
 function Zone:ToggleDropdown(control)
     local wasOpen = self.openDropdown == control
     self:CloseDropdown()
     if wasOpen then return end
     self.searchBox:ClearFocus()
-    local selected = control.selected()
-    for index, item in ipairs(control.items) do
-        local current = index == selected
-        item.caption:SetText((current and "> " or "   ") .. control.options[index])
-        local color = current and GOLD or WHITE
-        item.caption:SetTextColor(color[1], color[2], color[3])
-    end
-    self.openDropdown = control
-    self.dropdownDismiss:Show()
-    control.menu:Show()
+    Widgets.OpenDropdown(self, control)
 end
 
 function Zone:Create()
     if self.frame then return end
-    local frame = CreateFrame("Frame", "ForeverDuelZone", UIParent, "BackdropTemplate")
-    frame:SetSize(WIDTH, HEIGHT)
-    frame:SetPoint("CENTER")
-    frame:SetFrameStrata("HIGH")
-    surface(frame, { 0.055, 0.065, 0.085, 0.98 }, { 0.46, 0.36, 0.19 })
-    frame:SetMovable(true)
-    frame:EnableMouse(true)
-    frame:SetClampedToScreen(true)
-    frame:RegisterForDrag("LeftButton")
-    frame:SetScript("OnDragStart", function() frame:StartMoving() end)
-    frame:SetScript("OnDragStop", function() frame:StopMovingOrSizing() end)
-    frame:SetScript("OnHide", function() frame:StopMovingOrSizing(); self:CloseDropdown() end)
-    frame:Hide()
-
+    local frame = Widgets.Window("ForeverDuelZone", WIDTH, HEIGHT, function() self:CloseDropdown() end)
+    -- Every click closes an open menu first (ToggleDropdown does so itself).
     local function button(parent, text, width, x, y, handler)
-        local b = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
-        b:SetSize(width, 26)
-        b:SetPoint("TOPLEFT", x, -y)
-        b:SetText(text)
-        b:SetScript("OnClick", function()
-            self:Run(function()
-                if b ~= self.openDropdown then self:CloseDropdown() end
-                handler()
-            end)
+        return Widgets.Button(parent, text, width, x, y, function()
+            self:Run(function() self:CloseDropdown(); handler() end)
         end)
-        return b
     end
-    -- Addon-owned menus use the same basic frame APIs as the browser. The
-    -- dismiss layer closes a menu on an outside click without starting a duel.
-    self.dropdownDismiss = CreateFrame("Button", nil, frame)
-    self.dropdownDismiss:SetPoint("TOPLEFT", UIParent, "TOPLEFT")
-    self.dropdownDismiss:SetPoint("BOTTOMRIGHT", UIParent, "BOTTOMRIGHT")
-    self.dropdownDismiss:SetFrameStrata("DIALOG")
-    self.dropdownDismiss:SetScript("OnClick", function() self:Run(function() self:CloseDropdown() end) end)
-    self.dropdownDismiss:Hide()
+    Widgets.DismissLayer(self, frame)
     local function dropdown(text, width, x, y, options, selected, choose)
-        local control
-        control = button(frame, text, width, x, y, function() self:ToggleDropdown(control) end)
-        label(control, "GameFontHighlightSmall", width - 17, 7, 12, 16, MUTED):SetText("v")
-        control.options, control.selected, control.items = options, selected, {}
-        local menu = CreateFrame("Frame", nil, self.dropdownDismiss, "BackdropTemplate")
-        menu:SetPoint("TOPLEFT", control, "BOTTOMLEFT", 0, -2)
-        menu:SetSize(width, #options * 26 + 8)
-        menu:EnableMouse(true)
-        menu:SetClampedToScreen(true)
-        surface(menu, { 0.065, 0.075, 0.095, 1 }, { 0.46, 0.36, 0.19 })
-        for index, text in ipairs(options) do
-            local choice = index
-            local item = CreateFrame("Button", nil, menu)
-            item:SetSize(width - 8, 26)
-            item:SetPoint("TOPLEFT", 4, -(4 + (index - 1) * 26))
-            item:SetHighlightTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight")
-            item.caption = label(item, "GameFontHighlightSmall", 6, 7, width - 20, 18)
-            item.caption:SetText(text)
-            item:SetScript("OnClick", function()
-                self:Run(function() choose(choice); self:FiltersChanged() end)
-            end)
-            control.items[index] = item
-        end
-        control.menu = menu
-        menu:Hide()
-        return control
+        return Widgets.Dropdown(self, frame, text, width, x, y, options, selected,
+            function(index) choose(index); self:FiltersChanged() end)
     end
     label(frame, "GameFontNormalLarge", 24, 23, 420, 25, GOLD):SetText("ForeverDuelersGuild")
     label(frame, "GameFontHighlightSmall", 24, 51, 420, 18, MUTED):SetText(L("PLAYERS IN ZONE  /  ForeverDuelersGuild discovery"))
@@ -260,7 +165,7 @@ function Zone:Create()
         row:SetPoint("TOPLEFT", 24, -(274 + (index - 1) * 40))
         row:SetSize(752, 38)
         local shade = index % 2 == 0 and 0.075 or 0.095
-        surface(row, { shade, shade + 0.012, shade + 0.025 })
+        Widgets.Surface(row, { shade, shade + 0.012, shade + 0.025 })
         row.name = label(row, "GameFontHighlight", 12, 4, 304, 18)
         row.seen = label(row, "GameFontHighlightSmall", 12, 22, 304, 14, MUTED)
         row.level = label(row, "GameFontHighlightSmall", 328, 12, 158, 20, MUTED)
@@ -333,8 +238,7 @@ end
 function Zone:Show()
     return self:Run(function()
         self:Create()
-        local scale = math.min(1, (UIParent:GetWidth() - 40) / WIDTH, (UIParent:GetHeight() - 40) / HEIGHT)
-        self.frame:SetScale(math.max(0.1, scale))
+        Widgets.Fit(self.frame, WIDTH, HEIGHT)
         self.page = 1
         self:Refresh()
         self.frame:Show()
@@ -344,15 +248,6 @@ function Zone:Show()
     end)
 end
 
-function Zone:Toggle()
-    if self.frame and self.frame:IsShown() then
-        return self:Run(function() self.frame:Hide() end)
-    end
-    return self:Show()
-end
-
-function Zone:RefreshIfShown()
-    if self.frame and self.frame:IsShown() then self:Run(function() self:Refresh() end) end
-end
+Zone.Toggle, Zone.RefreshIfShown = Widgets.Toggle, Widgets.RefreshIfShown
 
 FD:RegisterCommand("zone", function() FD.Zone:Toggle() end, "Open the same-map player browser.", 2)
