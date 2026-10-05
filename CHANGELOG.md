@@ -26,7 +26,7 @@ _Review-driven rework. Simulated in the test suites; the live two-client run ([M
 ### Duel popup
 
 - Blizzard's duel popup is never hidden or replaced before the addon accepts. The addon panel appears only after the opponent's addon has answered: below the popup for the receiver, and as a separate window for the challenger. It shows how many seconds the request has left.
-- Blizzard's **Accept** starts an unrated duel. **Decline** or Esc on the popup refuses the request. Closing the addon panel keeps the duel unrated.
+- Blizzard's **Accept** starts an unrated duel. **Decline** or Esc on the popup refuses the request. Closing the addon panel keeps the duel unrated. Esc closes the challenger's panel through Blizzard's own window handling; the addon no longer registers an Esc handler, which tainted Esc for clearing the target, stopping a cast and the game menu.
 - A player who is already in combat when the request begins sees the rated button disabled until combat ends within the request window. Entering combat while a request is pending makes the duel unrated for good.
 - At the countdown the chat says `RATED duel vs <name> (win +x / loss -y)` or `This duel is UNRATED: <reason>`.
 

@@ -45,7 +45,7 @@ Not grouped. For the baseline, B targets A.
 In every case: no rated record, no rating change, and the ordinary duel stays possible.
 
 1. **Blizzard Accept:** B clicks Blizzard's **Accept** instead of the panel. The duel starts. B says the duel is UNRATED ("You kept this duel unrated"); A says it is UNRATED ("Your opponent chose an unrated duel"). Repeat after A has already proposed rated: A must never show a RATED line.
-2. **Keep unrated:** A clicks **Keep unrated**. Both say "This duel will be UNRATED: ...". B's panel closes, Blizzard's popup stays, and B can still accept an ordinary duel. Repeat with A pressing Esc on its panel, and with B closing its panel with the X.
+2. **Keep unrated:** A clicks **Keep unrated**. Both say "This duel will be UNRATED: ...". B's panel closes, Blizzard's popup stays, and B can still accept an ordinary duel. Repeat with A pressing Esc on its panel, and with B closing its panel with the X. Esc also closes the panel when bags or another window are open (one Esc closes both), which keeps the duel unrated.
 3. **Decline and Esc:** B clicks **Decline** on Blizzard's popup; on a second request B presses Esc. The request ends on both sides, and A may say "This duel will be UNRATED: The duel request was cancelled." Both return to `IDLE`, and A can challenge again at once.
 4. **Combat:** (a) With the panel open, B enters combat. Both say "This duel will be UNRATED: Combat started." (b) B is already in combat when the request arrives: the rated button is disabled and the panel says "Leave combat to choose a rated duel." When B leaves combat within the window, the button works again.
 5. **Out of range, then retry:** A challenges B from beyond duel range and notes the exact error text. A moves closer and challenges B again within a few seconds. The second request must be tracked normally: the panel appears, Rated works, and there is no "Rated tracking could not attach" line. The failure IDs behind this are not verified live, so record the error text.
@@ -55,6 +55,7 @@ In every case: no rated record, no rating change, and the ordinary duel stays po
 9. **Challenger not visible:** B clears target and focus, turns nameplates off and moves the mouse away. A challenges. If A is a known addon user, B sees "Rated duel pending: target the challenger ...". Targeting A within 50 s brings the panel.
 10. **Reload during a request:** A types `/reload` while the panels are open. B says "This duel will be UNRATED: Your opponent logged out or changed zones."
 11. **Accept without a duel:** if a duel ever fails to start after the addon's accept, both clients report it within 8 s, and B sees "If no duel started, ask A to challenge you again." Collect the outputs.
+12. **Esc stays Blizzard's:** run `/console taintLog 1` and `/reload`. With nothing open, target a mob and press Esc: the target clears. Start a cast and press Esc: the cast stops. In combat, Esc opens the game menu. No "ForeverDuelersGuild has been blocked" popup may appear, and `Logs/taint.log` must not mention ForeverDuel. Then `/console taintLog 0`.
 
 ## 3. Results and persistence
 

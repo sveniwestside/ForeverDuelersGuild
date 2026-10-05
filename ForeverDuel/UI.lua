@@ -6,7 +6,7 @@ local UI = FD.UI
 -- its own AcceptDuel. The panel appears only once the peer is proven: for
 -- INCOMING a compact companion under the native popup, for OUTGOING a
 -- standalone proposal panel. Closing it (close button, or Esc on the
--- OUTGOING panel) keeps the duel unrated.
+-- OUTGOING panel via UISpecialFrames) keeps the duel unrated.
 local VISIBLE = { READY = true, LOCAL_ACCEPTED = true, REMOTE_ACCEPTED = true, RATED_CONFIRMED = true }
 local Native = FD.Native
 
@@ -49,21 +49,17 @@ function UI:Create()
     close:SetScript("OnClick", function() FD:Safe(function() self:Closed() end) end)
     self.close = close
     self.frame = frame
-    -- Esc must close the panel before the World handler that would
-    -- ClearTarget (pinned Blizzard_GameMenuEsc and Game.lua). An AddOn-priority
-    -- handler runs only for a real Esc; UISpecialFrames, the fallback where
-    -- that API is missing, is also closed by loss of control or panel changes.
-    -- Beside Blizzard's DUEL_REQUESTED popup (INCOMING) Esc never gets here:
-    -- the popup's Dialog-priority handler runs first and declines the request
-    -- (hideOnEscape, OnCancel = CancelDuel), so the companion says so.
-    local function escape()
-        if not frame:IsShown() then return false end
-        FD:Safe(function() self:Closed() end)
-        return true
-    end
-    local priority = type(GameMenuEscPriority) == "table" and GameMenuEscPriority.AddOn
-    if type(RegisterGameMenuEscHandler) == "function" and priority
-        and pcall(RegisterGameMenuEscHandler, priority, escape) then return end
+    -- Esc closes the panel through UISpecialFrames: Blizzard's CloseAllWindows
+    -- (AddOnPost priority) hides it inside securecall, before the World
+    -- handler that would ClearTarget. Never RegisterGameMenuEscHandler: its
+    -- handler list is a plain table, and an entry written by addon code taints
+    -- every later Esc (ClearTarget, SpellStopCasting, the game menu). The same
+    -- Esc also closes open bags and panels, and loss of control, death or a
+    -- loading screen closes the panel too; each close keeps the duel unrated,
+    -- which never creates a rating. Beside Blizzard's DUEL_REQUESTED popup
+    -- (INCOMING) Esc never gets here: the popup's Dialog-priority handler runs
+    -- first and declines the request (hideOnEscape, OnCancel = CancelDuel),
+    -- so the companion says so.
     -- A frame hidden by its hidden parent stays IsShown(); only an explicit
     -- close reaches Closed().
     frame:SetScript("OnHide", function()

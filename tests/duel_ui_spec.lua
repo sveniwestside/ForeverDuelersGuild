@@ -197,10 +197,13 @@ return function(FD, equal)
     equal(#FD.Database.data.matches, 0, "UI choices do not create rated history")
     equal(FD.Database:GetStats("LEVELING").rating, 1500, "pending UI changes do not affect ratings")
 
-    -- Where the client has the game-menu Esc handler API, only a real Esc
-    -- closes the panel; loss of control or other panels cannot unrate it.
+    -- Even where the client has the game-menu Esc handler API, the addon never
+    -- registers with it: Blizzard's handler list is a plain table, and an entry
+    -- written by addon code taints every later Esc (ClearTarget,
+    -- SpellStopCasting, the game menu). Esc reaches the panel through
+    -- UISpecialFrames, which CloseAllWindows hides at AddOnPost priority.
     local handlers = {}
-    env.GameMenuEscPriority = { Dialog = 1, AddOn = 8, World = 11 }
+    env.GameMenuEscPriority = { Dialog = 1, AddOn = 8, AddOnPost = 9, AddOnPost2 = 10, World = 11 }
     env.RegisterGameMenuEscHandler = function(priority, handler) handlers[#handlers + 1] = { priority, handler } end
     ui:Hide()
     ui.frame = nil
@@ -208,20 +211,24 @@ return function(FD, equal)
     assert(FD.duel:Begin("OUTGOING", player, opponent))
     match = FD.duel.active
     acknowledge(match)
-    equal(#handlers, 1, "one Esc handler registered")
-    equal(handlers[1][1], 8, "AddOn priority, ahead of the World handler that clears the target")
-    equal(#env.UISpecialFrames, 0, "no UISpecialFrames entry beside the handler")
-    ui.frame:Hide()
-    equal(FD.duel:State(), "READY", "a hide by other UI code is not a choice")
-    ui:Render(match)
-    equal(handlers[1][2](), true, "Esc consumed while the panel is shown")
-    equal(FD.duel:State(), "UNRATED", "Esc keeps the duel unrated")
-    equal(handlers[1][2](), false, "Esc passes through when the panel is hidden")
+    equal(#handlers, 0, "no game-menu Esc handler registered by addon code")
+    equal(env.UISpecialFrames[1], "ForeverDuelDialog", "Esc closes the panel through UISpecialFrames")
+    -- Pinned UIParentPanelManager.lua: CloseSpecialWindows hides every shown
+    -- UISpecialFrames entry; CloseAllWindows runs it at AddOnPost priority.
+    local function closeSpecialWindows()
+        local found
+        for _, name in pairs(env.UISpecialFrames) do
+            local frame = name == "ForeverDuelDialog" and ui.frame
+            if frame and frame:IsShown() then frame:Hide(); found = 1 end
+        end
+        return found
+    end
+    handlers[#handlers + 1] = { env.GameMenuEscPriority.AddOnPost, function() return closeSpecialWindows() ~= nil end }
 
     -- Pinned Blizzard_StaticPopup_Game/GameDialog.lua registers
     -- StaticPopup_EscapePressed at Dialog priority: with DUEL_REQUESTED shown
     -- (hideOnEscape, OnCancel = CancelDuel) Esc declines the request before
-    -- any AddOn handler runs. The CancelDuel hook then reaches Cancelled().
+    -- CloseAllWindows runs. The CancelDuel hook then reaches Cancelled().
     local declines = 0
     handlers[#handlers + 1] = { env.GameMenuEscPriority.Dialog, function()
         if not popupName then return false end
@@ -234,6 +241,12 @@ return function(FD, equal)
         for _, handler in ipairs(handlers) do if handler[2]() then return true end end
         return false
     end
+    equal(esc(), true, "Esc consumed by CloseAllWindows while the panel is shown")
+    equal(FD.duel:State(), "UNRATED", "Esc keeps the duel unrated")
+    equal(sent[#sent].reason, "choice", "Esc is an unrated choice")
+    equal(ui.frame:IsShown(), false, "Esc closed the panel")
+    equal(esc(), false, "Esc passes through when the panel is hidden")
+
     popupName = "StaticPopup1"
     assert(FD.duel:Begin("INCOMING", player, opponent))
     acknowledge(FD.duel.active)
@@ -248,7 +261,8 @@ return function(FD, equal)
     equal(ui.frame:IsShown(), false, "companion closes with the request")
     assert(FD.duel:Begin("OUTGOING", player, opponent))
     acknowledge(FD.duel.active)
-    equal(esc(), true, "without a native popup the panel's handler gets Esc")
+    equal(esc(), true, "without a native popup CloseAllWindows closes the panel")
     equal(FD.duel:State(), "UNRATED", "challenger's Esc keeps the duel unrated")
     equal(sent[#sent].reason, "choice", "as an unrated choice")
+    equal(#env.UISpecialFrames, 1, "the panel is registered once")
 end
