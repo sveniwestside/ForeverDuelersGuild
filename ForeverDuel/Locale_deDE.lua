@@ -606,4 +606,7 @@ FD.Locale:Register("deDE", {
     ["No players match these filters.\n\nTry a broader search or reset the filters."] = "Keine Spieler passen zu diesen Filtern.\n\nSuche breiter oder setze die Filter zurück.",
     ["Page %d / %d  /  %d of %d players"] = "Seite %d / %d  /  %d von %d Spielern",
     ["Open the same-map player browser."] = "Öffnet die Spielerliste dieser Karte.",
+
+    -- soak test fixes
+    ["Suitable opponent found; that player is already in another queue match."] = "Passender Gegner gefunden; dieser Spieler ist bereits in einem anderen Match.",
 })

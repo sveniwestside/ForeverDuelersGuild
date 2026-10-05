@@ -273,20 +273,26 @@ return function(options)
         if target.group or target.pending or inviter.group then
             self:system(inviter, string.format(inviter.env.ERR_ALREADY_IN_GROUP_S, target.fullName)); return
         end
-        target.pending, inviter.inviting = { from = inviter, at = self.now }, target
+        local pending = { from = inviter, at = self.now }
+        target.pending, inviter.inviting = pending, target
         self:roster(inviter)
         if target.stranger then return end
         self:at(opt(target, "inviteLatency", 0.3), function()
-            if not target.pending or target.pending.from ~= inviter or target.offline then return end
-            target.popup = { which = "PARTY_INVITE", from = inviter }
+            if target.pending ~= pending or target.offline then return end
+            local popup = { which = "PARTY_INVITE", from = inviter }
+            target.popup = popup
             target.inviteEvents = (target.inviteEvents or 0) + 1
             self:emit(target, "PARTY_INVITE_REQUEST", inviter.fullName, false, false, false, true, false, inviter.guid, false)
             local response, delay = opt(target, "inviteResponse", "accept"), opt(target, "acceptDelay", 2)
-            if response == "accept" then self:at(delay, function() self:click(target, true) end, target)
-            elseif response == "decline" then self:at(delay, function() self:click(target, false) end, target) end
+            local function click(accept) if target.popup == popup then self:click(target, accept) end end
+            if response == "accept" then self:at(delay, function() click(true) end, target)
+            elseif response == "decline" then self:at(delay, function() click(false) end, target) end
+            -- Blizzard's dialog times out after StaticPopupTimeoutSec (60 s);
+            -- its OnHide declines.
+            self:at(60, function() if target.popup == popup then target.env.StaticPopup_Hide("PARTY_INVITE") end end, target)
         end)
         self:at(120, function()
-            if target.pending and target.pending.from == inviter then self:decline(target) end
+            if target.pending == pending then self:decline(target) end
         end)
     end
     -- Blizzard's PARTY_INVITE dialog buttons.
@@ -357,7 +363,9 @@ return function(options)
         if channel == "WHISPER" then
             local recipient = self:byName(target)
             if not online(recipient) then
-                -- The server answers an unreachable whisper with a system line.
+                -- The client may refuse at once (option offlineResult, e.g.
+                -- TargetOffline); otherwise the server answers with a system line.
+                if opt(c, "offlineResult", nil) then return result(opt(c, "offlineResult")) end
                 self:system(c, string.format(c.env.ERR_CHAT_PLAYER_NOT_FOUND_S, target), latency(record, c) or 0.3)
                 return 0
             end
@@ -439,6 +447,18 @@ return function(options)
         if not duel or duel.state == "fighting" then return end
         endDuel(duel)
         for _, u in ipairs({ duel.from, duel.to }) do self:system(u, u.env.ERR_DUEL_CANCELLED) end
+    end
+    -- A player who logs out of a running duel has fled: the other wins.
+    function w:fleeDuel(c)
+        local duel = self:duelOf(c)
+        if not duel then return end
+        if duel.state ~= "fighting" then return self:cancelDuel(c) end
+        local winner = duel.from == c and duel.to or duel.from
+        endDuel(duel)
+        for _, u in ipairs({ winner, c }) do
+            self:system(u, string.format("%s has fled from %s in a duel", shownName(c), shownName(winner)), 0)
+            self:at(0.05, function() self:emit(u, "DUEL_FINISHED") end)
+        end
     end
     -- The native result: the system line on both clients, then DUEL_FINISHED.
     function w:finishDuel(winner, loser)
@@ -755,8 +775,7 @@ return function(options)
             self:emit("PLAYER_LOGOUT")
             self.offline, self.generation = true, self.generation + 1
             w:leaveChannel(self)
-            local duel = w:duelOf(self)
-            if duel then w:cancelDuel(self) end
+            w:fleeDuel(self)
             if self.inviting then w:leave(self) end
             -- An offline member stays in the group; the others see it change.
             if self.group then for _, member in ipairs(self.group.members) do if member ~= self then w:roster(member) end end end

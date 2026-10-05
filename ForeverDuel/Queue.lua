@@ -97,7 +97,7 @@ function Queue.ClassifyGroup(sample, peerGUID)
 end
 
 function Queue:New(env)
-    return setmetatable({ env = env, state = "IDLE", peers = {}, queried = {}, retryAt = {}, failures = {}, busy = {},
+    return setmetatable({ env = env, state = "IDLE", peers = {}, queried = {}, retryAt = {}, failures = {}, busy = {}, ended = {},
         blocked = FD.Copy(env.settings().blockedOpponents or {}), enteredAt = env.now(),
         reason = FD.L["Join the queue to find a rated duel."], lastQuery = -math.huge }, self)
 end
@@ -395,7 +395,8 @@ function Queue:SelectPeer()
             local eligible, code = self:Eligible(peer)
             if eligible then
                 if not self:SharedVenue(own, peer) then code = "NO_VENUE"
-                elseif age > T.PROFILE_FRESHNESS then code = "STALE"
+                elseif age > T.PROFILE_FRESHNESS or self.ended[guid] and self.ended[guid].session == peer.session then
+                    code = "STALE"
                 elseif (self.retryAt[guid] or 0) > now then code = "RETRY"
                 elseif self.busy[guid] and self.busy[guid].session == peer.session and self.busy[guid].untilAt > now then
                     code = "BUSY"
@@ -673,7 +674,8 @@ function Queue:ResolvePending(peer)
 end
 
 -- System notices about our own invitation (decline, unknown or grouped target).
--- BUSY: the adapter recognised the target as already grouped or invited.
+-- An adapter may report an already grouped or invited target as BUSY, which
+-- shows "already in another queue match"; INVITE_FAILED is handled alike.
 function Queue:SystemMessage(message)
     local t = self.ticket
     if self.state ~= "INVITING" or not t or type(self.env.inviteNotice) ~= "function" then return end
@@ -706,6 +708,9 @@ function Queue:Receive(p, sender)
         if p.joinedAt > self.env.epoch() + 2 or p.joinedAt < self.env.epoch() - 86400 then return end
         local old = self.peers[p.guid]
         if old and old.fullName ~= sender then return end
+        for guid, ended in pairs(self.ended) do
+            if now - ended.at >= T.PROFILE_RETENTION then self.ended[guid] = nil end
+        end
         local count = 0
         for guid, peer in pairs(self.peers) do
             if now - peer.lastSeen >= T.PROFILE_RETENTION then self.peers[guid], self.busy[guid] = nil, nil else count = count + 1 end
@@ -731,6 +736,10 @@ function Queue:Receive(p, sender)
     if p.kind == "OFFER" and not (t and t.id == p.ticket) then return self:ReceiveOffer(p, sender) end
     if not t or sender ~= t.peer.fullName or p.session ~= t.peerSession or p.peerSession ~= t.ownSession or p.ticket ~= t.id then return end
     t.lastPeerAt = now
+    -- The peer's client holds this ticket, so its session ends with it. Only
+    -- a coordinator can receive a CANCEL from a player that never bound the
+    -- ticket (an OFFER refused while searching).
+    if p.kind ~= "CANCEL" or not t.coordinator then t.peerHeard = true end
     if p.kind == "CANCEL" then return self:PeerCancel(p.reason) end
     local handler = self["On" .. p.kind]
     if handler then return handler(self, p, t) end
@@ -974,11 +983,16 @@ end
 -- INVITING (the invitee left the queue, a CANCEL, a timeout). Accepted then,
 -- it forms a group no match owns and both queues would pause for a solo
 -- character indefinitely. It is our own invitation: leave it, as CLEANUP would.
+-- That ended match's own CLEANUP does not leave a group it never owned; only a
+-- new match with the same player owns it.
 function Queue:VoidInvitation()
     local void = self.voidInvite
     if not void then return end
     local t = self.ticket
-    if self.env.now() >= void.untilAt or t and t.peer.guid == void.guid then self.voidInvite = nil; return end
+    if self.env.now() >= void.untilAt or t and t ~= void.ticket and t.peer.guid == void.guid then
+        self.voidInvite = nil
+        return
+    end
     if self:GroupState(void) == "EXACT" then
         self.voidInvite = nil
         self:Log("queue group", "leave", "void invitation")
@@ -1087,19 +1101,25 @@ function Queue:Finish(reason, options)
     if guid and verdict.retry then
         self.retryAt[guid] = now + T.RETRY_DELAY
         -- Repeated technical failures with one opponent stop looping invites.
-        -- An invitation that never reached a busy player (another searcher
-        -- invited it first) is no failure of this pair.
-        if reason ~= "BUSY" and reason ~= "INVITE_FAILED" then
-            self.failures[guid] = (self.failures[guid] or 0) + 1
-            if self.failures[guid] >= 3 then verdict.block, self.failures[guid] = true, nil end
-        elseif t.coordinator then
+        -- An invitation the server or the receiver refused because that
+        -- player is already grouped or invited (another searcher was faster)
+        -- is no failure of this pair.
+        if (reason == "BUSY" or reason == "INVITE_FAILED") and t.coordinator and t.inviteAt then
             -- That session is taken: a PROFILE it queued before it was invited
             -- can still arrive and must not trigger the same collision again.
             -- Its next search has a new session; an invitation lasts 60 s.
             self.busy[guid] = { session = t.peerSession, untilAt = now + T.INVITE }
+        else
+            self.failures[guid] = (self.failures[guid] or 0) + 1
+            if self.failures[guid] >= 3 then verdict.block, self.failures[guid] = true, nil end
         end
     end
     if guid and verdict.block then self:Block(guid) end
+    -- A PROFILE the peer sent before this match can still arrive over a slow
+    -- whisper path and look fresh: it must not pair us with that ended
+    -- session again (its player may have left the queue). It still lets the
+    -- peer's next invitation be recognised; its OFFER re-keys the ticket.
+    if guid and t.peerHeard then self.ended[guid] = { session = t.peerSession, at = now } end
     if verdict.cooldown then
         local s = FD.Copy(self:Settings()); s.cooldownUntil = self.env.epoch() + T.COOLDOWN; self.env.save(s)
     end
@@ -1115,7 +1135,7 @@ function Queue:Finish(reason, options)
     if not t then return self:End() end
     if from == "INVITED" and type(self.env.declineInvite) == "function" then self.env.declineInvite(t.peer) end
     if from == "INVITING" and t.inviteAt then
-        self.voidInvite = { guid = t.peer.guid, fullName = t.peer.fullName, untilAt = t.inviteAt + T.INVITE + 10 }
+        self.voidInvite = { guid = t.peer.guid, fullName = t.peer.fullName, untilAt = t.inviteAt + T.INVITE + 10, ticket = t }
     end
     t.leaveAt = now + T.LEAVE_DELAY
     if reason == "FINISHED" and not t.peerEnded then t.finishWaitUntil = now + T.RESULT_WAIT end

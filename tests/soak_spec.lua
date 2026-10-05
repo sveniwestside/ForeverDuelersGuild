@@ -111,13 +111,24 @@ return function(_, equal)
     eq(a.group, nil, "the group is left a moment later")
 
     -- S1 ---------------------------------------------------------------------
+    -- A crowded area: 36 players without the addon on the nameplates, every
+    -- sixth of them also in the ForeverDuel channel.
     scenario = "S1 ten idle minutes, zone window closed"
     w = newWorld()
     a, b = w:client(), w:client({ mapX = 0.51 })
     local c = w:client({ mapX = 0.49 })
+    local crowd = {}
+    for i = 1, 36 do
+        crowd[i] = w:stranger({ mapX = 0.48 + (i % 9) * 0.004, mapY = 0.29 + math.floor(i / 9) * 0.004, channel = i % 6 == 0 })
+    end
     local passer = w:stranger({ mapX = 0.505 })              -- visible and targeted, no addon
     local lurker = w:stranger({ channel = true, mapX = 0.6 }) -- in the channel, no addon
     a.target, b.target = passer, lurker
+    local discovered = w:wait(30, function()
+        for _, client in ipairs({ a, b, c }) do if #client.FD.Presence:GetPlayers() < 2 then return false end end
+        return true
+    end)
+    ok(discovered and discovered < 5, "all addon players discover each other within 5 s (" .. tostring(discovered) .. ")")
     w:advance(600)
     for _, client in ipairs({ a, b, c }) do
         local t = w:traffic(client)
@@ -130,10 +141,16 @@ return function(_, equal)
         eq((t.byKey[Q2 .. " WHISPER"] or 0) + (t.byKey[client.FD.C.PREFIX .. " WHISPER"] or 0), 0, client.name .. " idle: no queue or duel traffic")
         eq(t.recipients[passer.fullName], nil, client.name .. " never whispers a visible stranger")
         eq(t.recipients[lurker.fullName], nil, client.name .. " never whispers a channel member without the addon")
+        local toCrowd = 0
+        for _, stranger in ipairs(crowd) do toCrowd = toCrowd + (t.recipients[stranger.fullName] or 0) end
+        eq(toCrowd, 0, client.name .. " never whispers anyone in the crowd")
         eq(#client.FD.Database.data.matches, 0, client.name .. " has no history change")
         eq(client.FD.Database:GetStats().rating, 1500, client.name .. " has no rating change")
     end
     eq(#passer.received, 0, "a stranger outside the channel receives nothing")
+    for _, stranger in ipairs(crowd) do
+        for _, entry in ipairs(stranger.received) do eq(entry.channel, "CHANNEL", "the crowd only sees channel broadcasts") end
+    end
     for _, entry in ipairs(lurker.received) do eq(entry.channel, "CHANNEL", "the channel lurker only sees channel broadcasts") end
     healthy(w, { a, b, c })
 
@@ -268,9 +285,12 @@ return function(_, equal)
     healthy(w, all)
 
     -- S5 ---------------------------------------------------------------------
-    for _, leaver in ipairs({ "invitee", "coordinator" }) do
-        scenario = "S5 " .. leaver .. " logs out mid-TRAVELLING"
-        w = newWorld({ whisperLatency = 2, partyLatency = 0.5, channelLatency = 0.5 })
+    -- offline: the client refuses whispers to an offline player at once
+    -- (TargetOffline) instead of the server's "No player named" line.
+    for _, case in ipairs({ { "invitee" }, { "coordinator" }, { "invitee", 12 } }) do
+        local leaver, offline = case[1], case[2]
+        scenario = "S5 " .. leaver .. " logs out mid-TRAVELLING" .. (offline and ", TargetOffline" or "")
+        w = newWorld({ whisperLatency = 2, partyLatency = 0.5, channelLatency = 0.5, offlineResult = offline })
         a, b = w:client({ mapX = 0.40 }), w:client({ mapX = 0.60 })
         w:venue({ a, b })
         w:advance(10)
@@ -298,11 +318,36 @@ return function(_, equal)
             if stay.sent[index].target == gone.fullName then toGone = toGone + 1 end
         end
         ok(toGone <= 2, "the offline player is not whispered again and again (" .. toGone .. ")")
+        eq(stay.FD.queue:PeerNamed(gone.fullName), nil, "the queue forgot the offline player's profile")
+        eq(stay.FD.Presence.players[gone.fullName], nil, "discovery forgot the offline player")
         local late = 0
         for _, record in ipairs(gone.sent) do if record.at > logoutAt then late = late + 1 end end
         eq(late, 0, "nothing is sent after the logout")
         healthy(w, { a, b })
     end
+
+    -- A logout in the middle of the queue's rated duel: the player fled, the
+    -- duel is no longer rated and both engines return to IDLE.
+    scenario = "S5 logout mid-duel"
+    w = newWorld({ whisperLatency = 2, partyLatency = 0.5, channelLatency = 0.5 })
+    a, b = w:client({ mapX = 0.5 }), w:client({ mapX = 0.502 })
+    w:venue({ a, b })
+    w:advance(10)
+    a:command("queue join"); b:command("queue join")
+    ok(w:wait(60, function() return a:state() == "READY" and b:state() == "READY" end), "READY")
+    eq(a:requestDuel(), true, "the coordinator requests the duel")
+    ok(w:wait(30, function() return a:duelState() == "READY" and b:duelState() == "READY" end), "rated discovery")
+    a:clickRated(); b:clickRated()
+    ok(w:wait(30, function() return a:duelState() == "IN_PROGRESS" and b:duelState() == "IN_PROGRESS" end), "the duel runs")
+    w:advance(3)
+    b:logout()
+    ok(w:wait(10, function() return a:duelState() == "IDLE" and a:state() == "IDLE" end), "duel and queue return to IDLE")
+    ok(printed(a, "This duel is no longer rated"), "the player is told the duel is no longer rated")
+    ok(w:wait(10, function() return a.group == nil end), "the queue group is left")
+    w:advance(60)
+    eq(#a.FD.Database.data.matches, 0, "no history for a duel the opponent fled by logging out")
+    eq(a.FD.Database:GetStats().rating, 1500, "no rating change")
+    healthy(w, { a, b })
 
     -- S6 ---------------------------------------------------------------------
     for _, side in ipairs({ "coordinator", "invitee" }) do
@@ -345,22 +390,77 @@ return function(_, equal)
         healthy(w, { a, b }, { [victim] = 1 })
     end
 
-    -- Regression: a void queue invitation accepted after the match ended. The
-    -- invitee leaves the queue while the coordinator's invitation is on its
-    -- way; its player still presses Accept in Blizzard's dialog.
-    scenario = "void invitation accepted late"
-    w = newWorld({ whisperLatency = 2, partyLatency = 0.5, channelLatency = 0.5 })
-    a = w:client({ mapX = 0.49 })
-    local d = w:client({ mapX = 0.51, acceptDelay = 4 })
-    w:venue({ a, d })
+    -- Regression: a quick match under the delay line. PROFILEs the opponent
+    -- sent while it was still searching arrive during the match and look
+    -- fresh afterwards; they must not pair the coordinator with that ended
+    -- session (here its player left the queue) and invite it again.
+    scenario = "stale profile after a quick match"
+    w = newWorld({ whisperLatency = 30, partyLatency = 0.5, channelLatency = 1 })
+    a, b = w:client({ mapX = 0.5 }), w:client({ mapX = 0.502 })
+    w:venue({ a, b })
     w:advance(10)
-    d:command("queue join"); a:command("queue join")
-    ok(w:wait(30, function() return a:state() == "INVITING" end, 0.05), "the coordinator invites")
-    d:command("queue leave")
-    ok(w:wait(10, function() return d.group ~= nil end), "the void invitation was accepted in Blizzard's dialog")
-    ok(w:wait(10, function() return a.group == nil and d.group == nil end), "the coordinator leaves the group nobody's match owns")
-    w:advance(10)
-    eq(a:state(), "SEARCHING", "the coordinator keeps searching instead of pausing for a solo character")
-    ok(lifecycle(a, "queue group", "void invitation"), "the leave is recorded")
-    healthy(w, { a, d })
+    a:command("queue join"); b:command("queue join")
+    ok(w:wait(120, function() return a:state() == "READY" and b:state() == "READY" end), "READY at the meeting place")
+    local oldSession = b.FD.queue.session
+    eq(a:requestDuel(), true, "the coordinator requests the duel")
+    ratedDuel(w, a, b)
+    ok(w:wait(30, function() return a:state() == "IDLE" and b:state() == "IDLE" and not a.group and not b.group end),
+        "the match ends")
+    local ended = w.now
+    a:command("queue join")
+    w:advance(60)
+    local late = 0
+    for _, entry in ipairs(a.received) do
+        local p = entry.prefix == Q2 and a.FD.QueueProtocol:Decode(entry.payload)
+        if p and p.kind == "PROFILE" and p.session == oldSession and entry.at > ended then late = late + 1 end
+    end
+    ok(late > 0, "PROFILEs of the opponent's ended session arrived after the match (" .. late .. ")")
+    eq(a.invites, 1, "the coordinator never invites the ended session again")
+    eq(b.inviteEvents, 1, "the player who left the queue sees no second invitation")
+    eq(a:state(), "SEARCHING", "the coordinator keeps searching")
+    eq(b.group, nil, "nobody is grouped by a void invitation")
+    b:command("queue join")
+    local again = w:wait(120, function() return a:state() == "TRAVELLING" or a:state() == "READY" end)
+    ok(again and again < 75, "a new search session pairs the two again within two whisper delays (" .. tostring(again) .. ")")
+    eq(a.FD.queue.ticket and a.FD.queue.ticket.peerSession, b.FD.queue.session, "with the opponent's new session")
+    healthy(w, { a, b })
+
+    -- Regression: void queue invitations. The invitee leaves the queue while
+    -- the coordinator's invitation is on its way; its player still presses
+    -- Accept in Blizzard's dialog: after the coordinator heard the LEAVE, while
+    -- the coordinator rescinds an invitation it shows as a one-member group,
+    -- or before the LEAVE arrives (the coordinator then holds the group until
+    -- its GROUPING limit: no client of that session can bind it). A player
+    -- who rejoins at once still gets the match: its new session re-keys it.
+    for _, case in ipairs({
+        { when = "late", accept = 4, within = 8, leave = "void invitation" },
+        { when = "while it is rescinded", accept = 1.8, within = 8, leave = "void invitation", pendingGroup = true },
+        { when = "before the LEAVE arrives", accept = 0.2, within = 50, leave = "CLEANUP" },
+        { when = "after rejoining at once", accept = 0.2, rejoin = true },
+    }) do
+        scenario = "void invitation accepted " .. case.when
+        w = newWorld({ whisperLatency = 2, partyLatency = 0.5, channelLatency = 0.5 })
+        a = w:client({ mapX = 0.49, pendingInviterGroup = case.pendingGroup })
+        local d = w:client({ mapX = 0.51, acceptDelay = case.accept })
+        w:venue({ a, d })
+        w:advance(10)
+        d:command("queue join"); a:command("queue join")
+        ok(w:wait(30, function() return a:state() == "INVITING" end, 0.05), "the coordinator invites")
+        d:command("queue leave")
+        if case.rejoin then w:advance(0.1); d:command("queue join") end
+        ok(w:wait(10, function() return d.group ~= nil end, 0.05), "the invitation was accepted in Blizzard's dialog")
+        if case.rejoin then
+            ok(w:wait(20, function() return a:state() == "TRAVELLING" and d:state() == "TRAVELLING" end),
+                "the rejoined player's new session takes the match")
+            eq(a.FD.queue.cancel, nil, "the coordinator never cancels")
+        else
+            local left = w:wait(60, function() return a.group == nil and d.group == nil end, 0.1)
+            ok(left and left <= case.within, "the coordinator leaves the group nobody's match owns (" .. tostring(left) .. " s)")
+            w:advance(10)
+            eq(a:state(), "SEARCHING", "the coordinator keeps searching instead of pausing for a solo character")
+            eq(d:state(), "IDLE", "the player who left stays out of the queue")
+            ok(lifecycle(a, "queue group", case.leave), "the leave is recorded (" .. case.leave .. ")")
+        end
+        healthy(w, { a, d })
+    end
 end
