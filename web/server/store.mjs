@@ -45,15 +45,20 @@ function validateSerializable(value, depth = 0, budget = { remaining: 3000 }) {
   }
 }
 
+// Addon rated protocol -> match ID prefix (Protocol:MatchID uses the wire
+// version): 0.5.x records are protocol 2 / FD2, 0.6 records protocol 3 / FD3.
+const MATCH_WIRE = new Map([[2, 'FD2'], [3, 'FD3']]);
+
 export function validateRecord(record, guid) {
-  if (!isObject(record) || record.schemaVersion !== 2 || record.protocolVersion !== 2) fail('unsupported_record_version');
+  const wire = isObject(record) ? MATCH_WIRE.get(record.protocolVersion) : undefined;
+  if (!isObject(record) || record.schemaVersion !== 2 || !wire) fail('unsupported_record_version');
   validateSerializable(record);
   const player = validateIdentity(record.player), opponent = validateIdentity(record.opponent);
   if (player.guid !== guid || player.guid === opponent.guid) fail('invalid_reporter');
   const parts = typeof record.matchId === 'string' ? record.matchId.split(':') : [];
   const participants = [player.guid, opponent.guid].sort();
   const validNonce = (value) => typeof value === 'string' && value.length >= 1 && value.length <= 48 && /^[a-f0-9.-]+$/u.test(value) && /[a-f0-9]/u.test(value);
-  if (parts.length !== 5 || parts[0] !== 'FD2' || parts[1] !== participants[0] || parts[3] !== participants[1] || !validNonce(parts[2]) || !validNonce(parts[4])) fail('invalid_match_id');
+  if (parts.length !== 5 || parts[0] !== wire || parts[1] !== participants[0] || parts[3] !== participants[1] || !validNonce(parts[2]) || !validNonce(parts[4])) fail('invalid_match_id');
   const bracket = player.level === player.maxLevel ? 'MAX_LEVEL' : 'LEVELING';
   if (player.maxLevel !== opponent.maxLevel || (opponent.level === opponent.maxLevel ? 'MAX_LEVEL' : 'LEVELING') !== bracket
     || record.bracket !== bracket || Math.abs(player.level - opponent.level) > 5) fail('ineligible_bracket');

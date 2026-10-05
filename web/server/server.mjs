@@ -1,4 +1,5 @@
 import { createServer as createHttpServer } from 'node:http';
+import { readFileSync } from 'node:fs';
 import { readFile, realpath, stat } from 'node:fs/promises';
 import { dirname, extname, isAbsolute, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -6,6 +7,17 @@ import { ApiError, CLASSES, createStore } from './store.mjs';
 import { createBlizzardClient, MEDIA_HOSTS } from './blizzard.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
+// The advertised addon version: ADDON_VERSION, else the TOC of the addon in
+// this repository; never a literal that drifts from the addon.
+function addonVersion() {
+  const configured = process.env.ADDON_VERSION ?? '';
+  if (/^\d+\.\d+\.\d+$/u.test(configured)) return configured;
+  try {
+    const toc = readFileSync(resolve(here, '../../ForeverDuel/ForeverDuel.toc'), 'utf8');
+    return toc.match(/^## Version:\s*(\d+\.\d+\.\d+)\s*$/mu)?.[1] ?? null;
+  } catch { return null; }
+}
+export const ADDON_VERSION = addonVersion();
 const MAX_BODY = 2 * 1024 * 1024;
 const TYPES = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
   '.mjs': 'text/javascript; charset=utf-8', '.json': 'application/json; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png',
@@ -81,7 +93,7 @@ export function createServer({ store, publicDir = resolve(here, '../public'), lo
       }
       if (req.method === 'GET') {
         if (path === '/health') return json(res, 200, { status: 'ok' });
-        if (path === '/api/v1/config') return json(res, 200, { name: 'ForeverDuelersGuild', version: '0.1.0', addonVersion: '0.4.5', demo: store.demo, initialRating: 1500, rulesetId: store.rulesetId });
+        if (path === '/api/v1/config') return json(res, 200, { name: 'ForeverDuelersGuild', version: '0.1.0', addonVersion: ADDON_VERSION, demo: store.demo, initialRating: 1500, rulesetId: store.rulesetId });
         if (path === '/api/v1/stats') return json(res, 200, store.stats());
         if (path === '/api/v1/integrations/blizzard') return json(res, 200, blizzard.status());
         if (path === '/api/v1/ladder') return json(res, 200, store.ladder(options(url.searchParams, 20, true)));

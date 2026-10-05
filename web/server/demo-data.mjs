@@ -1,11 +1,11 @@
 import { ratingTransfer } from './store.mjs';
 
-export function makeReportPair(player, opponent, { index = 1, endedAt = 1791100800 + index * 300, winnerGuid = player.guid, ratingA = 1500, ratingB = 1500 } = {}) {
+export function makeReportPair(player, opponent, { index = 1, endedAt = 1791100800 + index * 300, winnerGuid = player.guid, ratingA = 1500, ratingB = 1500, protocolVersion = 2 } = {}) {
   const participants = [player.guid, opponent.guid].sort(), nonce = index.toString(16);
-  const matchId = `FD2:${participants[0]}:${nonce}.a:${participants[1]}:${nonce}.b`;
+  const matchId = `FD${protocolVersion}:${participants[0]}:${nonce}.a:${participants[1]}:${nonce}.b`;
   const won = winnerGuid === player.guid;
   const transfer = won ? ratingTransfer(ratingA, ratingB, player.level, opponent.level) : ratingTransfer(ratingB, ratingA, opponent.level, player.level);
-  const record = (local, peer, localWon, rating, peerRating) => ({ schemaVersion: 2, protocolVersion: 2, addonVersion: '0.4.5',
+  const record = (local, peer, localWon, rating, peerRating) => ({ schemaVersion: 2, protocolVersion, addonVersion: protocolVersion === 3 ? '0.6.0' : '0.4.5',
     bracket: local.level === local.maxLevel ? 'MAX_LEVEL' : 'LEVELING', matchId, player: { ...local }, opponent: { ...peer },
     startedAt: endedAt - 65, endedAt, countdownAt: endedAt - 68, confirmedAt: endedAt - 72,
     startSource: 'localized-countdown-plus-timer', resultSource: 'synthetic-demo', winnerGUID: winnerGuid,

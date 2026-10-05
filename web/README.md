@@ -23,7 +23,7 @@ The static preview has no import API. Running `npm start` uses the separate SQLi
 npm start
 ```
 
-The real local API is at <http://localhost:8787>. It starts with an empty ladder. SQLite files persist under `web/data/`; they are excluded from source control. `HOST`, `PORT` and `DB_PATH` can override the defaults through environment variables or `web/.env`. The npm start, demo and manage commands load that optional file automatically. Both the design preview and the backend bind to `127.0.0.1` by default.
+The real local API is at <http://localhost:8787>. It starts with an empty ladder. SQLite files persist under `web/data/`; they are excluded from source control. `HOST`, `PORT` and `DB_PATH` can override the defaults through environment variables or `web/.env`. The advertised addon version comes from `ForeverDuel/ForeverDuel.toc`, or from `ADDON_VERSION`. The npm start, demo and manage commands load that optional file automatically. Both the design preview and the backend bind to `127.0.0.1` by default.
 
 `npm run demo` starts a separately stored, read-only backend demo on port 8787; stop the ordinary backend first. This is independent of the design-only `?preview=1` data.
 
@@ -41,7 +41,7 @@ Convert a character's SavedVariables file to an import file from the repository 
 python tools/export-history.py "C:\path\to\SavedVariables\ForeverDuel.lua" --output web/exports/history.json
 ```
 
-Reload or log out normally before reading the saved file. The exporter parses only data, never executes Lua, omits settings and Legacy history, and rejects unsupported schemas. It never changes the source. Larger histories are split into files of at most 200 reports. The website's live import dialog takes one JSON file and its character token.
+Reload or log out normally before reading the saved file. The exporter parses only data, never executes Lua, omits settings and Legacy history, and rejects unsupported schemas. It never changes the source. Rated records of 0.5.x (protocol 2, match IDs `FD2:...`) and 0.6 (protocol 3, `FD3:...`) are both accepted. Larger histories are split into files of at most 200 reports. The website's live import dialog takes one JSON file and its character token.
 
 An initial participant report is pending. A compatible opposite report confirms the match; disagreement makes it disputed. Re-importing the same report is safe. Changed reports are rejected. Only confirmed matches contribute to the central ladder. The backend recalculates its own Elo from 1500 in chronological order, separately by mode and level cap. Importing older matches can therefore change subsequent central ratings. These web ratings are independent of the addon's local ratings.
 

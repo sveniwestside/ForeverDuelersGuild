@@ -92,6 +92,20 @@ test('same-time matches replay by match ID and all mirrored snapshots must agree
   } finally { ordered.close(); reversed.close(); disputed.close(); }
 });
 
+test('0.6 records (protocol 3, FD3 match IDs) import like 0.5 records', () => {
+  const store = createStore();
+  try {
+    const [left, right] = makeReportPair(a, b, { protocolVersion: 3 });
+    assert.ok(left.matchId.startsWith('FD3:'));
+    assert.equal(upload(store, left).results[0].status, 'pending');
+    assert.equal(upload(store, right).results[0].status, 'confirmed');
+    for (const change of [(r) => { r.matchId = r.matchId.replace(/^FD3:/u, 'FD2:'); }, (r) => { r.protocolVersion = 4; },
+      (r) => { r.protocolVersion = '3'; }]) {
+      const record = makeReportPair(a, b, { protocolVersion: 3, index: 2 })[0]; change(record); rejected(() => upload(store, record), 400);
+    }
+  } finally { store.close(); }
+});
+
 test('client evidence, versions, match identity and eligible levels are required', () => {
   const store = createStore();
   try {
@@ -149,7 +163,10 @@ test('HTTP API protects uploads, validates queries, returns JSON errors and secu
   const post = (body, bearer = token, headers = {}) => fetch(`${base}/api/v1/import`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${bearer}`, ...headers }, body: JSON.stringify(body) });
   try {
     const config = await fetch(`${base}/api/v1/config`); assert.equal(config.status, 200);
-    assert.equal((await config.json()).demo, false); assert.ok(config.headers.get('content-security-policy').includes("script-src 'self'"));
+    const configBody = await config.json(); assert.equal(configBody.demo, false);
+    const toc = readFileSync(new URL('../../ForeverDuel/ForeverDuel.toc', import.meta.url), 'utf8');
+    assert.equal(configBody.addonVersion, toc.match(/^## Version:\s*(\S+)/mu)[1], 'the site advertises the addon version of this repository');
+    assert.ok(config.headers.get('content-security-policy').includes("script-src 'self'"));
     assert.equal(config.headers.get('access-control-allow-origin'), null);
     assert.deepEqual(await (await fetch(`${base}/health`)).json(), { status: 'ok' });
     assert.equal((await fetch(`${base}/api/v1/ladder?limit=101`)).status, 400);

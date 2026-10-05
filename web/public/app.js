@@ -781,7 +781,7 @@ async function loadMeta() {
     const config = results[0].value;
     $('#demo-banner').hidden = preview || !config.demo;
     $('#initial-rating').textContent = number.format(config.initialRating || 1500);
-    $$('[data-addon-version]').forEach(node => { node.textContent = config.addonVersion || '0.4.5'; });
+    $$('[data-addon-version]').forEach(node => { node.textContent = config.addonVersion || node.textContent; });
   }
   if (results[1].status === 'fulfilled') {
     const stats = results[1].value;
