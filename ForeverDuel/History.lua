@@ -63,14 +63,9 @@ function History:Details(matchId)
     local match = self:Get(matchId)
     if not match then return nil end
     local won = match.result == "WIN"
-    -- Legacy results predate level weighting. The peer's rating is always a
-    -- projection from saved snapshots, never a verified peer account balance.
-    local opponentLevel, playerLevel
-    if match.bracket ~= "LEGACY" then
-        opponentLevel, playerLevel = match.opponent.level, match.player.level
-    end
-    local opponentAfter, opponentDelta = FD.Rating:Calculate(
-        match.opponentRatingBefore, match.ratingBefore, not won, opponentLevel, playerLevel)
+    -- A rating change is a transfer, so the peer's change is the stored one
+    -- reversed. It is a projection from saved snapshots, never a verified peer
+    -- account balance, and never recalculated with today's rules.
     return {
         match = match,
         duration = match.endedAt - match.startedAt,
@@ -80,25 +75,23 @@ function History:Details(matchId)
         playerRatingAfter = match.ratingAfter,
         playerRatingDelta = match.ratingDelta,
         opponentRatingBefore = match.opponentRatingBefore,
-        opponentRatingAfter = opponentAfter,
-        opponentRatingDelta = opponentDelta,
+        opponentRatingAfter = match.opponentRatingBefore - match.ratingDelta,
+        opponentRatingDelta = -match.ratingDelta,
         opponentRatingSource = "calculated",
     }
 end
 
 function History:Overview(bracket)
     bracket = currentBracket(bracket)
-    local initialRating = FD.Rating:GetInitialRating()
-    local result = {
-        bracket = bracket, rating = initialRating, wins = 0, losses = 0, total = 0,
-        peakRating = initialRating, streakCount = 0,
-    }
+    local result = { bracket = bracket, rating = FD.Rating:GetInitialRating(), wins = 0, losses = 0, total = 0, streakCount = 0 }
     local stats = FD.Database:GetStats(bracket)
-    if not stats then return result end
-    local matches = matchesFor(bracket)
-    result.rating, result.wins, result.losses = stats.rating, stats.wins, stats.losses
+    if stats then result.rating, result.wins, result.losses = stats.rating, stats.wins, stats.losses end
+    -- Each chain starts at its own stored initial rating, so the peak comes
+    -- from the ledger rather than from today's INITIAL_RATING.
+    result.peakRating = result.rating
     result.total = result.wins + result.losses
     if result.total > 0 then result.winRate = result.wins / result.total * 100 end
+    local matches = matchesFor(bracket)
     for _, match in ipairs(matches) do
         result.peakRating = math.max(result.peakRating, match.ratingBefore, match.ratingAfter)
     end

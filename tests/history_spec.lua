@@ -315,4 +315,25 @@ return function(FD, equal)
     commit("new-win", true)
     equal(FD.History:Series()[2].matchId, "new-win", "fresh pool chart starts with a fresh result")
     equal(FD.History:Series("LEGACY").total, 2, "fresh duels leave archived progression unchanged")
+    -- Details and overview read stored values, never today's rules.
+    player.level, opponent.level = 50, 55
+    FD.Database:Reset(player)
+    commit("stored-transfer", true)
+    local storedDelta = FD.History:Get("stored-transfer").ratingDelta
+    FD.C.K_FACTOR, FD.C.LEVEL_RATING_WEIGHT = 10, 0
+    details = FD.History:Details("stored-transfer")
+    equal(details.playerRatingDelta, storedDelta, "player change is the stored change after K changed")
+    equal(details.opponentRatingDelta, -storedDelta, "opponent projection reverses the stored change after K changed")
+    equal(details.opponentRatingAfter, details.opponentRatingBefore - storedDelta, "opponent after-rating from the stored change")
+    FD.C.K_FACTOR, FD.C.LEVEL_RATING_WEIGHT = 32, 20
+    opponent.level = 50
+    FD.Database:Reset(player)
+    commit("only-loss", false)
+    FD.C.INITIAL_RATING = 1600
+    overview = FD.History:Overview()
+    equal(overview.peakRating, 1500, "peak comes from the stored chain, not today's initial rating")
+    -- Guards: these already read stored values and must keep doing so.
+    equal(overview.rating, 1484, "overview rating stays the stored pool rating")
+    equal(FD.History:Series()[1].rating, 1500, "chart baseline stays the first stored rating")
+    FD.C.INITIAL_RATING = 1500
 end
