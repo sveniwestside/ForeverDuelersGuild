@@ -36,7 +36,10 @@ _Review-driven rework. Simulated in the test suites; the live two-client run ([M
 - Invite-first pairing: the player with the lower character GUID sends the group invitation at once, and Blizzard's invitation is the pairing step. Optional auto-accept for the matched opponent (`/duelrating queue autoaccept on`). Declined, busy and expired invitations are recognized.
 - Matches use only tested places that both players have. The meeting place is confirmed, or rejected and re-planned. Travel status is exchanged every 3 s over the group, both clients become ready together, and only the inviter requests the duel.
 - Every cancellation names its reason, also when it came from the opponent's client. Technical problems requeue you with your waiting time kept. A decision pauses only that pairing for 2 minutes. A missed arrival is judged from your own position.
-- Leaving the queue, logging out or reloading tells the opponent at once. A **Leave group** button handles a leftover queue group.
+- Leaving the queue, logging out or reloading tells the opponent at once; a reload while searching also tells recently seen queue players. A client that is no longer queued refuses a late group invitation's match at once, so the inviter does not wait 45 s for it. A **Leave group** button handles a leftover queue group; it follows the roster while the window is open, and leaving the search keeps its advisory.
+- A pair that grouped before it could re-key its sessions exchanges its profiles over the group, so slow whispers no longer make the inviter give up after 45 s.
+- A group the two players form by hand after a declined or refused queue invitation is no longer left automatically.
+- A player whose own group or pending invitation made the server refuse the queue invitation is told that the invitation could not be sent, instead of being told that the opponent is in another match.
 - A shared tested place counts as saved on both clients only after the partner's client confirms it. Duplicate records of one spot are merged.
 
 ### Discovery

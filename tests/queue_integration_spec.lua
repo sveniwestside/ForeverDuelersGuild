@@ -180,6 +180,22 @@ return function(_, equal)
         equal(a.accepts, 0, change .. " cancellation cannot grant native duel acceptance")
         equal(#a.FD.Database.data.matches, 0, change .. " cancellation cannot write rating history")
         equal(a.FD.QueueWow:Settings().cooldownUntil, 0, change .. " is technical, without a no-show pause")
+        if change == "third member" then
+            local status = a.FD.queue:GetStatus()
+            equal(status.cleanupStatus ~= nil, true, "the leftover group is advised")
+            equal(status.groupAction, false, "no Leave group while a third player is in the group")
+            a:command("queue leave")
+            equal(a.FD.queue.state, "IDLE", "leaving the paused search")
+            equal(a.FD.queue:GetStatus().cleanupStatus ~= nil, true, "leaving the search keeps the leftover-group advisory")
+            local refreshes = 0
+            a.FD.QueueUI.RefreshIfShown = function() refreshes = refreshes + 1 end
+            table.remove(a.group.members, 3)
+            stranger.group = nil
+            w:roster(a)
+            w:advance(0.5)
+            equal(refreshes > 0, true, "the roster change refreshes the queue window at once")
+            equal(a.FD.queue:GetStatus().groupAction, true, "Leave group is offered once only the queue pair remains")
+        end
     end
 
     w = newWorld()

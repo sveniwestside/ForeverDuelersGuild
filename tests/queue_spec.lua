@@ -275,6 +275,7 @@ return function(_, equal, newNamespace)
                 inviteNotice = function(message, peer)
                     if message == "DECLINED:" .. peer.fullName then return "DECLINED" end
                     if message == "FAILED:" .. peer.fullName then return "INVITE_FAILED" end
+                    if message == "BUSY:" .. peer.fullName then return "BUSY" end
                 end,
                 leave = function()
                     c.leaves = c.leaves + 1
@@ -803,6 +804,25 @@ return function(_, equal, newNamespace)
     eq(loser.queue.state, "SEARCHING", "the coordinator searches again at once")
     eq(loser.queue.blocked[w.c.profile.guid], nil, "BUSY never blocks the pair")
     eq(w.c.queue.ticket.peer.guid ~= loser.profile.guid, true, "the invitee keeps its first match")
+    w:noRatings()
+
+    scenario = "a server BUSY notice reads as an invitation failure on the invitee"
+    -- The invitee bound the ticket through the OFFER, but the server refuses
+    -- the invitation because the invitee is grouped or invited elsewhere.
+    w = world({ players = { [2] = { inviteResponse = "ignore" } } })
+    w:join()
+    w:reach("INVITED", 15, { w.b })
+    eq(w.a.queue.state, "INVITING", "the coordinator invites")
+    w.a.queue:Run(function() w.a.queue:SystemMessage("BUSY:" .. w.b.profile.fullName) end)
+    eq(w.a.queue.cancel and w.a.queue.cancel.reason, "BUSY", "the coordinator keeps its local BUSY")
+    eq(w.a.queue.busy[w.b.profile.guid] ~= nil, true, "and its busy bookkeeping")
+    w:advance(2)
+    local wire
+    for _, m in ipairs(w.sent) do if m.from == w.a and m.kind == "CANCEL" then wire = m.reason end end
+    eq(wire, "INVITE_FAILED", "the CANCEL tells the invitee that the invitation failed")
+    eq(w.b.queue.cancel and w.b.queue.cancel.reason, "INVITE_FAILED", "the invitee reads an invitation failure")
+    eq(w.b.queue.cancel.text:find("already in another queue match", 1, true), nil,
+        "the invitee is never told that its opponent is in another match")
     w:noRatings()
 
     scenario = "best coordinatable candidate is offered"

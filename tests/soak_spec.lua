@@ -429,24 +429,42 @@ return function(_, equal)
     -- the coordinator's invitation is on its way; its player still presses
     -- Accept in Blizzard's dialog: after the coordinator heard the LEAVE, while
     -- the coordinator rescinds an invitation it shows as a one-member group,
-    -- or before the LEAVE arrives (the coordinator then holds the group until
-    -- its GROUPING limit: no client of that session can bind it). A player
-    -- who rejoins at once still gets the match: its new session re-keys it.
+    -- or before the LEAVE arrives (the idle client refuses the coordinator's
+    -- PARTY OFFER with CANCEL(CANCELLED), so the coordinator does not hold the
+    -- group until its GROUPING limit). A reload while searching sends LEAVE
+    -- synchronously; under a slow whisper path the PARTY refusal is faster.
+    -- A player who rejoins at once still gets the match: its new session re-keys it,
+    -- also under the live 30 s whisper delay (PROFILEs of the grouped pair
+    -- travel over PARTY).
     for _, case in ipairs({
         { when = "late", accept = 4, within = 8, leave = "void invitation" },
         { when = "while it is rescinded", accept = 1.8, within = 8, leave = "void invitation", pendingGroup = true },
-        { when = "before the LEAVE arrives", accept = 0.2, within = 50, leave = "CLEANUP" },
+        { when = "before the LEAVE arrives", accept = 0.2, within = 10, leave = "CLEANUP" },
+        { when = "after a reload under a 30 s whisper delay", accept = 0.2, within = 12, leave = "CLEANUP",
+            reload = true, whisper = 30 },
         { when = "after rejoining at once", accept = 0.2, rejoin = true },
+        { when = "after rejoining at once under a 30 s whisper delay", accept = 0.2, rejoin = true, whisper = 30 },
     }) do
         scenario = "void invitation accepted " .. case.when
-        w = newWorld({ whisperLatency = 2, partyLatency = 0.5, channelLatency = 0.5 })
+        w = newWorld({ whisperLatency = case.whisper or 2, partyLatency = 0.5, channelLatency = 0.5 })
         a = w:client({ mapX = 0.49, pendingInviterGroup = case.pendingGroup })
         local d = w:client({ mapX = 0.51, acceptDelay = case.accept })
         w:venue({ a, d })
         w:advance(10)
         d:command("queue join"); a:command("queue join")
-        ok(w:wait(30, function() return a:state() == "INVITING" end, 0.05), "the coordinator invites")
-        d:command("queue leave")
+        ok(w:wait(30 + (case.whisper or 0), function() return a:state() == "INVITING" end, 0.05), "the coordinator invites")
+        if case.reload then
+            -- /reload: PLAYER_LOGOUT, then a fresh queue engine without a session.
+            local sent = #d.sent
+            d:emit("PLAYER_LOGOUT")
+            local leaves = 0
+            for index = sent + 1, #d.sent do
+                local p = d.sent[index].prefix == Q2 and d.FD.QueueProtocol:Decode(d.sent[index].payload)
+                if p and p.kind == "LEAVE" then leaves = leaves + 1 end
+            end
+            eq(leaves, 1, "the reload sends LEAVE to the fresh peer at once")
+            d.FD.queue = d.FD.Queue:New(d.FD.QueueWow:Environment())
+        else d:command("queue leave") end
         if case.rejoin then w:advance(0.1); d:command("queue join") end
         ok(w:wait(10, function() return d.group ~= nil end, 0.05), "the invitation was accepted in Blizzard's dialog")
         if case.rejoin then
@@ -463,4 +481,25 @@ return function(_, equal)
         end
         healthy(w, { a, d })
     end
+
+    -- Regression: a declined queue invitation is closed by the server
+    -- (ERR_DECLINE_GROUP_S). A group the two players then form by hand is
+    -- theirs: the void-invitation guard must not leave it.
+    scenario = "declined, then grouped by hand"
+    w = newWorld({ whisperLatency = 0.5, partyLatency = 0.5, channelLatency = 0.5 })
+    a = w:client({ mapX = 0.49 })
+    local d = w:client({ mapX = 0.51, inviteResponse = "decline", acceptDelay = 2 })
+    w:venue({ a, d })
+    w:advance(10)
+    d:command("queue join"); a:command("queue join")
+    ok(w:wait(40, function() return a.FD.queue.cancel ~= nil end, 0.1), "the queue invitation ends")
+    eq(a.FD.queue.cancel.reason, "DECLINED", "as declined")
+    eq(a.FD.queue.voidInvite, nil, "a closed invitation leaves no void guard")
+    w:advance(3)
+    d.options.inviteResponse = "accept"
+    a.env.C_PartyInfo.InviteUnit(d.fullName)
+    ok(w:wait(10, function() return a.group ~= nil and d.group ~= nil end, 0.05), "the players group by hand")
+    w:advance(15)
+    eq(a.leaves, 0, "the manual group is never left automatically")
+    ok(a.group ~= nil and d.group ~= nil, "the manual group stays")
 end

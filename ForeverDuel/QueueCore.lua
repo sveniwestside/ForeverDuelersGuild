@@ -67,7 +67,12 @@ end, false, true)
 -- keep their one-second sampling pulse.
 local ROSTER_STATES = { INVITING = true, INVITED = true, CLEANUP = true }
 FD:OnEvent("GROUP_ROSTER_UPDATE", function()
-    run(function() if ROSTER_STATES[FD.queue.state] then FD.queue:Tick() end end)
+    run(function()
+        if ROSTER_STATES[FD.queue.state] then FD.queue:Tick() end
+        -- A leftover queue pair group can become exactly the pair again (the
+        -- Leave group button) or dissolve (the advisory) in any state.
+        if FD.queue.lastPair then FD.QueueUI:RefreshIfShown() end
+    end)
 end, false, true)
 
 local REJECTIONS = {

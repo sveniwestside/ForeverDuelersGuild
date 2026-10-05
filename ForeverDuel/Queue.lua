@@ -627,12 +627,32 @@ function Queue:ResolveInvite(peer, native)
         and offer.packet.session or peer.session, native)
 end
 
-function Queue:ReceiveOffer(p, sender)
-    if not self.session or p.ticket ~= p.session .. "." .. p.peerSession then return end
+-- Refuses an OFFER for a session that is gone: we left the queue (or
+-- reloaded) while its invitation was on its way, or we already hold another
+-- player's ticket. The coordinator would otherwise hold an accepted group
+-- until its GROUPING limit, or wait out its invitation. Spaced per sender,
+-- whatever the ticket, and answered on the OFFER's channel.
+function Queue:Refuse(p, sender, reason, channel)
+    local now = self.env.now()
+    self.refused = self.refused or {}
+    for name, at in pairs(self.refused) do
+        if now - at >= T.RETRY then self.refused[name] = nil end
+    end
+    if self.refused[sender] then return end
+    self.refused[sender] = now
+    self:Log("queue invite", reason == "BUSY" and "busy" or "refused")
+    self.env.send({ kind = "CANCEL", session = p.peerSession, peerSession = p.session, ticket = p.ticket,
+        reason = reason }, sender, channel == "PARTY" and { replyParty = sender } or nil)
+end
+
+function Queue:ReceiveOffer(p, sender, channel)
+    if p.ticket ~= p.session .. "." .. p.peerSession then return end
+    if not self.session then return self:Refuse(p, sender, "CANCELLED", channel) end
     local t = self.ticket
     local mine = t and t.peer.fullName == sender and not t.coordinator
     if p.peerSession ~= self.session then
-        if not t or mine and not t.plan then self:Reintroduce(sender) end
+        if not t or mine and not t.plan then self:Reintroduce(sender)
+        elseif t.peer.fullName ~= sender then self:Refuse(p, sender, "BUSY", channel) end
         return
     end
     if mine then return self:Rekey(p.session) end
@@ -675,14 +695,16 @@ end
 
 -- System notices about our own invitation (decline, unknown or grouped target).
 -- An adapter may report an already grouped or invited target as BUSY, which
--- shows "already in another queue match"; INVITE_FAILED is handled alike.
+-- shows "already in another queue match" here; INVITE_FAILED is handled alike.
+-- The invitee is told INVITE_FAILED instead: it is the one that is grouped or
+-- invited, so "they are already in another queue match" would be backwards.
 function Queue:SystemMessage(message)
     local t = self.ticket
     if self.state ~= "INVITING" or not t or type(self.env.inviteNotice) ~= "function" then return end
     local kind = self.env.inviteNotice(message, t.peer)
     if kind == "DECLINED" or kind == "INVITE_FAILED" or kind == "BUSY" then
         self:Log("queue invite", kind == "DECLINED" and "declined" or kind == "BUSY" and "busy" or "failed")
-        self:Finish(kind)
+        self:Finish(kind, { wireReason = kind == "BUSY" and "INVITE_FAILED" or nil })
     end
 end
 
@@ -699,7 +721,7 @@ function Queue:Unreachable(name)
     self.queried[name] = self.env.now()
 end
 
-function Queue:Receive(p, sender)
+function Queue:Receive(p, sender, channel)
     if type(p) ~= "table" or type(sender) ~= "string" then return end
     local now = self.env.now()
     if p.kind == "QUERY" then return self:Announce(sender) end
@@ -733,7 +755,7 @@ function Queue:Receive(p, sender)
             and (self.state == "INVITING" or self.state == "INVITED") then self:Finish("CANCELLED", { received = true }) end
         return
     end
-    if p.kind == "OFFER" and not (t and t.id == p.ticket) then return self:ReceiveOffer(p, sender) end
+    if p.kind == "OFFER" and not (t and t.id == p.ticket) then return self:ReceiveOffer(p, sender, channel) end
     if not t or sender ~= t.peer.fullName or p.session ~= t.peerSession or p.peerSession ~= t.ownSession or p.ticket ~= t.id then return end
     t.lastPeerAt = now
     -- The peer's client holds this ticket, so its session ends with it. Only
@@ -1090,13 +1112,15 @@ end
 
 -- The single terminal path: CANCEL first (synchronously), outcome class,
 -- notification, then CLEANUP of an owned group or straight to IDLE/requeue.
+-- options: received, noRequeue, detail, wireReason (the CANCEL reason the
+-- peer reads, when it differs from the local one).
 function Queue:Finish(reason, options)
     options = options or {}
     if self.state == "IDLE" or self.state == "CLEANUP" then return end
     if not FD.QueueProtocol.REASONS[reason] then reason = "ERROR" end
     local t, from, received = self.ticket, self.state, options.received == true
     local verdict = self:Verdict(reason, received, options.noRequeue)
-    if t and not received then self:SendTerminal(reason) end
+    if t and not received then self:SendTerminal(options.wireReason or reason) end
     local guid, now = t and t.peer.guid, self.env.now()
     if guid and verdict.retry then
         self.retryAt[guid] = now + T.RETRY_DELAY
@@ -1126,7 +1150,9 @@ function Queue:Finish(reason, options)
     local outcome = verdict.cooldown and "cooldown" or verdict.requeue and "requeue" or "idle"
     self.cancel = { reason = reason, received = received, opponent = t and t.peer.fullName, outcome = outcome }
     self.reason = self:CancelText(reason, received, verdict, t and t.peer.fullName)
-    self.cancel.text, self.cleanupStatus = self.reason, nil
+    -- Leaving a search keeps the advisory about a leftover pair group.
+    self.cancel.text = self.reason
+    self.cleanupStatus = (not t and self.lastPair) and self.cleanupStatus or nil
     self:Log("queue cancel", reason, from, received and "received" or "local", outcome)
     -- The player's own leave needs no chat line, sound or window.
     if reason ~= "CANCELLED" or received then self:Notify(reason == "FINISHED" and "finished" or "cancel", self.reason) end
@@ -1134,7 +1160,11 @@ function Queue:Finish(reason, options)
     self.requeueWait = verdict.requeue and self.queuedAt or nil
     if not t then return self:End() end
     if from == "INVITED" and type(self.env.declineInvite) == "function" then self.env.declineInvite(t.peer) end
-    if from == "INVITING" and t.inviteAt then
+    -- A server notice of our own (declined, unknown or already grouped
+    -- target) proves that invitation closed: a group the two players form by
+    -- hand afterwards is theirs, not a void queue invitation.
+    local closed = not received and (reason == "DECLINED" or reason == "INVITE_FAILED" or reason == "BUSY")
+    if from == "INVITING" and t.inviteAt and not closed then
         self.voidInvite = { guid = t.peer.guid, fullName = t.peer.fullName, untilAt = t.inviteAt + T.INVITE + 10, ticket = t }
     end
     t.leaveAt = now + T.LEAVE_DELAY
@@ -1201,19 +1231,22 @@ function Queue:Leave()
     end
     local session, own = self.session, self.ownProfile
     self:Finish("CANCELLED")
-    -- LEAVE only to the few peers that are still searching and fresh.
-    if session and own then
-        local list, now = {}, self.env.now()
-        for _, peer in pairs(self.peers) do
-            if now - peer.lastSeen <= T.PROFILE_FRESHNESS * 2 then list[#list + 1] = peer end
-        end
-        table.sort(list, function(a, b) return a.lastSeen > b.lastSeen end)
-        for index = 1, math.min(#list, T.LEAVE_LIMIT) do
-            self.env.send({ kind = "LEAVE", session = session, guid = own.guid }, list[index].fullName, self)
-        end
-    end
+    self:SendLeave(session, own, self.env.send)
     self.peers = {}
     return true
+end
+
+-- LEAVE only to the few peers that are still searching and fresh.
+function Queue:SendLeave(session, own, send)
+    if not session or not own or type(send) ~= "function" then return end
+    local list, now = {}, self.env.now()
+    for _, peer in pairs(self.peers) do
+        if now - peer.lastSeen <= T.PROFILE_FRESHNESS * 2 then list[#list + 1] = peer end
+    end
+    table.sort(list, function(a, b) return a.lastSeen > b.lastSeen end)
+    for index = 1, math.min(#list, T.LEAVE_LIMIT) do
+        send({ kind = "LEAVE", session = session, guid = own.guid }, list[index].fullName, self)
+    end
 end
 
 -- UI "Leave group": the remaining group is the queue pair.
@@ -1285,10 +1318,14 @@ function Queue:World(leaving)
     else self.loadingAt, self.graceUntil = nil, self.env.now() + T.LOAD_GRACE end
 end
 
--- Reload/logout: the client is unloading, so only the terminal CANCEL is sent.
+-- Reload/logout: the client is unloading, so only the terminal CANCEL, or
+-- while searching the LEAVE, is sent synchronously. Peers would otherwise keep
+-- our PROFILE fresh and could invite a session that no client holds.
 function Queue:Logout()
     if self.ticket and self.state ~= "IDLE" and self.state ~= "CLEANUP" then
         self:Log("queue cancel", "RELOAD", self.state, "local", "idle")
         self:SendTerminal("RELOAD")
+    elseif SEARCH_STATES[self.state] then
+        self:SendLeave(self.session, self.ownProfile, self.env.sendNow)
     end
 end

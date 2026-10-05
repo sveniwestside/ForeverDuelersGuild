@@ -253,11 +253,28 @@ return function(_, equal, newNamespace)
     for _, packet in ipairs(discovery) do
         assert(transport:Send(packet, c.queue.ticket.peer.fullName, c.queue))
         w:advance(0.5)
-        equal(c.sent[#c.sent].channel, "WHISPER", packet.kind .. " never uses party")
+        -- The PROFILE that re-keys a grouped pair goes to the exact party1 over
+        -- PARTY; every other discovery or setup packet is whispered.
+        equal(c.sent[#c.sent].channel, packet.kind == "PROFILE" and "PARTY" or "WHISPER",
+            packet.kind .. (packet.kind == "PROFILE" and " to the exact party1 uses party" or " never uses party"))
         local bytes = assert(c.fd.QueueProtocol:Encode(packet))
         equal(transport:Receive("ForeverDuelQ2", bytes, "PARTY", w.b.profile.fullName), false,
-            packet.kind .. " never accepted through party")
+            packet.kind .. (packet.kind == "PROFILE" and " with a GUID that is not party1 rejected through party"
+                or " never accepted through party"))
     end
+    -- The exact party1's own PROFILE is accepted through party and re-keys.
+    local peerProfile = c.fd.Copy(w.b.profile)
+    peerProfile.kind, peerProfile.session, peerProfile.joinedAt = "PROFILE", "b2", 1700000000
+    peerProfile.scope, peerProfile.levelGap, peerProfile.ruleset, peerProfile.venues = "ZONE", 5, "PVP", "-"
+    local delivered = 0
+    c.queue.Receive = function(_, packet) if packet.kind == "PROFILE" then delivered = delivered + 1 end end
+    local bytes = assert(c.fd.QueueProtocol:Encode(peerProfile))
+    equal(transport:Receive("ForeverDuelQ2", bytes, "PARTY", w.b.profile.fullName), true,
+        "the exact party1's PROFILE is accepted through party")
+    equal(delivered, 1, "and delivered to the engine")
+    c.count = 3
+    equal(transport:Receive("ForeverDuelQ2", bytes, "PARTY", w.b.profile.fullName), false,
+        "a PROFILE through party is rejected once the group is not exactly the pair")
 
     -- Membership is checked at drain: a changed group falls back to WHISPER.
     for _, change in ipairs({

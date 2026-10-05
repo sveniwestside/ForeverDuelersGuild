@@ -59,16 +59,33 @@ function Transport:TicketMatches(packet, ticket, outgoing)
 end
 
 -- The PARTY channel is server-scoped to group members and the sender name is
--- authoritative; the ticket tuple and sender bind it. The one exception is an
--- OFFER (from the ticket peer while a ticket exists): a grouped invitee binds
--- or re-keys from it, or answers one naming its earlier session with its
--- current PROFILE. PARTY never discovers peers; the engine validates OFFERs.
+-- authoritative; the ticket tuple and sender bind it. Two exceptions: an
+-- OFFER (from the ticket peer while a ticket exists), from which a grouped
+-- invitee binds or re-keys, or which names its earlier session; and the
+-- PROFILE of the exact party1 GUID, which a grouped pair needs to bind or
+-- re-key without a whisper round trip (whispers can lag 30 s or more). An
+-- own PARTY echo carries the own GUID and is never the exact party1.
+-- PARTY never discovers other players; the engine validates both. A client
+-- that is not queued accepts only an OFFER in a two-player group, which it
+-- refuses so the coordinator does not hold that group until its limit.
 function Transport:PartyAccepts(packet, sender, engine)
     engine = engine or FD.queue
-    if type(engine) ~= "table" or not engine.session then return false end
+    if type(engine) ~= "table" then return false end
+    if not engine.session then return packet.kind == "OFFER" and self:TwoPlayerGroup() end
     local ticket = engine.ticket
     if ticket and (type(ticket.peer) ~= "table" or sender ~= ticket.peer.fullName) then return false end
+    if packet.kind == "PROFILE" then
+        return FD.QueueWow ~= nil and FD.QueueWow:GroupState({ guid = packet.guid }) == "EXACT"
+    end
     return packet.kind == "OFFER" or ticket ~= nil and self:TicketMatches(packet, ticket, false)
+end
+
+-- Exactly two players in a party: the sender of a PARTY packet is then the
+-- only other member.
+function Transport:TwoPlayerGroup()
+    if not FD.QueueWow or type(FD.QueueWow.GroupSample) ~= "function" then return false end
+    local ok, sample = pcall(FD.QueueWow.GroupSample, FD.QueueWow)
+    return ok and type(sample) == "table" and sample.raid == false and sample.grouped == true and sample.members == 2
 end
 
 function Transport:ExactTicketParty(ticket)
@@ -112,7 +129,19 @@ function Transport:Current(packet, owner)
     return owner ~= nil and owner == ticket and self:TicketMatches(packet, ticket, true)
 end
 
+-- PROFILE to the queue peer that is the exact party1 also uses PARTY: the
+-- PROFILE that re-keys a grouped pair must not wait for a slow whisper.
 function Transport:Route(packet, owner, target)
+    if packet.kind == "PROFILE" then
+        local ticket = FD.queue and FD.queue.ticket
+        local peer = ticket and type(ticket.peer) == "table" and ticket.peer.fullName == target and ticket.peer
+            or self:QueuePeer(target)
+        if peer and FD.QueueWow and FD.QueueWow:GroupState(peer) == "EXACT" then return "PARTY" end
+    end
+    -- A refused OFFER is answered on the channel it came in on.
+    if packet.kind == "CANCEL" and type(owner) == "table" and owner.replyParty == target and self:TwoPlayerGroup() then
+        return "PARTY"
+    end
     if Protocol.TICKET_KINDS[packet.kind] and type(owner) == "table" and type(owner.peer) == "table"
         and owner.peer.fullName == target and self:ExactTicketParty(owner) then return "PARTY" end
     return "WHISPER", target
@@ -193,7 +222,7 @@ function Transport:Deliver(packet, sender, channel)
     log("queue receive", packet.kind, channel)
     -- Queue errors stay within this subsystem (Queue:Run) and never reach
     -- Core:Safe's rated-duel recovery.
-    return FD.queue:Run(function() FD.queue:Receive(packet, sender); return true end) == true
+    return FD.queue:Run(function() FD.queue:Receive(packet, sender, channel); return true end) == true
 end
 
 function Transport:Receive(prefix, payload, channel, sender)
