@@ -11,3 +11,4 @@ web/data/
 web/.env
 web/node_modules/
 web/exports/
+.claude/worktrees/

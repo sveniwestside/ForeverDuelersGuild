@@ -18,6 +18,10 @@ jobs:
   release:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # Publication needs a human approval. Configure the "curseforge"
+    # environment with required reviewers under Settings > Environments;
+    # the job (and its secrets) only starts after that approval.
+    environment: curseforge
     steps:
       - name: Check out the selected version
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6

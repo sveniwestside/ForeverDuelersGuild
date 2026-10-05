@@ -87,6 +87,11 @@ local function relevantNotice(topic, ...)
     return type(stringID) == "string" and stringID:match("^ERR_DUEL") ~= nil
 end
 
+-- Version plus the installed commit when tools/install-addon.ps1 stamped it.
+function Debug:Version()
+    return FD.C.BUILD and (FD.C.VERSION .. "+" .. FD.C.BUILD) or FD.C.VERSION
+end
+
 function Debug:Record(topic, ...)
     if not readable(topic) or type(topic) ~= "string" then return end
     local route = routes[topic]
@@ -102,7 +107,7 @@ function Debug:Record(topic, ...)
         if kind == "string" or kind == "boolean" or kind == "nil" then parts[#parts + 1] = tostring(value)
         elseif kind == "number" then parts[#parts + 1] = finite(value) and tostring(value) or "nonfinite" end
     end
-    local entry = { event = topic, detail = table.concat(parts, " "):sub(1, 320), version = FD.C.VERSION,
+    local entry = { event = topic, detail = table.concat(parts, " "):sub(1, 320), version = Debug:Version(),
         at = serverTime(), t = clientTime() }
     local trace = ring(s, route)
     local interval = repeatIntervals[topic]
@@ -191,13 +196,13 @@ function Debug:Error(context, message, stack)
         local errors = s.errorDiagnostics
         if type(errors) ~= "table" then errors = {}; s.errorDiagnostics = errors end
         local last = errors[#errors]
-        if last and last.context == context and last.message == text:sub(1, 400) and last.version == FD.C.VERSION then
+        if last and last.context == context and last.message == text:sub(1, 400) and last.version == self:Version() then
             last.repeats = math.min((last.repeats or 0) + 1, 1000000)
             last.lastAt = serverTime()
         else
             errors[#errors + 1] = { context = context:sub(1, 64), message = text:sub(1, 400),
                 stack = stack and stack:gsub("[|]", "/"):sub(1, 900) or nil,
-                version = FD.C.VERSION, at = serverTime(), t = clientTime() }
+                version = self:Version(), at = serverTime(), t = clientTime() }
             while #errors > ERROR_LIMIT do table.remove(errors, 1) end
         end
     end
@@ -263,7 +268,7 @@ function Debug:Count(prefix, channel, outcome, target)
         local persisted = saved[key] or { totals = {} }
         saved[key] = persisted
         persisted.totals[outcome] = (persisted.totals[outcome] or 0) + 1
-        persisted.version, persisted.lastAt = FD.C.VERSION, serverTime()
+        persisted.version, persisted.lastAt = self:Version(), serverTime()
         if entry.previous then
             persisted.lastMinute = { counts = FD.Copy and FD.Copy(entry.previous.counts) or entry.previous.counts,
                 recipients = entry.previous.recipients }

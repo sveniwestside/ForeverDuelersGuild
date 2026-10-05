@@ -29,6 +29,24 @@ def digest(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def source_commit() -> dict:
+    """The exact commit a package was built from, so live results map to code."""
+    import os
+    import subprocess
+    sha = os.environ.get("GITHUB_SHA")
+    clean = None
+    try:
+        if not sha:
+            sha = subprocess.run(["git", "rev-parse", "HEAD"], cwd=ROOT, check=True, capture_output=True,
+                                 text=True, encoding="utf-8").stdout.strip()
+        status = subprocess.run(["git", "status", "--porcelain", "--", "ForeverDuel"], cwd=ROOT, check=True,
+                                capture_output=True, text=True, encoding="utf-8").stdout
+        clean = status.strip() == ""
+    except (OSError, subprocess.CalledProcessError):
+        pass
+    return {"sha": sha or None, "addonSourceClean": clean}
+
+
 def main() -> None:
     manifest_path = ADDON / "ForeverDuel.toc"
     manifest = manifest_path.read_text(encoding="utf-8")
@@ -126,6 +144,7 @@ def main() -> None:
     report = {
         "projectName": project["name"],
         "version": version,
+        "sourceCommit": source_commit(),
         "status": "local package verified; publication status recorded separately",
         "archive": archive.name,
         "archiveSha256": digest(archive),

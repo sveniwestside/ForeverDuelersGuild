@@ -75,6 +75,17 @@ class ReleasePipelineTests(unittest.TestCase):
             run_pipeline(self.root, "v0.4.5", upload=True)
         run.assert_not_called()
 
+    def test_upload_refuses_uncommitted_changes(self):
+        import subprocess
+        self.project["publication"] = {"fileId": None, "published": False}
+        (self.docs / "project.json").write_text(json.dumps(self.project), encoding="utf-8")
+        status = subprocess.CompletedProcess(["git"], 0, stdout=" M ForeverDuel/Duel.lua\n", stderr="")
+        with patch.dict("os.environ", {"CF_API_TOKEN": "private-test-token"}), \
+                patch("release.subprocess.run", return_value=status) as run, self.assertRaises(ValueError) as caught:
+            run_pipeline(self.root, "v0.4.5", upload=True)
+        self.assertIn("uncommitted", str(caught.exception))
+        self.assertEqual(run.call_count, 1, "only the git status check ran; no tests, build or upload")
+
     def test_offline_checks_do_not_inherit_upload_token(self):
         import subprocess
         with patch.dict("os.environ", {"CF_API_TOKEN": "private-test-token"}), patch("release.subprocess.run") as run, patch("release.print"):

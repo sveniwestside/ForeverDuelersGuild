@@ -64,6 +64,16 @@ function FD:Safe(callback, ...)
     end
 end
 
+-- tools/install-addon.ps1 stamps the installed commit into the TOC so every
+-- diagnostic entry and status output maps a live test to exact source code.
+do
+    local getter = C_AddOns and C_AddOns.GetAddOnMetadata or GetAddOnMetadata
+    if type(getter) == "function" then
+        local ok, build = pcall(getter, addonName, "X-Build")
+        if ok and type(build) == "string" and build:match("^[%w%-]+$") and #build <= 32 then FD.C.BUILD = build end
+    end
+end
+
 local INITIALIZE_RETRIES, INITIALIZE_INTERVAL = 15, 2
 
 -- Native identity can be briefly unavailable at login. Initialization is
@@ -169,7 +179,7 @@ end, "Start fresh when saved data cannot be loaded (keeps a copy).", 71, true)
 
 FD:RegisterStatus(10, function()
     local lines = {}
-    lines[#lines + 1] = "Version: " .. FD.C.VERSION .. " | Addon transport: "
+    lines[#lines + 1] = "Version: " .. FD.C.VERSION .. (FD.C.BUILD and (" (" .. FD.C.BUILD .. ")") or "") .. " | Addon transport: "
         .. (FD.Comms and FD.Comms.available and "registered" or "unavailable")
     if FD.databaseError then lines[#lines + 1] = "Saved data: unavailable (" .. tostring(FD.databaseError) .. ")" end
     lines[#lines + 1] = "State: " .. (FD.duel and FD.duel:State() or "DISABLED")

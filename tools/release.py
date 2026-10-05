@@ -15,6 +15,16 @@ from prepare_release import VERSION_PATTERN
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def git_dirty(root: Path) -> list[str]:
+    """Paths with uncommitted changes, or [] when git is unavailable (e.g. a source ZIP)."""
+    try:
+        result = subprocess.run(["git", "status", "--porcelain"], cwd=root, check=True,
+                                capture_output=True, text=True, encoding="utf-8")
+    except (OSError, subprocess.CalledProcessError):
+        return []
+    return [line[3:] for line in result.stdout.splitlines() if line.strip()]
+
+
 def validate_tag(root: Path, tag: str | None) -> str:
     worksheet = json.loads((root / "docs/curseforge/project.json").read_text(encoding="utf-8"))
     version = worksheet["file"]["version"]
@@ -33,10 +43,16 @@ def run_pipeline(root: Path, tag: str | None = None, upload: bool = False) -> No
             raise ValueError("This version was already submitted. Prepare a new version before uploading.")
         if not os.environ.get("CF_API_TOKEN", "").strip():
             raise ValueError("Set CF_API_TOKEN privately before uploading.")
+        dirty = git_dirty(root)
+        if dirty:
+            raise ValueError("Refusing to upload from a working tree with uncommitted changes: " + ", ".join(dirty[:5]))
     safe_env = os.environ.copy()
     safe_env.pop("CF_API_TOKEN", None)
     subprocess.run([sys.executable, "-m", "unittest", "discover", "-s", "tests", "-p", "test_*.py"],
                    cwd=root, env=safe_env, check=True)
+    if (root / "tools/tests").is_dir():
+        subprocess.run([sys.executable, "-m", "unittest", "discover", "-s", "tools/tests", "-p", "test_*.py"],
+                       cwd=root, env=safe_env, check=True)
     lua = subprocess.run([sys.executable, "tests/run.py"], cwd=root, env=safe_env,
                          check=False, capture_output=True, text=True, encoding="utf-8")
     print(lua.stdout, end="", flush=True)
