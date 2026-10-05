@@ -2,12 +2,16 @@
 ## Title: ForeverDuelersGuild
 ## Notes: Explicitly agreed local rated duels for WoW: Forever.
 ## Author: ForeverDuelersGuild contributors
-## Version: 0.5.7
+## Version: 0.6.0
 ## IconTexture: Interface\AddOns\ForeverDuel\Media\Icon.tga
 ## SavedVariablesPerCharacter: ForeverDuelDB
 
 Constants.lua
+Locale.lua
+Locale_deDE.lua
 Debug.lua
+Commands.lua
+Outbound.lua
 Rating.lua
 Database.lua
 History.lua
@@ -29,4 +33,5 @@ Queue.lua
 QueueWow.lua
 QueueTransport.lua
 QueueUI.lua
+QueueCore.lua
 Core.lua

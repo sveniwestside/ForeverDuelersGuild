@@ -387,3 +387,34 @@ function Presence:Challenge(guid)
         return false, "Move closer and target this player, then click Duel again."
     end)
 end
+
+-- Stable lookup API for other modules (queue transport/candidates). The
+-- internal storage of `players` is private to this module.
+function Presence:FindByName(fullName)
+    if type(fullName) ~= "string" or self.suspended then return nil end
+    for guid in pairs(self.players) do
+        local player = self:GetPlayer(guid)
+        if player and FD.Wow:Readable(player.fullName) and player.fullName == fullName then return player end
+    end
+end
+
+function Presence:Candidates()
+    local result = {}
+    if self.suspended then return result end
+    for guid in pairs(self.players) do
+        local player = self:GetPlayer(guid)
+        if player then result[#result + 1] = player end
+    end
+    return result
+end
+
+FD:RegisterStatus(30, function()
+    local lines = {}
+    local zoneStatus = Presence:Run(function() return Presence:GetStatus() end)
+    lines[#lines + 1] = "Zone discovery: " .. (zoneStatus or "unavailable")
+    if Presence.lastSend then lines[#lines + 1] = "Zone send: " .. Presence.lastSend end
+    if Presence.lastWhisperSend then lines[#lines + 1] = "Zone whisper: " .. Presence.lastWhisperSend end
+    if FD.Roster and FD.Roster.status then lines[#lines + 1] = "Zone roster: " .. FD.Roster.status end
+    if Presence.lastReceive then lines[#lines + 1] = "Zone receive: " .. Presence.lastReceive end
+    return lines
+end)

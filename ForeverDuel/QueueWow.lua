@@ -297,10 +297,11 @@ end
 
 function Wow:Candidates()
     local candidates = {}
-    if not FD.Presence or FD.Presence.suspended or type(FD.Presence.players) ~= "table" then return candidates end
-    for guid in pairs(FD.Presence.players) do
-        local player = FD.Presence:GetPlayer(guid)
-        if player and text(player.fullName) then candidates[#candidates + 1] = player end
+    if not FD.Presence or type(FD.Presence.Candidates) ~= "function" then return candidates end
+    local ok, players = pcall(FD.Presence.Candidates, FD.Presence)
+    if not ok or type(players) ~= "table" then return candidates end
+    for _, player in ipairs(players) do
+        if type(player) == "table" and text(player.fullName) then candidates[#candidates + 1] = player end
     end
     table.sort(candidates, function(a, b) return a.guid < b.guid end)
     return candidates

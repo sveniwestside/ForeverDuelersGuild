@@ -276,8 +276,13 @@ return function(_, equal)
     equal(captured.zoneMaxLevel, 12, "missing native maximum uses documented Classic starting-zone metadata")
     equal(captured.metadataSource, "CLASSIC", "fallback source is retained locally")
     equal(synchronized.zoneMaxLevel, 12, "receiving client derives and validates the same local zone metadata")
+    local statusStart = #setupA.prints
     setupA:command("status")
-    equal(setupA.prints[#setupA.prints]:find("Last:", 1, true) ~= nil, true, "status remains usable after native test and metadata capture")
+    local sawLast = false
+    for index = statusStart + 1, #setupA.prints do
+        if setupA.prints[index]:find("Last:", 1, true) then sawLast = true end
+    end
+    equal(sawLast, true, "status remains usable after native test and metadata capture")
     setupA:command("diagnose")
     equal(#setupA.FD.Debug:RequestTrace() > 0, true, "native request diagnostics are available without enabling debug")
     equal(captured.minPlayerLevel, 30, "automatic player minimum uses actually tested character level")

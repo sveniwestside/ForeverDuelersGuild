@@ -315,3 +315,135 @@ function Wow:Environment()
         decline = function() return pcall(CancelDuel) end,
     }
 end
+
+-- Single entry point for duel requests started by addon buttons (queue,
+-- zone browser). It applies the same guards as a manual request and returns
+-- a visible reason instead of reporting success for a blocked request.
+function Wow:RequestDuel(unit)
+    if type(StartDuel) ~= "function" then return false, FD.L["Native duel API is unavailable; request the duel manually."] end
+    if FD.duel and FD.duel.active then return false, FD.L["Finish the current duel request first."] end
+    if self.pendingIncoming then return false, FD.L["Answer the incoming duel request first."] end
+    if InCombatLockdown() then return false, FD.L["Leave combat before requesting a duel."] end
+    local ok, result = pcall(StartDuel, unit)
+    if not ok or not self:Readable(result) or result == false then
+        return false, FD.L["Native duel request was blocked; request the duel manually."]
+    end
+    return true
+end
+
+function Wow:InstallHooks()
+    if type(hooksecurefunc) ~= "function" then return end
+    if type(StartDuel) == "function" then
+        hooksecurefunc("StartDuel", function(unit) FD:Safe(function() self:CaptureOutgoing(unit) end) end)
+    end
+    if type(AcceptDuel) == "function" then
+        hooksecurefunc("AcceptDuel", function()
+            FD:Safe(function()
+                self:ClearOutgoing("native duel accepted")
+                self:ClearIncoming("native duel accepted")
+                local m = FD.duel.active
+                if not m or m.countdownAt or m.startedAt then return end
+                if m.role == "INCOMING" and m.state == "RATED_CONFIRMED" and m.nativeAccepted then return end
+                -- A native/other-addon acceptance during negotiation is final:
+                -- do not let fast later acknowledgments retroactively rate it.
+                FD.duel:Unrate("native acceptance outside rated agreement", true)
+                m.nativeAccepted = true
+                FD.UI:Hide()
+            end)
+        end)
+    end
+    if type(CancelDuel) == "function" then
+        hooksecurefunc("CancelDuel", function()
+            FD:Safe(function()
+                self:ClearOutgoing("native duel declined or cancelled")
+                self:ClearIncoming("native duel declined or cancelled")
+            end)
+        end)
+    end
+end
+
+-- Level changes invalidate a pending rated agreement. Only the player and the
+-- active opponent matter; an unreadable identity is not treated as a change.
+function Wow:LevelChanged(unit)
+    local m = FD.duel and FD.duel.active
+    local pending = m and m.state ~= "UNRATED" and m.state ~= "UNRATED_ACTIVE"
+    if unit ~= nil and unit ~= "player" then
+        if not pending or not self:Readable(unit) or type(unit) ~= "string" then return end
+        local peer = self:Identity(unit)
+        if peer and peer.guid == m.opponent.guid and (peer.level ~= m.opponent.level
+            or peer.maxLevel ~= m.opponent.maxLevel) then
+            FD.duel:Unrate("Rated unavailable: participant level changed", true)
+        end
+        return
+    end
+    local identity = self:Identity("player", true)
+    if identity then FD.Database:SetBracket(identity) end
+    if pending and identity and (identity.level ~= m.player.level or identity.maxLevel ~= m.player.maxLevel) then
+        FD.duel:Unrate("Rated unavailable: participant level changed", true)
+    end
+    FD.Profile:RefreshIfShown()
+    FD.Presence:Changed()
+end
+
+FD:OnEvent("DUEL_REQUESTED", function(...) Wow:Incoming(...) end)
+FD:OnEvent("DUEL_FINISHED", function()
+    Wow:ClearOutgoing("native duel finished", true)
+    Wow:ClearIncoming("native duel finished")
+    FD.duel:Finished()
+end)
+FD:OnEvent("CHAT_MSG_ADDON", function(prefix, payload, channel, sender)
+    -- The native fifth field is the target, not a route flag.
+    FD.Comms:Receive(prefix, payload, channel, sender, false)
+end)
+FD:OnEvent("CHAT_MSG_ADDON_LOGGED", function(prefix, payload, channel, sender)
+    FD.Comms:Receive(prefix, payload, channel, sender, true)
+end, false, true)
+FD:OnEvent("CHAT_MSG_SYSTEM", function(...) Wow:SystemMessage(...) end)
+FD:OnEvent("UI_INFO_MESSAGE", function(...) Wow:InfoMessage("UI_INFO_MESSAGE", ...) end)
+FD:OnEvent("UI_ERROR_MESSAGE", function(...) Wow:InfoMessage("UI_ERROR_MESSAGE", ...) end)
+local function leaveWorld()
+    Wow:ClearOutgoing("world transition or logout", true)
+    Wow:ClearIncoming("world transition or logout")
+    -- Third argument: submit the CANCEL synchronously while still connected.
+    FD.duel:Abort("world transition or logout", true, true)
+end
+FD:OnEvent("PLAYER_LEAVING_WORLD", leaveWorld)
+FD:OnEvent("PLAYER_LOGOUT", leaveWorld)
+FD:OnEvent("PLAYER_SPECIALIZATION_CHANGED", function(unit)
+    if Wow:Readable(unit) and unit == "player" then FD.duel:Unrate("specialization changed", true) end
+end)
+FD:OnEvent("UNIT_LEVEL", function(unit) Wow:LevelChanged(unit) end)
+FD:OnEvent("PLAYER_LEVEL_UP", function()
+    -- The event payload can precede UnitLevel's update. Invalidate
+    -- immediately, then query native state on the next frame.
+    FD.duel:Unrate("Rated unavailable: player level changed", true)
+    C_Timer.After(0, function() FD:Safe(function() Wow:LevelChanged("player") end) end)
+end)
+FD:OnEvent("PLAYER_ENTERING_WORLD", function() Wow:LevelChanged("player") end)
+FD:OnEvent("PLAYER_REGEN_DISABLED", function()
+    Wow:ClearOutgoing("combat; rated detection unavailable")
+    Wow:ClearIncoming("combat; native duel retained")
+    local m = FD.duel.active
+    if m and not m.countdownAt then FD.duel:Unrate("combat began during negotiation", true) end
+end)
+
+FD:RegisterStatus(20, function()
+    local lines, m, last = {}, FD.duel and FD.duel.active, FD.duel and FD.duel.last
+    if Wow.incomingStatus then lines[#lines + 1] = "Incoming request: " .. Wow.incomingStatus end
+    if Wow.outgoingStatus then
+        lines[#lines + 1] = "Outgoing request: " .. Wow.outgoingStatus
+            .. string.format(" | %.1fs ago", GetTime() - (Wow.outgoingAt or GetTime()))
+    end
+    if Wow.outgoing then lines[#lines + 1] = "Outgoing: " .. Wow.outgoing.opponent.fullName .. " | waiting for native acknowledgment" end
+    if m then
+        lines[#lines + 1] = string.format("Native request: %s | age %.1fs", m.role, GetTime() - m.createdAt)
+        lines[#lines + 1] = "Native self: " .. m.player.guid .. " | " .. m.player.classFile .. " | level "
+            .. (m.player.level or "unknown") .. "/" .. (m.player.maxLevel or "unknown")
+        lines[#lines + 1] = "Native opponent: " .. m.opponent.guid .. " | " .. m.opponent.classFile .. " | level "
+            .. (m.opponent.level or "unknown") .. "/" .. (m.opponent.maxLevel or "unknown")
+        lines[#lines + 1] = m.role .. " | " .. m.opponent.fullName .. " | " .. (m.matchId or "checking addon") .. " | " .. (m.reason or m.state)
+        lines[#lines + 1] = "Peer confirmation: " .. (m.peerNonce and "bound to current request" or "waiting for current request acknowledgment")
+    end
+    if last then lines[#lines + 1] = "Last: " .. last.state .. " | " .. (last.reason or "") .. " | " .. (last.matchId or "") end
+    return lines
+end)

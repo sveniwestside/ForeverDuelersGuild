@@ -342,3 +342,32 @@ function Comms:Receive(prefix, payload, channel, sender, loggedEvent)
     end
     pcall(self.RememberValidation, self, accepted, status or m.peerStatus, m)
 end
+
+FD:RegisterStatus(25, function()
+    local lines, m = {}, FD.duel and FD.duel.active
+    local loggedAvailable = Comms.loggedReceiveAvailable == true
+        and C_ChatInfo and type(C_ChatInfo.SendAddonMessageLogged) == "function"
+    lines[#lines + 1] = "Solo alternate transport: " .. (loggedAvailable and "available" or "unavailable")
+    if Comms.loggedStatus and (not m or Comms.loggedStatusMatch == m) then
+        lines[#lines + 1] = (m and "Solo transport: " or "Last solo transport: ") .. Comms.loggedStatus
+    end
+    if Comms.ingressStatus and (not m or Comms.ingressStatusMatch == m) then
+        lines[#lines + 1] = (m and "Native receive gates: " or "Last native receive gates: ") .. Comms.ingressStatus
+        local counts = Comms.ingressCounts
+        if counts then lines[#lines + 1] = string.format("Native receive events: regular %d, logged %d, entry accepted %d, entry rejected %d",
+            counts.normal, counts.logged, counts.passed, counts.rejected) end
+    end
+    if Comms.lastSend then lines[#lines + 1] = "Last send: " .. Comms.lastSend end
+    if Comms.lastReceive then lines[#lines + 1] = "Last receive: " .. Comms.lastReceive end
+    if m and Comms.validationMatch ~= m then
+        lines[#lines + 1] = "Peer validation: no packet received for the current request"
+    elseif Comms.lastValidation then
+        lines[#lines + 1] = "Peer validation: " .. Comms.lastValidation
+            .. string.format(" | %.1fs ago", GetTime() - (Comms.lastValidationAt or GetTime()))
+    end
+    if Comms.lastRejection and Comms.lastRejection ~= Comms.lastValidation then
+        lines[#lines + 1] = "Last pending rejection: " .. Comms.lastRejection
+            .. string.format(" | %.1fs ago", GetTime() - (Comms.lastRejectionAt or GetTime()))
+    end
+    return lines
+end)

@@ -330,3 +330,5 @@ end
 function Zone:RefreshIfShown()
     if self.frame and self.frame:IsShown() then self:Run(function() self:Refresh() end) end
 end
+
+FD:RegisterCommand("zone", function() FD.Zone:Toggle() end, "Open the same-map player browser.", 2)

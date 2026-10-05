@@ -44,11 +44,9 @@ function Transport:NormalizeSender(sender)
 end
 
 function Transport:KnownPlayer(sender)
-    if not FD.Presence or FD.Presence.suspended or type(FD.Presence.players) ~= "table" then return nil end
-    for guid in pairs(FD.Presence.players) do
-        local player = FD.Presence:GetPlayer(guid)
-        if player and readable(player.fullName) and player.fullName == sender then return player end
-    end
+    if not FD.Presence or type(FD.Presence.FindByName) ~= "function" then return nil end
+    local ok, player = pcall(FD.Presence.FindByName, FD.Presence, sender)
+    if ok and type(player) == "table" and readable(player.fullName) and player.fullName == sender then return player end
 end
 
 function Transport:TicketMatches(packet, ticket, outgoing)

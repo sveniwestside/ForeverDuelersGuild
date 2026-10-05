@@ -29,6 +29,20 @@ return function(_, equal, newNamespace)
                 if c.expired or fd.Presence.suspended then return nil end
                 return fd.Presence.players[guid]
             end }
+            function fd.Presence:Candidates()
+                local list = {}
+                for guid in pairs(self.players) do
+                    local player = self:GetPlayer(guid)
+                    if player then list[#list + 1] = player end
+                end
+                return list
+            end
+            function fd.Presence:FindByName(name)
+                for guid in pairs(self.players) do
+                    local player = self:GetPlayer(guid)
+                    if player and player.fullName == name then return player end
+                end
+            end
             api.GetTime = function() return w.now end
             api.GetNormalizedRealmName = function() return "Forever" end
             api.RegionalUniqueNamesEnabled = function() return false end

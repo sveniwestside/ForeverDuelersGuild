@@ -122,6 +122,20 @@ return function(_, equal)
             if state.expired then return nil end
             return FD.Presence.players[guid]
         end }
+        function FD.Presence:Candidates()
+            local list = {}
+            for guid in pairs(self.players) do
+                local player = self:GetPlayer(guid)
+                if player then list[#list + 1] = player end
+            end
+            return list
+        end
+        function FD.Presence:FindByName(name)
+            for guid in pairs(self.players) do
+                local player = self:GetPlayer(guid)
+                if player and player.fullName == name then return player end
+            end
+        end
         FD.queue = { session = "a1", state = "SEARCHING", Receive = function(_, packet, sender)
             if state.receiveError then error("isolated queue failure") end
             state.received[#state.received + 1] = { packet = packet, sender = sender }
