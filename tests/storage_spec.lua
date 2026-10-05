@@ -141,7 +141,13 @@ return function(FD, equal)
     broken = FD.Database:Copy(reloaded)
     broken.finalized.missing = true
     equal(FD.Database:Initialize(broken, a), nil, "orphan finalization refused")
-    equal(FD.Database:Initialize(reloaded, b), nil, "different character database refused")
+    -- Another GUID's table is archived instead of disabling the addon
+    -- (storage_recovery_spec covers the details).
+    local foreign = FD.Database:Initialize(reloaded, b)
+    equal(foreign.player.guid, b.guid, "different character starts its own database")
+    equal(#foreign.matches, 0, "different character inherits no rated history")
+    equal(foreign.archived[a.guid].data.player.guid, a.guid, "different character's data archived")
+    equal(reloaded.player.guid, a.guid, "archived saved input untouched")
     local maxA, maxB = FD.Database:Copy(a), FD.Database:Copy(b)
     maxA.level, maxB.level = 60, 60
     db = FD.Database:Initialize(nil, a)

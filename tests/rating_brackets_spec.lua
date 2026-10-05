@@ -43,4 +43,42 @@ return function(FD, equal)
             equal(after + peerAfter, pair[1] + pair[2], "weighted rating conserved")
         end
     end
+    -- Rules are what new records store and what saved records are checked with.
+    local rules = FD.Rating:Rules()
+    equal(rules.version, FD.Rating.RULES_VERSION, "current rules version")
+    equal(rules.k, FD.C.K_FACTOR, "rules carry K")
+    equal(rules.levelWeight, FD.C.LEVEL_RATING_WEIGHT, "rules carry level weight")
+    equal(rules.maxLevelDifference, FD.C.MAX_LEVEL_DIFFERENCE, "rules carry maximum level difference")
+    equal(rules.initialRating, FD.C.INITIAL_RATING, "rules carry initial rating")
+    rules.k = 1
+    equal(FD.Rating:Rules().k, 32, "each call returns a fresh rules table")
+    equal(FD.Rating:ValidRules(FD.Rating:Rules()), true, "current rules valid")
+    equal(FD.Rating:ValidRules(nil), false, "missing rules invalid")
+    for _, change in ipairs({ { version = 2 }, { version = "1" }, { k = -1 }, { k = 0 / 0 }, { k = math.huge },
+        { levelWeight = "20" }, { maxLevelDifference = 1.5 }, { maxLevelDifference = -1 },
+        { initialRating = 1500.5 }, { initialRating = false } }) do
+        local candidate = FD.Rating:Rules()
+        for key, value in pairs(change) do candidate[key] = value end
+        equal(FD.Rating:ValidRules(candidate), false, "malformed or unknown rules rejected")
+    end
+    local double = FD.Rating:Rules()
+    double.k = 64
+    equal(select(2, FD.Rating:Calculate(1500, 1500, true, 30, 30, double)), 32, "explicit rules K applies")
+    local flat = FD.Rating:Rules()
+    flat.levelWeight = 0
+    equal(select(2, FD.Rating:Calculate(1500, 1500, true, 30, 35, flat)), 16, "explicit zero weight ignores levels")
+    equal(FD.Rating:Calculate(1500, 1500, true, 30, 30, { version = 2 }), nil, "unknown rules cannot calculate")
+    local narrow = FD.Rating:Rules()
+    narrow.maxLevelDifference = 2
+    equal(FD.Rating:Eligible(identity(30), identity(32), narrow), "LEVELING", "explicit level difference allows")
+    equal(FD.Rating:Eligible(identity(30), identity(33), narrow), nil, "explicit level difference rejects")
+    equal(select(2, FD.Rating:Eligible(identity(30), identity(30), { version = 2 })), "unknown_rating_rules",
+        "unknown rules cannot decide eligibility")
+    -- Without explicit rules today's constants apply.
+    FD.C.K_FACTOR = 24
+    equal(select(2, FD.Rating:Calculate(1500, 1500, true, 30, 30)), 12, "default rules follow current K")
+    FD.C.K_FACTOR = 32
+    FD.C.MAX_LEVEL_DIFFERENCE = 3
+    equal(FD.Rating:Eligible(identity(30), identity(34)), nil, "default rules follow current level difference")
+    FD.C.MAX_LEVEL_DIFFERENCE = 5
 end
