@@ -18,7 +18,7 @@ function MinimapButton:Run(callback)
     if self.button then pcall(self.button.SetScript, self.button, "OnUpdate", nil) end
     pcall(function()
         if not self.errorReported then
-            FD.Debug:Print("Minimap button unavailable. Use /duelrating to open your record.")
+            FD.Debug:Print(FD.L["Minimap button unavailable. Use /duelrating to open your record."])
         end
         if readable(result) then FD.Debug:Log("minimap button error", result) end
     end)
@@ -109,8 +109,8 @@ function MinimapButton:Initialize()
                 if not GameTooltip or self.dragging then return end
                 GameTooltip:SetOwner(button, "ANCHOR_LEFT")
                 GameTooltip:SetText("ForeverDuelersGuild", 1, 0.82, 0)
-                GameTooltip:AddLine("Left-click: Open your duel record.", 1, 1, 1)
-                GameTooltip:AddLine("Drag: Move around the minimap.", 0.7, 0.7, 0.7)
+                GameTooltip:AddLine(FD.L["Left-click: Open your duel record."], 1, 1, 1)
+                GameTooltip:AddLine(FD.L["Drag: Move around the minimap."], 0.7, 0.7, 0.7)
                 GameTooltip:Show()
             end)
         end)

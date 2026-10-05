@@ -230,9 +230,14 @@ function QueueUI:Refresh()
     elseif now and number(status.queuedAt) and state ~= "IDLE" then
         timer = FD.Locale:Format("Waiting: %s", duration(now - status.queuedAt))
     end
-    -- Only a countdown, a notice's expiry or the pending ruleset detection
-    -- changes without a queue render; those alone keep the 1 Hz ticker going.
-    local live = timer ~= "" or self.notice ~= nil or (idle and not settings.ruleset)
+    -- Queue texts can change without a queue render (Queue:Tick clears a
+    -- cleanup advisory silently, profile counts age, a countdown runs), so
+    -- the window refreshes at 1 Hz while queued or matched. When idle only a
+    -- cooldown, a notice's expiry, the pending ruleset detection, a cleanup
+    -- advisory, the Leave group button or an ageing profile count can change.
+    local live = state ~= "IDLE" or timer ~= "" or self.notice ~= nil
+        or (idle and (not settings.ruleset or status.cleanupStatus ~= nil or status.groupAction == true
+            or number(status.discovered) and status.discovered > 0))
     if number(status.ratingWindow) and state == "SEARCHING" then
         timer = timer .. (timer ~= "" and "  /  " or "") .. FD.Locale:Format("Rating +/-%d", status.ratingWindow)
     end
@@ -242,7 +247,9 @@ function QueueUI:Refresh()
     local name = opponent and plain(opponent.fullName or opponent.name or L["Unknown"]) or nil
     self.opponent:SetText(name and FD.Locale:Format("Opponent: %s", name) or L["Opponent: waiting for a match"])
     local venue = type(status.venue) == "table" and status.venue or nil
-    local venueText = venue and FD.Locale:Format("Venue: %s", plain(venue.name or venue.id or L["Duel venue"])) or L["Venue: chosen after matching"]
+    local venueName = venue and (venue.name or venue.id)
+    local venueText = not venue and L["Venue: chosen after matching"]
+        or venueName and FD.Locale:Format("Venue: %s", plain(venueName)) or L["Venue: unnamed"]
     if venue and number(venue.mapX) and number(venue.mapY) then
         venueText = venueText .. string.format("  (%.1f, %.1f)", venue.mapX * 100, venue.mapY * 100)
     end
