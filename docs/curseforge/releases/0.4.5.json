@@ -1,0 +1,90 @@
+{
+  "format": "foreverduel-curseforge-preparation-v1",
+  "preparedOn": "2026-10-04",
+  "status": "first Beta approved and manually published; public download verified; installation not yet verified",
+  "project": {
+    "name": "ForeverDuelersGuild",
+    "suggestedSlug": "foreverduelersguild",
+    "nameAvailability": "project creation accepted with the requested name; public project page and slug confirmed",
+    "projectId": 1726452,
+    "projectUrl": "https://www.curseforge.com/wow/addons/foreverduelersguild",
+    "previewUrl": "https://www.curseforge.com/wow/addons/foreverduelersguild/preview",
+    "authorsUrl": "https://authors.curseforge.com/#/projects/1726452/files",
+    "owner": "sveniwestside",
+    "game": "World of Warcraft",
+    "class": "Addons",
+    "primaryCategory": "PvP",
+    "additionalCategories": [],
+    "license": "MIT License",
+    "allowComments": true,
+    "allowThirdPartyDistribution": false,
+    "unlistedProject": false,
+    "experimentalProjectFlag": false,
+    "summaryFile": "summary.txt",
+    "descriptionTextFile": "description.txt",
+    "descriptionHtmlFile": "description.html",
+    "logoFile": "foreverduelersguild-logo.png",
+    "sourceUrl": null,
+    "issuesUrl": null,
+    "websiteUrl": null
+  },
+  "file": {
+    "version": "0.4.5",
+    "displayName": "ForeverDuelersGuild 0.4.5",
+    "uploadFile": "ForeverDuelersGuild-0.4.5.zip",
+    "releaseType": "Beta",
+    "gameFlavor": "Forever",
+    "gameVersion": "1.60.1",
+    "interface": 16001,
+    "referenceClientBuild": "1.60.1.70205",
+    "changelogFile": "changelog-0.4.5.txt",
+    "requiredDependencies": [],
+    "publishAutomaticallyAfterApproval": false
+  },
+  "publication": {
+    "submittedOn": "2026-10-04",
+    "submitted": true,
+    "fileId": 9058783,
+    "fileStatus": "Approved",
+    "authorsFileUrl": "https://authors.curseforge.com/#/projects/1726452/files/9058783",
+    "publicFileUrl": "https://www.curseforge.com/wow/addons/foreverduelersguild/files/9058783",
+    "downloadPageUrl": "https://www.curseforge.com/wow/addons/foreverduelersguild/download/9058783",
+    "publicDownloadUrl": "https://www.curseforge.com/wow/addons/foreverduelersguild/download/9058783",
+    "approved": true,
+    "published": true,
+    "publishedOn": "2026-10-04",
+    "downloadVerified": true,
+    "downloadVerifiedOn": "2026-10-04",
+    "downloadedArchiveSha256": "477af26f532a4c5a23218ff117825f9162db3c5ca12c81b47dd9504cabe18679",
+    "installationVerified": false,
+    "recordSource": "CurseForge author UI, public project/file pages and downloaded ZIP comparison"
+  },
+  "validation": {
+    "userReportedTesting": {
+      "status": "completed for initial Beta",
+      "reportedOn": "2026-10-04",
+      "source": "user statement",
+      "version": "0.4.5",
+      "scope": "general completion report for the current build; first Beta preparation authorized",
+      "evidenceLimit": "No individual test-case results or paired diagnostic logs were supplied; the earlier live issue's exact cause remains unconfirmed."
+    },
+    "automated": {
+      "status": "passed",
+      "executedOn": "2026-10-04",
+      "command": "python tests/run.py",
+      "runtime": "Lua 5.1",
+      "compiledLuaFiles": 33,
+      "suites": 14,
+      "assertions": 4551
+    }
+  },
+  "notes": [
+    "This file is a local field worksheet, not a CurseForge API request or import format.",
+    "On 2026-10-04, the user explicitly chose 'auf curseforge beschraenken': select 'Don't allow distribution to 3rd party'. Unlisted project remains disabled as shown in the current creation form.",
+    "The public name is ForeverDuelersGuild; the ForeverDuel installation folder, manifest, SavedVariables filename, and wire identities are retained for update compatibility.",
+    "Use a regular project. The product is experimental, but the separate CurseForge Experimental project flag prevents ecosystem sync.",
+    "The initial Beta does not establish app availability: CurseForge documents a requirement for at least one Release file.",
+    "Keep the first upload as Beta for wider player feedback. User-reported test completion does not justify a Release label solely to bypass the app-sync requirement.",
+    "Do not select Retail or another Classic flavor as a substitute if Forever is absent from the upload form."
+  ]
+}

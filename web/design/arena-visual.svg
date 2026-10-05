@@ -1,0 +1,37 @@
+<svg fill="none" stroke="#929a94" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 560 470" xmlns="http://www.w3.org/2000/svg">
+              <defs>
+                <linearGradient id="arena-base" x1="0" y1="0" x2="0.7" y2="1"><stop stop-color="#353e38"/><stop offset="1" stop-color="#161d19"/></linearGradient>
+                <linearGradient id="arena-rim" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#3c5148"/><stop offset=".5" stop-color="#c7aa70" stop-opacity=".55"/><stop offset="1" stop-color="#33433b"/></linearGradient>
+                <linearGradient id="duelist-gold" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#e0c394"/><stop offset="1" stop-color="#82683e"/></linearGradient>
+                <linearGradient id="duelist-green" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#b9cdc0"/><stop offset="1" stop-color="#5c7d6b"/></linearGradient>
+                <radialGradient id="arena-glow"><stop stop-color="#c7b185" stop-opacity=".15"/><stop offset="1" stop-color="#c7b185" stop-opacity="0"/></radialGradient>
+                <radialGradient id="gold-pool"><stop stop-color="#d7b981" stop-opacity=".3"/><stop offset="1" stop-color="#d7b981" stop-opacity="0"/></radialGradient>
+                <radialGradient id="green-pool"><stop stop-color="#9fc8b0" stop-opacity=".25"/><stop offset="1" stop-color="#9fc8b0" stop-opacity="0"/></radialGradient>
+                <filter id="soft-shadow" x="-100%" y="-100%" width="300%" height="300%"><feGaussianBlur stdDeviation="16"/></filter>
+                <filter id="point-glow" x="-400%" y="-400%" width="900%" height="900%"><feGaussianBlur stdDeviation="4"/></filter>
+              </defs>
+              <ellipse cx="286" cy="268" rx="260" ry="184" fill="url(#arena-glow)" stroke="none"/>
+              <ellipse cx="280" cy="330" rx="194" ry="65" fill="#030906" stroke="none" opacity=".5" filter="url(#soft-shadow)"/>
+              <g stroke-width="1">
+                <ellipse cx="280" cy="270" rx="257" ry="140" stroke="#34453c" opacity=".55" stroke-dasharray="3 9"/>
+                <path d="M41 264 280 125l239 139M91 324l190-111 191 111" stroke="#3f5144" opacity=".3"/>
+                <path d="m281 128-1 280M53 270h454" stroke="#3b4b40" opacity=".2"/>
+                <path d="M74 253v28c0 60 92 109 206 109s206-49 206-109v-28" fill="#19231d" stroke="#3c4b3f"/>
+                <ellipse cx="280" cy="253" rx="206" ry="109" fill="url(#arena-base)" stroke="url(#arena-rim)" stroke-width="1.5"/>
+                <ellipse cx="280" cy="253" rx="185" ry="96" stroke="#68725c" opacity=".45"/>
+                <ellipse cx="280" cy="253" rx="143" ry="74" stroke="#60755f" opacity=".28"/>
+                <ellipse cx="280" cy="253" rx="99" ry="51" stroke="#9ca880" opacity=".2"/>
+                <path d="m120 289 317-75M130 193l300 120" stroke="#809276" opacity=".16"/>
+              </g>
+              <ellipse cx="205" cy="284" rx="76" ry="40" fill="url(#gold-pool)" stroke="none"/>
+              <ellipse cx="356" cy="223" rx="73" ry="39" fill="url(#green-pool)" stroke="none"/>
+              <path d="m214 281 134-60" stroke="#c9b67f" opacity=".55" stroke-dasharray="3 5"/>
+              <ellipse cx="205" cy="282" rx="24" ry="12" stroke="#bea573" stroke-width="1.5"/>
+              <ellipse cx="356" cy="221" rx="24" ry="12" stroke="#92b8a1" stroke-width="1.5"/>
+              <g stroke-width="1.2"><path d="m193 224 12-7 12 7v53l-12 7-12-7Z" fill="url(#duelist-gold)" stroke="#d3b982"/><path d="m205 232 12-8v53l-12 7Z" fill="#a88b55" stroke="none"/><path d="m193 224 12 8 12-8M205 232v52" stroke="#f1d6a1" opacity=".5"/>
+              <path d="m344 163 12-7 12 7v53l-12 7-12-7Z" fill="url(#duelist-green)" stroke="#b2cebc"/><path d="m356 171 12-8v53l-12 7Z" fill="#658d77" stroke="none"/><path d="m344 163 12 8 12-8M356 171v52" stroke="#d2e5d8" opacity=".5"/></g>
+              <g stroke="none"><circle cx="205" cy="199" r="5" fill="#dec18a" filter="url(#point-glow)" opacity=".7"/><circle cx="205" cy="199" r="3" fill="#e9cc96"/><circle cx="356" cy="138" r="5" fill="#b4d1be" filter="url(#point-glow)" opacity=".7"/><circle cx="356" cy="138" r="3" fill="#c2decc"/></g>
+              <g fill="#839284" stroke="none" font-family="Segoe UI,Arial,sans-serif" font-size="9" letter-spacing="2"><text x="179" y="178">DUELLANT 01</text><text x="331" y="117">DUELLANT 02</text></g>
+              <g stroke="#9f966e" opacity=".6"><path d="M45 180h10m-5-5v10M465 120h10m-5-5v10M475 347h10m-5-5v10"/></g>
+              <g fill="#738574" stroke="none"><circle cx="65" cy="315" r="2"/><circle cx="444" cy="180" r="2"/><circle cx="398" cy="368" r="2"/></g>
+            </svg>

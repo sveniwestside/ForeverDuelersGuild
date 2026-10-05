@@ -25,6 +25,11 @@ function Duel:New(env, database)
     return setmetatable({ env = env, db = database }, self)
 end
 
+function Duel:Notify(kind, match)
+    -- The optional matchmaking layer must never interrupt duel evidence.
+    if self.env.notify then pcall(self.env.notify, kind, match) end
+end
+
 function Duel:State()
     return self.active and self.active.state or "IDLE"
 end
@@ -74,6 +79,7 @@ function Duel:Begin(role, player, opponent, requestedAt)
         createdAt = requestedAt or self.env.now(),
     }
     self.active = m
+    self:Notify("request", m)
     self.env.log("duel detected", role, opponent.fullName, m.nonce)
     self.env.render(m)
     if not bracket then
@@ -191,35 +197,79 @@ function Duel:RepeatDiscoveryConsent()
     end
 end
 
+-- Explain rejected discovery without weakening native identity or consent.
+-- Diagnostics never include packet bodies or request nonces, and logging must
+-- not interrupt the duel if an optional diagnostic sink fails.
+function Duel:PeerValidation(accepted, reason, packet, detail, unrateReason)
+    local status = (packet and packet.kind or "packet") .. " | " .. reason
+    if detail then status = status .. " | " .. detail end
+    status = status:sub(1, 320)
+    local m = self.active
+    if m then m.peerStatus = status end
+    if self.env.log then pcall(self.env.log, "peer validation", status) end
+    if unrateReason then self:Unrate(unrateReason, true) end
+    return accepted, status
+end
+
 function Duel:Receive(packet, sender)
     local m = self.active
-    if not m or sender ~= m.opponent.fullName then return end
+    if not m then return self:PeerValidation(false, "no pending native request") end
+    if sender ~= m.opponent.fullName then
+        return self:PeerValidation(false, "sender mismatch", nil,
+            "expected=" .. tostring(m.opponent.fullName) .. "; received=" .. tostring(sender))
+    end
     local p, err = FD.Protocol:Decode(packet)
-    if not p then self.env.log("ignored packet", err); return end
-    if p.guid ~= m.opponent.guid or p.peerGUID ~= m.player.guid or p.role == m.role then return end
-    if p.kind ~= "HELLO" and p.echo ~= m.nonce then return end
-    if m.peerNonce and p.nonce ~= m.peerNonce then return end
-    if m.state == "UNRATED" or m.state == "UNRATED_ACTIVE" then return end
+    if not p then return self:PeerValidation(false, "invalid envelope", nil, err) end
+    if p.guid ~= m.opponent.guid then
+        return self:PeerValidation(false, "opponent GUID mismatch", p,
+            "expected=" .. m.opponent.guid .. "; received=" .. p.guid)
+    end
+    if p.peerGUID ~= m.player.guid then
+        return self:PeerValidation(false, "local GUID mismatch", p,
+            "expected=" .. m.player.guid .. "; received=" .. p.peerGUID)
+    end
+    if p.role == m.role then
+        return self:PeerValidation(false, "duel roles are not complementary", p,
+            "local=" .. m.role .. "; received=" .. p.role)
+    end
+    if p.kind ~= "HELLO" and p.echo ~= m.nonce then
+        return self:PeerValidation(false, "acknowledgment belongs to another request", p)
+    end
+    if m.peerNonce and p.nonce ~= m.peerNonce then
+        return self:PeerValidation(false, "peer belongs to another request", p)
+    end
+    if m.state == "UNRATED" or m.state == "UNRATED_ACTIVE" then
+        return self:PeerValidation(false, "rated discovery is closed", p, "state=" .. m.state)
+    end
     if p.level ~= m.opponent.level or p.maxLevel ~= m.opponent.maxLevel
         or FD.Rating:Eligible(m.player, p) ~= m.bracket then
-        if p.kind == "HELLO" and not m.peerNonce then return end
-        return self:Unrate("Rated unavailable: opponent level or rating group changed", true)
+        return self:PeerValidation(false, "native level or level cap mismatch", p,
+            "expected=" .. tostring(m.opponent.level) .. "/" .. tostring(m.opponent.maxLevel)
+                .. "; received=" .. p.level .. "/" .. p.maxLevel,
+            not (p.kind == "HELLO" and not m.peerNonce)
+                and "Rated unavailable: opponent level or rating group changed" or nil)
     end
     if p.kind == "HELLO" or p.kind == "HELLO_ACK" then
         -- Re-acknowledge a matching discovery retry even after local consent.
         if m.nativeAccepted or m.countdownAt or m.startedAt
-            or self.env.now() - m.createdAt >= FD.C.PENDING_TIMEOUT then return end
-        if p.classFile ~= m.opponent.classFile then
-            if p.kind == "HELLO" and not m.peerNonce then return end
-            return self:Unrate("opponent identity mismatch", true)
+            or self.env.now() - m.createdAt >= FD.C.PENDING_TIMEOUT then
+            return self:PeerValidation(false, "native request no longer accepts discovery", p)
         end
-        if m.peer and not self:SameProfile(p) then return self:Unrate("opponent snapshot changed", true) end
+        if p.classFile ~= m.opponent.classFile then
+            return self:PeerValidation(false, "native class mismatch", p,
+                "expected=" .. tostring(m.opponent.classFile) .. "; received=" .. p.classFile,
+                not (p.kind == "HELLO" and not m.peerNonce) and "opponent identity mismatch" or nil)
+        end
+        if m.peer and not self:SameProfile(p) then
+            return self:PeerValidation(false, "confirmed peer profile changed", p, nil, "opponent snapshot changed")
+        end
         if p.kind == "HELLO" then
             -- HELLO has no echoed nonce and may belong to an earlier duel.
             -- Reply without freezing its nonce/profile into the new request.
-            self:Send("HELLO_ACK", nil, p.nonce)
+            local queued = self:Send("HELLO_ACK", nil, p.nonce)
             self:RepeatDiscoveryConsent()
-            return
+            return self:PeerValidation(queued, queued and "native peer verified; acknowledgment queued"
+                or "acknowledgment could not be queued", p)
         end
         m.peerNonce, m.peer = p.nonce, FD.Copy(p)
         m.opponentRatingBefore = p.rating
@@ -235,9 +285,11 @@ function Duel:Receive(packet, sender)
             self:Send("HELLO_ACK")
         end
         self:RepeatDiscoveryConsent()
-        return
+        return self:PeerValidation(true, "current native request acknowledged", p)
     end
-    if not m.peer or not self:SameProfile(p) then return end
+    if not m.peer then return self:PeerValidation(false, "current request not acknowledged", p) end
+    if not self:SameProfile(p) then return self:PeerValidation(false, "confirmed peer profile mismatch", p) end
+    self:PeerValidation(true, "bound peer profile accepted", p)
     self.env.log("receive", p.kind, m.matchId)
     if p.kind == "CANCEL" then return self:Unrate("opponent kept duel unrated", false) end
     if p.kind == "ACCEPT" then
@@ -403,6 +455,7 @@ function Duel:FinalizeMatch()
     self.last = { state = "FINISHED", matchId = m.matchId, reason = record.result }
     self.active = nil
     self.env.hide()
+    self:Notify("finished", m)
     return true
 end
 
@@ -412,6 +465,7 @@ function Duel:Unrate(reason, notify)
     if notify then self:Send("CANCEL") end
     m.reason = reason
     self:Transition("UNRATED")
+    self:Notify("unrated", m)
     if m.countdownAt or m.startedAt or m.nativeAccepted then self.env.hide() end
     self.env.log("unrated", reason)
 end
@@ -443,4 +497,5 @@ function Duel:Abort(reason, notify)
     end
     self.active = nil
     self.env.hide()
+    if m then self:Notify("abort", m) end
 end

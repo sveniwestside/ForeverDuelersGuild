@@ -1,0 +1,80 @@
+{
+  "copyright": "World of Warcraft artwork © Blizzard Entertainment, Inc.",
+  "license_note": "Blizzard-owned game artwork; not covered by this project's code license. No endorsement or additional license is claimed.",
+  "transformation": "JPEG decoded as RGB and encoded as PNG; dimensions and decoded RGB pixels are unchanged.",
+  "retrieved_at_utc": "2026-10-04T15:10:54.090789+00:00",
+  "icons": [
+    {
+      "file": "warrior.png",
+      "source_url": "https://render.worldofwarcraft.com/icons/56/classicon_warrior.jpg",
+      "source_sha256": "7ede428c9a375cd2d03bc495a4956e4a0e16c1a271aee3828c2cbd0b7de95c08",
+      "png_sha256": "9921f2494d6ee2239dfb56ef996c55020558ff7e6f89bf94047d85547f8ead4e",
+      "width": 56,
+      "height": 56
+    },
+    {
+      "file": "paladin.png",
+      "source_url": "https://render.worldofwarcraft.com/icons/56/classicon_paladin.jpg",
+      "source_sha256": "9162e002766b1fdd5d3c85888151275680febc0cda657d5add5d6ad8fe705670",
+      "png_sha256": "5cf89dc6ee7558dfdbb21be0052c383bdea87c4f5b558bc28d9da811c1fee11c",
+      "width": 56,
+      "height": 56
+    },
+    {
+      "file": "hunter.png",
+      "source_url": "https://render.worldofwarcraft.com/icons/56/classicon_hunter.jpg",
+      "source_sha256": "96e353b3e0dcbdb8652b729597fa6e0d978d2363ec0df40cd9def1a21cb11365",
+      "png_sha256": "ccaf3c8149e1ea4ade338b762063157439aa8055cd42e4963db21cf2e503bd93",
+      "width": 56,
+      "height": 56
+    },
+    {
+      "file": "rogue.png",
+      "source_url": "https://render.worldofwarcraft.com/icons/56/classicon_rogue.jpg",
+      "source_sha256": "c6984f30e4e7fe87669a48aa2d361fa84e909b88150143d649a8117be263f9e3",
+      "png_sha256": "90bd60d412fab6516a8106e18977bb3cb97174c4301159b8f55b1dcaa282fcca",
+      "width": 56,
+      "height": 56
+    },
+    {
+      "file": "priest.png",
+      "source_url": "https://render.worldofwarcraft.com/icons/56/classicon_priest.jpg",
+      "source_sha256": "3e71c540e3c29e8cfb798fc9c3c4f6d4acb5bb5a5b69290cab00a528025eaae9",
+      "png_sha256": "c6566ce0ca142c325c2aa4d2eb470b364f1b35455d2b97175c1042fb5a1a224d",
+      "width": 56,
+      "height": 56
+    },
+    {
+      "file": "shaman.png",
+      "source_url": "https://render.worldofwarcraft.com/icons/56/classicon_shaman.jpg",
+      "source_sha256": "1e08364ca3f6917e0ab91bb5155fc37499c48c181ee852fb6445a3662b44e427",
+      "png_sha256": "77074ea3dd2ac6ddaf47c0def7298b751b220637bbcd913aee068725fab88d91",
+      "width": 56,
+      "height": 56
+    },
+    {
+      "file": "mage.png",
+      "source_url": "https://render.worldofwarcraft.com/icons/56/classicon_mage.jpg",
+      "source_sha256": "cbaa6a856d6e7945188a331a4663edc8980d8f1563b246938b716363b8dae0cf",
+      "png_sha256": "bb0efd975a69480b9aeec80b6d90d22e7fa77ed5e371468a35c57cd665e175bf",
+      "width": 56,
+      "height": 56
+    },
+    {
+      "file": "warlock.png",
+      "source_url": "https://render.worldofwarcraft.com/icons/56/classicon_warlock.jpg",
+      "source_sha256": "3f1f375b46861f37aedcfa0ab64e86bd3955e7154a882d8db8966f5632643186",
+      "png_sha256": "a88426e5feb99208fc076f3595d9b64be72dbe1253e7e9b3e89a3d2edc95c568",
+      "width": 56,
+      "height": 56
+    },
+    {
+      "file": "druid.png",
+      "source_url": "https://render.worldofwarcraft.com/icons/56/classicon_druid.jpg",
+      "source_sha256": "e149fa0b12c90073807e1d6b91053aa26a8c2b29bd78ce58f28347dd23e368f8",
+      "png_sha256": "6c748e426b9f4976be261369f3c461982c5fd54656431683dac4e94d5eaebf86",
+      "width": 56,
+      "height": 56
+    }
+  ]
+}

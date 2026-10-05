@@ -1,0 +1,12 @@
+ForeverDuelersGuild 0.5.1 - Alpha
+Target client: WoW: Forever 1.60.1 (interface 16001)
+
+Detect Normal/PvP/RP/Hardcore automatically from native game rules. Remove the manual ruleset selector and old scope verification gates; all search scopes are selectable before joining.
+
+Allow opponent discovery even when no tested meeting place is configured, and explain when a suitable opponent is waiting for a faction-friendly place.
+
+Add Save tested place: after a completed ordinary native duel, capture the current outdoor spot, faction and native map level information automatically and send the same record to the test partner. Both clients require their own matching successful native duel evidence. The built-in catalog stays empty. Advanced manual capture/import commands remain available.
+
+Keep queue cancellations separate from rating and history. Add regressions for automatic ruleset migration, scope controls, ordinary-duel venue capture, exact-coordinate sharing and subsequent two-client matchmaking.
+
+Local Alpha update only; live two-client acceptance remains pending. Existing rated protocol and SavedVariables schema remain version 2.

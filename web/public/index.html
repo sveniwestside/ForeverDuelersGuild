@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#202824">
+  <meta name="description" content="The ForeverDuelersGuild duel register: community ladders, confirmed duels and rating histories for World of Warcraft.">
+  <title>Duel register · ForeverDuelersGuild</title>
+  <link rel="icon" href="/assets/foreverduel-icon.png" type="image/png">
+  <script src="/theme.js"></script>
+  <link rel="stylesheet" href="/styles.css">
+  <script type="module" src="/app.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#rangliste">Skip to ladder</a>
+  <div id="preview-banner" class="preview-banner" hidden><strong>Design preview</strong><span>Sample data · Names, duels and ratings are fictional.</span></div>
+  <div id="demo-banner" class="preview-banner" hidden><strong>Demo data</strong><span>This local instance contains sample players and duels.</span></div>
+  <header class="site-header">
+    <div class="shell header-inner">
+      <a class="brand" href="#" aria-label="ForeverDuelersGuild home"><img src="/assets/foreverduel-icon.png" alt="" width="44" height="44"><span>ForeverDuelersGuild<small>WORLD OF WARCRAFT · DUEL REGISTER</small></span></a>
+      <nav class="main-nav" aria-label="Main navigation"><a class="active" href="#rangliste">Ladder</a><a href="#duelle">Duel log</a><a href="#ablauf">Rating & uploads</a></nav>
+      <button id="theme-toggle" class="theme-toggle" type="button" aria-label="Dark mode" aria-pressed="false" title="Switch to dark mode"><svg class="theme-icon theme-icon--moon" aria-hidden="true" viewBox="0 0 24 24"><path d="M20.7 13A8.5 8.5 0 0 1 11 3.3 8.5 8.5 0 1 0 20.7 13Z"/></svg><svg class="theme-icon theme-icon--sun" aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M4.9 4.9l1.4 1.4m11.4 11.4 1.4 1.4M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg></button>
+      <button class="button header-import" type="button" aria-label="Import duel history" data-open-import><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 16V4m-4 4 4-4 4 4M5 15v5h14v-5"/></svg><span>Import history</span></button>
+    </div>
+  </header>
+  <main class="shell">
+    <section class="register-heading" aria-labelledby="register-title">
+      <div class="register-title"><p class="eyebrow">FOREVERDUELERSGUILD / COMMUNITY LADDER</p><h1 id="register-title">Duel register<span>.</span></h1><p class="register-description">Duelists, results and ratings. All in one place.</p></div>
+      <div class="register-overview" aria-label="Community statistics" aria-live="polite">
+        <div class="register-stat"><strong id="stat-players">—</strong><span>Duelists</span></div><div class="register-stat"><strong id="stat-matches">—</strong><span>Confirmed duels</span></div><div class="register-updated"><span>Updated</span><strong id="stat-updated">—</strong></div>
+      </div>
+    </section>
+    <div class="register-divider"><span>ADD-ON <span data-addon-version>0.4.5</span> · BETA</span><span>MAX LEVEL & LEVELING</span></div>
+    <div class="registry-layout">
+      <section id="rangliste" class="ranking-section" aria-labelledby="ranking-title">
+        <div class="section-heading"><h2 id="ranking-title">Overall ladder</h2><span class="rating-info">Starting rating <strong id="initial-rating">1,500</strong></span></div>
+        <div class="ranking-panel">
+          <div class="ranking-toolbar">
+            <div class="mode-tabs" role="tablist" aria-label="Ladder mode"><button id="tab-max" type="button" class="mode-tab active" role="tab" aria-selected="true" aria-controls="ladder-tabpanel" data-bracket="MAX_LEVEL">Max level</button><button id="tab-leveling" type="button" class="mode-tab" role="tab" aria-selected="false" aria-controls="ladder-tabpanel" tabindex="-1" data-bracket="LEVELING">Leveling</button></div>
+            <label class="cap-filter"><span>Level cap</span><select id="level-cap"><option value="60">60</option><option value="70">70</option><option value="80">80</option><option value="85">85</option><option value="90">90</option></select></label>
+          </div>
+          <div class="class-ladder-tabs" role="tablist" aria-label="Overall or class ladder">
+            <button id="class-overall" type="button" class="class-ladder-tab active" role="tab" aria-selected="true" aria-controls="ladder-tabpanel" data-class-selector="">Overall</button>
+            <button id="class-warrior" type="button" class="class-ladder-tab" role="tab" aria-selected="false" aria-controls="ladder-tabpanel" tabindex="-1" title="Warrior ladder" data-class-selector="WARRIOR"><img src="/assets/classes/warrior.png" alt="" width="28" height="28"><span>Warrior</span></button>
+            <button id="class-paladin" type="button" class="class-ladder-tab" role="tab" aria-selected="false" aria-controls="ladder-tabpanel" tabindex="-1" title="Paladin ladder" data-class-selector="PALADIN"><img src="/assets/classes/paladin.png" alt="" width="28" height="28"><span>Paladin</span></button>
+            <button id="class-hunter" type="button" class="class-ladder-tab" role="tab" aria-selected="false" aria-controls="ladder-tabpanel" tabindex="-1" title="Hunter ladder" data-class-selector="HUNTER"><img src="/assets/classes/hunter.png" alt="" width="28" height="28"><span>Hunter</span></button>
+            <button id="class-rogue" type="button" class="class-ladder-tab" role="tab" aria-selected="false" aria-controls="ladder-tabpanel" tabindex="-1" title="Rogue ladder" data-class-selector="ROGUE"><img src="/assets/classes/rogue.png" alt="" width="28" height="28"><span>Rogue</span></button>
+            <button id="class-priest" type="button" class="class-ladder-tab" role="tab" aria-selected="false" aria-controls="ladder-tabpanel" tabindex="-1" title="Priest ladder" data-class-selector="PRIEST"><img src="/assets/classes/priest.png" alt="" width="28" height="28"><span>Priest</span></button>
+            <button id="class-shaman" type="button" class="class-ladder-tab" role="tab" aria-selected="false" aria-controls="ladder-tabpanel" tabindex="-1" title="Shaman ladder" data-class-selector="SHAMAN"><img src="/assets/classes/shaman.png" alt="" width="28" height="28"><span>Shaman</span></button>
+            <button id="class-mage" type="button" class="class-ladder-tab" role="tab" aria-selected="false" aria-controls="ladder-tabpanel" tabindex="-1" title="Mage ladder" data-class-selector="MAGE"><img src="/assets/classes/mage.png" alt="" width="28" height="28"><span>Mage</span></button>
+            <button id="class-warlock" type="button" class="class-ladder-tab" role="tab" aria-selected="false" aria-controls="ladder-tabpanel" tabindex="-1" title="Warlock ladder" data-class-selector="WARLOCK"><img src="/assets/classes/warlock.png" alt="" width="28" height="28"><span>Warlock</span></button>
+            <button id="class-druid" type="button" class="class-ladder-tab" role="tab" aria-selected="false" aria-controls="ladder-tabpanel" tabindex="-1" title="Druid ladder" data-class-selector="DRUID"><img src="/assets/classes/druid.png" alt="" width="28" height="28"><span>Druid</span></button>
+          </div>
+          <div class="filter-bar">
+            <label class="search-field"><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4 4"/></svg><input id="player-search" type="search" placeholder="Search by name" maxlength="80" autocomplete="off" aria-label="Search duelists by name"><kbd aria-hidden="true">/</kbd></label>
+            <span id="ranking-total" class="ranking-total">Loading</span>
+          </div>
+          <div id="ladder-tabpanel" role="tabpanel" aria-labelledby="tab-max">
+            <div id="ladder-status" class="inline-status" role="status" hidden></div>
+            <div class="table-scroll"><table class="ladder-table"><caption class="sr-only">Community ladder. Open a player to view their duel history and available Blizzard character data.</caption><thead><tr><th id="rank-column-label" scope="col" class="rank-cell">#</th><th scope="col">Duelist / Realm</th><th scope="col" class="level-cell">Lvl.</th><th scope="col" class="rating-cell"><span id="rating-column-label">Overall Elo</span><svg aria-hidden="true" viewBox="0 0 16 16"><path d="m5 6 3 3 3-3"/></svg></th><th scope="col" class="record-cell">W / L</th><th scope="col" class="winrate-cell">Win rate</th><th scope="col" class="detail-cell"><span class="sr-only">Profile</span></th></tr></thead><tbody id="ladder-body"></tbody></table></div>
+          </div>
+          <div class="table-footer"><span id="ranking-range">—</span><div class="pagination"><button id="previous-page" type="button" aria-label="Previous page" disabled><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m14 6-6 6 6 6"/></svg></button><span id="page-label">Page 1</span><button id="next-page" type="button" aria-label="Next page" disabled><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m10 6 6 6-6 6"/></svg></button></div></div>
+        </div>
+        <p id="ranking-footnote" class="ranking-footnote">Only duels confirmed by both participants count. Each mode has its own ladder.</p>
+      </section>
+      <aside id="duelle" class="duels-section" aria-labelledby="duels-title">
+        <div class="section-heading"><h2 id="duels-title">Duel log</h2><span class="log-mark" aria-hidden="true">↙</span></div><p class="log-description">Recently confirmed encounters</p><div id="matches-list" class="matches-grid" aria-live="polite"></div><div class="protocol-note"><strong>Two matching reports.</strong><p>A duel counts once both participants upload the same outcome.</p></div>
+      </aside>
+    </div>
+    <section id="matchups" class="comparison-section" aria-labelledby="comparison-title">
+      <div class="section-heading"><h2 id="comparison-title">Class matchup comparison</h2><span class="comparison-context">Manual baseline & leveling evidence</span></div>
+      <p class="comparison-intro">Compare the equal-skill hypothesis with the available community reports.</p>
+      <div class="comparison-filters"><label for="comparison-class">Class<select id="comparison-class" aria-label="Class to compare"></select></label><span class="comparison-versus">vs.</span><label for="comparison-opponent">Opponent<select id="comparison-opponent" aria-label="Opponent class"></select></label><label for="comparison-band">Level band<select id="comparison-band" aria-label="Level band"></select></label></div>
+      <div id="comparison-content" class="comparison-content" aria-live="polite"><p>Loading matchup data…</p></div>
+      <div class="comparison-caveat"><p><strong>Hypothesis:</strong> The manual baseline describes an assumed result between equally skilled players. It is not a measured class win rate.</p><p><strong>Population limitation:</strong> Leveling uploads are a self-selected sample of players and opponents. They do not establish max-level class balance.</p></div>
+    </section>
+    <section id="ablauf" class="rules-section" aria-labelledby="rules-title">
+      <div class="rules-title"><p class="eyebrow">RATING & REPORTS</p><h2 id="rules-title">What counts here.</h2><p>Every rating has a duel history behind it.</p></div>
+      <div class="rules-list">
+        <article class="rule"><span class="rule-index">01</span><div><h3>The duel is recorded in game.</h3><p>ForeverDuelersGuild records your duels and maintains your local add-on rating. Max-level and leveling duels stay separate.</p></div></article>
+        <article class="rule"><span class="rule-index">02</span><div><h3>Both participants upload their history.</h3><p>Two matching reports confirm the result for the website. Conflicting reports do not count towards the ladder.</p><button class="text-link" type="button" data-open-import>Import history <span aria-hidden="true">↗</span></button></div></article>
+        <article class="rule"><span class="rule-index">03</span><div><h3>The ladder recalculates its ratings.</h3><p>Everyone starts at 1,500. Leveling duels count with a maximum gap of five levels. Website ratings are calculated independently of your local add-on rating.</p></div></article>
+      </div>
+    </section>
+    <div class="source-note"><span class="source-symbol" aria-hidden="true">i</span><p><strong>About the data:</strong> Matching uploads provide community confirmation, not proof from the WoW server. Blizzard character data enriches available profiles; it does not confirm duel results.</p></div>
+  </main>
+  <footer class="site-footer"><div class="shell footer-inner"><span>ForeverDuelersGuild <span class="footer-slash">/</span> Unofficial community project</span><span>World of Warcraft and class icons © Blizzard Entertainment.</span></div></footer>
+  <dialog id="profile-dialog" class="modal profile-modal" aria-labelledby="profile-title"><div class="modal-top"><span class="eyebrow">DUEL REGISTER / CHARACTER</span><button class="icon-button" type="button" data-close-dialog aria-label="Close profile">×</button></div><div id="profile-content"></div></dialog>
+  <dialog id="import-dialog" class="modal import-modal" aria-labelledby="import-title">
+    <div class="modal-top"><span class="eyebrow">DUEL REGISTER / UPLOAD</span><button class="icon-button" type="button" data-close-dialog aria-label="Close upload">×</button></div><h2 id="import-title">Import duel history</h2><p class="modal-intro">Upload your add-on's duel reports. Once both participants report the same outcome, the duel is confirmed for the ladder.</p><div id="import-preview-notice" class="import-notice" hidden>Design preview with sample data. Uploads are disabled in this preview.</div>
+    <form id="import-form"><ol class="import-instructions">
+      <li><strong>Export your history as JSON</strong><span>Save your history with /reload or by logging out normally. Then convert the SavedVariables file to JSON using the included export tool.</span><code>python tools/export-history.py ForeverDuel.lua --output history.json</code></li>
+      <li><strong>Select your reports</strong><label class="file-input-label" for="import-file"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 16V4m-4 4 4-4 4 4M5 15v5h14v-5"/></svg><span id="file-label">Choose a JSON file</span><input id="import-file" name="history" type="file" accept="application/json,.json" required></label><span class="file-limit">Maximum 2 MB</span></li>
+      <li><strong>Enter your upload key</strong><span>The local administrator provides a key for your character.</span><label class="sr-only" for="import-token">Upload key</label><input id="import-token" type="password" placeholder="Personal upload key" autocomplete="off" required maxlength="300"></li>
+    </ol><div id="import-status" class="import-status" role="status" hidden></div><button id="import-submit" class="button import-submit" type="submit">Upload reports<svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 16V4m-4 4 4-4 4 4M5 15v5h14v-5"/></svg></button><p class="import-privacy">Your key is used for this upload and is not stored.</p></form>
+  </dialog>
+</body>
+</html>

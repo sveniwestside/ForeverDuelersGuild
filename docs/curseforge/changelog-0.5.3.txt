@@ -1,0 +1,8 @@
+ForeverDuelersGuild 0.5.3 - Alpha
+Target client: WoW: Forever 1.60.1 (interface 16001)
+
+Show a waiting dialog on the challenger as soon as its native duel request is acknowledged. The rated button stays disabled until both addons acknowledge the current request; cancel and unrated choices retain their existing behavior.
+Explain each received-message rejection in /duelrating status and saved request diagnostics: sender, participant GUID, complementary role, level/cap/class, stale request, expiry and frozen profile. Retain the relevant rejection after a manual decline instead of overwriting it with later idle traffic.
+Record native request age and participant snapshots for diagnosis. No raw packets or negotiation nonces are persisted.
+Add a regression reproducing the reported delayed-message sequence: cancel the first request, reverse duel direction, then deliver its earlier HELLO messages. Old traffic cannot bind the current request, supply consent or alter ratings.
+Live 0.5.2 traces show immediate API submissions but no receipt for about 35 seconds. This Alpha improves waiting feedback and diagnostic evidence; it does not claim to remove native client/server delivery delay. A fresh paired in-game retest remains required.

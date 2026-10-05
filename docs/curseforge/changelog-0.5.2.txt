@@ -1,0 +1,9 @@
+ForeverDuelersGuild 0.5.2 - Alpha
+Target client: WoW: Forever 1.60.1 (interface 16001)
+
+Fix outgoing native request detection for explicit player names, including Forever surnames, and empty /duel on a resolvable current target. Preserve native identity checks, authoritative request confirmation and explicit rated consent.
+Recognize documented native error identifiers as well as exact localized request/cancellation messages. Retain the original 50-second native-request deadline and reject conflicting or stale confirmations.
+Keep enrolled queue profiles fresh with paced five-second queries, and display concrete matching blockers, including both players' rating windows and missing suitable tested places.
+Allow tested-place capture and sharing in six verified Classic starting zones when native territory or level APIs return no data. Validate native map identity, level cap and faction; native restrictions remain authoritative. The built-in duel-place catalog remains empty.
+Add bounded local native-request diagnostics available through /duelrating diagnose even with chat debug off. Ratings, existing history and rated protocol remain unchanged.
+This local Alpha requires a paired in-game retest; automated simulations do not certify native API timing or delivery.

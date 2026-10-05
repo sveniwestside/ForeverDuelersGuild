@@ -1,0 +1,80 @@
+{
+  "format": "foreverduel-curseforge-preparation-v1",
+  "preparedOn": "2026-10-04",
+  "status": "automated tests passed; upload and moderation pending",
+  "project": {
+    "name": "ForeverDuelersGuild",
+    "suggestedSlug": "foreverduelersguild",
+    "nameAvailability": "project creation accepted with the requested name; public project page and slug confirmed",
+    "projectId": 1726452,
+    "projectUrl": "https://www.curseforge.com/wow/addons/foreverduelersguild",
+    "previewUrl": "https://www.curseforge.com/wow/addons/foreverduelersguild/preview",
+    "authorsUrl": "https://authors.curseforge.com/#/projects/1726452/files",
+    "owner": "sveniwestside",
+    "game": "World of Warcraft",
+    "class": "Addons",
+    "primaryCategory": "PvP",
+    "additionalCategories": [],
+    "license": "MIT License",
+    "allowComments": true,
+    "allowThirdPartyDistribution": false,
+    "unlistedProject": false,
+    "experimentalProjectFlag": false,
+    "summaryFile": "summary.txt",
+    "descriptionTextFile": "description.txt",
+    "descriptionHtmlFile": "description.html",
+    "logoFile": "foreverduelersguild-logo.png",
+    "sourceUrl": null,
+    "issuesUrl": null,
+    "websiteUrl": null
+  },
+  "file": {
+    "version": "0.5.2",
+    "displayName": "ForeverDuelersGuild 0.5.2",
+    "uploadFile": "ForeverDuelersGuild-0.5.2.zip",
+    "releaseType": "Alpha",
+    "gameFlavor": "Forever",
+    "gameVersion": "1.60.1",
+    "interface": 16001,
+    "referenceClientBuild": "1.60.1.70205",
+    "changelogFile": "changelog-0.5.2.txt",
+    "requiredDependencies": [],
+    "publishAutomaticallyAfterApproval": true
+  },
+  "publication": {
+    "submitted": false,
+    "fileId": null,
+    "fileStatus": "Not uploaded",
+    "approved": false,
+    "published": false,
+    "downloadVerified": false,
+    "installationVerified": false,
+    "recordSource": "local release preparation"
+  },
+  "validation": {
+    "userReportedTesting": {
+      "status": "not supplied for this version",
+      "version": "0.5.2"
+    },
+    "automated": {
+      "status": "passed",
+      "version": "0.5.2",
+      "executedOn": "2026-10-04",
+      "command": "python tests/run.py",
+      "runtime": "Lua 5.1",
+      "compiledLuaFiles": 46,
+      "suites": 21,
+      "assertions": 6874,
+      "pythonTests": "passed in the same pipeline run"
+    }
+  },
+  "notes": [
+    "This file is a local field worksheet, not a CurseForge API request or import format.",
+    "On 2026-10-04, the user explicitly chose 'auf curseforge beschraenken': select 'Don't allow distribution to 3rd party'. Unlisted project remains disabled as shown in the current creation form.",
+    "The public name is ForeverDuelersGuild; the ForeverDuel installation folder, manifest, SavedVariables filename, and wire identities are retained for update compatibility.",
+    "Use a regular project. The product is experimental, but the separate CurseForge Experimental project flag prevents ecosystem sync.",
+    "The initial Beta does not establish app availability: CurseForge documents a requirement for at least one Release file.",
+    "Keep the first upload as Beta for wider player feedback. User-reported test completion does not justify a Release label solely to bypass the app-sync requirement.",
+    "Do not select Retail or another Classic flavor as a substitute if Forever is absent from the upload form."
+  ]
+}

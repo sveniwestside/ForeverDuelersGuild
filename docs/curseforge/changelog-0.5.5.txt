@@ -1,0 +1,10 @@
+ForeverDuelersGuild 0.5.5 - Alpha
+Target client: WoW: Forever 1.60.1 (interface 16001)
+
+Ignores native PARTY self-echo only when the decoded participant GUID and canonical sender both match the readable current native own identity. Peer receive status, timing and rejection diagnostics remain intact. Missing or restricted identity retains the existing guards.
+
+Adds PARTY transport for ticket-bound queue controls after native confirmation of the exact two-player queue group. Membership, participant identities, queued target and original ticket sessions are rechecked; discovery profiles, place sharing and solo reservations keep WHISPER. Explicit native InvalidChatType or NotInGroup rejection permits one WHISPER fallback; other failures do not imply delivery or duplicate route sends.
+
+Checks reservation expiry before processing late acknowledgments as well as on timer ticks. Expired messages cannot start grouping or obtain a fresh invitation clock. The original 20-second reservation and invitation-after-confirmation order remain pending the user's choice of a separate bootstrap adaptation.
+
+The live 0.5.4 group check confirmed HELLO/ACK and READY on both clients within 1-2 seconds. A completed rated duel and the full queue have not yet been confirmed. Existing explicit consent, native result evidence, schema, protocol, ratings and history remain preserved. The built-in tested-place catalog stays empty.

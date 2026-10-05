@@ -44,7 +44,7 @@ function UI:Render(m)
     if not m then return self:Hide() end
     if m.state == "COUNTDOWN" or m.state == "IN_PROGRESS" or m.state == "FINISHING"
         or m.state == "FINISHED" or m.state == "UNRATED_ACTIVE" or m.nativeAccepted then return self:Hide() end
-    if m.role == "OUTGOING" and (m.state == "CHECKING_ADDON" or m.state == "DISCOVERY_WAIT" or m.state == "UNRATED") then return self:Hide() end
+    if m.role == "OUTGOING" and m.state == "UNRATED" then return self:Hide() end
     self:Create()
     local details = m.opponent.fullName .. " - " .. (m.opponent.className or m.opponent.classFile)
     if m.player.level and m.opponent.level then
@@ -60,8 +60,9 @@ function UI:Render(m)
     end
     local state = m.state
     local status = ""
-    if state == "CHECKING_ADDON" then status = "Checking for ForeverDuelersGuild..."
-    elseif state == "DISCOVERY_WAIT" then status = "ForeverDuelersGuild has not responded yet. You can accept a normal duel now."
+    if state == "CHECKING_ADDON" or state == "DISCOVERY_WAIT" then
+        status = "Waiting for opponent addon response. Rated becomes available after both addons confirm this request."
+        if m.role == "INCOMING" and state == "DISCOVERY_WAIT" then status = status .. " You can accept a normal duel now." end
     elseif state == "UNRATED" then status = (m.reason or "Rated unavailable") .. "."
     elseif state == "REMOTE_ACCEPTED" then status = "Your opponent wants this duel to count as RATED."
     elseif state == "READY" then status = "Both players must explicitly agree to a rated duel."

@@ -1,0 +1,12 @@
+ForeverDuelersGuild 0.5.7 - Alpha
+Target client: WoW: Forever 1.60.1 (interface 16001)
+
+Queue group confirmation now distinguishes native roster data that is still loading from a positively changed group. Missing party identity waits within the existing grouping deadline; an identified wrong opponent, third member or raid still cancels. Meeting-place planning and travel continue to require the exact native two-player pair.
+
+Cancellation cleanup can recognize the confirmed queue-created pair even when cancellation arrives before its first group tick. It waits for unreadable native membership instead of mislabeling that group as changed, and never leaves an unverified or different group.
+
+Grouping and venue-confirmation deadlines are checked on message receipt as well as timer ticks. Temporarily missing membership defers travel confirmations without extending the original deadline or sending a premature travel-start message.
+
+Bounded queue state, group and planning diagnostics survive reload with debug disabled. Rated receive-entry diagnostics distinguish absent native events from early gate rejection. Diagnostics do not store packet payloads, queue tickets, negotiation nonces or positions and cannot supply consent or change results.
+
+The early-cancellation and cleanup pattern is reproduced in the native-adapter two-client harness with delayed party identity. The original live cause is not fully captured by the old diagnostics, and a paired in-game queue retest is still required. Existing tested-place catalog, invitation election, reservation/travel deadlines, explicit rated choices, ratings and history schema remain compatible.

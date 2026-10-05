@@ -1,0 +1,10 @@
+ForeverDuelersGuild 0.5.4 - Alpha
+Target client: WoW: Forever 1.60.1 (interface 16001)
+
+Adds an alternate PARTY route for duel packets only when native APIs confirm a non-raid group containing exactly the two current participants, including their GUIDs and full names. Membership is checked again at send time and on every PARTY receipt. Solo and changed groups retain WHISPER; ordinary duels do not create groups automatically. The existing schema, prefix, nonce binding, native duel evidence and both explicit rated choices remain required.
+
+Preserves WHISPER compatibility when native PARTY sends explicitly reject the distribution or report no group. Throttling, unknown results and native errors do not imply delivery or cause duplicate route sends.
+
+Compacts short repeated transport/validation diagnostics while retaining first and last timestamps, repeat counts and changed guard reasons. This keeps native request evidence available longer after a failed attempt without storing complete packets or negotiations.
+
+The live 0.5.3 retest still failed discovery, with HELLO/HELLO_ACK receipts after native requests ended. PARTY delivery speed and successful live rated results require a paired retest. Pre-group queue discovery/reservation remains a separate WHISPER path and is not claimed fixed by this alternate route. Ratings, history and the empty built-in venue catalog are unchanged.

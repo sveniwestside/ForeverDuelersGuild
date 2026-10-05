@@ -23,7 +23,7 @@ for _, path in ipairs(paths) do
 end
 print(string.format("%s: compiled %d files", _VERSION, #paths))
 
-local pureModules = { "Constants", "Protocol", "Rating", "Database", "History", "Results", "Duel" }
+local pureModules = { "Constants", "Protocol", "Rating", "Database", "History", "Results", "Duel", "QueueProtocol", "Venues", "Queue" }
 local function newNamespace()
     local namespace = {}
     for _, name in ipairs(pureModules) do

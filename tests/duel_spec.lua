@@ -138,7 +138,7 @@ return function(_, equal, newNamespace)
         function w:inject(from, to, kind, changes, sender)
             local packet = from.duel:Packet(kind, kind == "RESULT" and from.identity.guid or nil)
             for key, value in pairs(changes or {}) do packet[key] = value end
-            to.duel:Receive(assert(from.fd.Protocol:Encode(packet)), sender or from.identity.fullName)
+            return to.duel:Receive(assert(from.fd.Protocol:Encode(packet)), sender or from.identity.fullName)
         end
         return w
     end
@@ -147,6 +147,83 @@ return function(_, equal, newNamespace)
         scenarioName = name
         test(world())
     end
+
+    for _, failure in ipairs({
+        { label = "opponent GUID", changes = { guid = "Player-1-CCC" }, reason = "opponent GUID mismatch", value = "Player-1-CCC" },
+        { label = "local GUID", changes = { peerGUID = "Player-1-CCC" }, reason = "local GUID mismatch", value = "Player-1-CCC" },
+        { label = "same role", changes = { role = "OUTGOING" }, reason = "duel roles are not complementary", value = "received=OUTGOING" },
+        { label = "native level", changes = { level = 31 }, reason = "native level or level cap mismatch", value = "received=31/60" },
+        { label = "native cap", changes = { maxLevel = 61 }, reason = "native level or level cap mismatch", value = "received=30/61" },
+        { label = "native class", changes = { classFile = "MAGE" }, reason = "native class mismatch", value = "received=MAGE" },
+        { label = "native sender", sender = "Other-Forever", changes = {}, reason = "sender mismatch", value = "received=Other-Forever" },
+    }) do
+        scenario("diagnose rejected " .. failure.label, function(w)
+            w:begin()
+            local sent = #w.sent
+            local accepted, detail = w:inject(w.b, w.a, "HELLO", failure.changes, failure.sender)
+            eq(accepted, false, "rejected packet reports rejection")
+            eq(detail:find(failure.reason, 1, true) ~= nil, true, "specific native prerequisite explained")
+            eq(detail:find(failure.value, 1, true) ~= nil, true, "received mismatch value retained")
+            eq(w.a.duel.active.peerStatus, detail, "current request exposes diagnosis")
+            eq(w.a.duel.active.peerNonce, nil, "diagnostics do not bind unverified peer")
+            eq(#w.sent, sent, "rejection does not acknowledge mismatched identity")
+            eq(w.a.duel:State(), "CHECKING_ADDON", "unproven packet does not poison current request")
+            eq(detail:find(w.a.duel.active.nonce, 1, true), nil, "local nonce excluded from diagnostics")
+            w:unchanged()
+        end)
+    end
+
+    scenario("diagnostic sink failure cannot prevent safe discovery", function(w)
+        w:begin()
+        local oldLog = w.a.duel.env.log
+        w.a.duel.env.log = function(topic, ...)
+            if topic == "peer validation" then error("injected diagnostic failure") end
+            oldLog(topic, ...)
+        end
+        local accepted, status = w:inject(w.b, w.a, "HELLO")
+        eq(accepted, true, "verified hello still acknowledged")
+        eq(status:find("acknowledgment queued", 1, true) ~= nil, true, "queued reply distinguished from nonce proof")
+        eq(w.a.duel.active.peerNonce, nil, "hello remains insufficient to bind a request")
+        w:flush()
+        eq(w.a.duel:State(), "READY", "logged proof failure does not interrupt discovery")
+        eq(w.b.duel:State(), "READY", "peer remains ready after diagnostic exception")
+        eq(w.a.duel.active.peerStatus:find("current native request acknowledged", 1, true) ~= nil, true,
+            "nonce-bound proof distinguished from a queued hello reply")
+        w:unchanged()
+    end)
+
+    scenario("reversed rematch rejects delayed original handshake", function(w)
+        w:begin()
+        local oldA = assert(w.a.fd.Protocol:Encode(w.a.duel:Packet("HELLO")))
+        local oldB = assert(w.b.fd.Protocol:Encode(w.b.duel:Packet("HELLO")))
+        w:advance(7, false)
+        w.a.duel:Abort("declined", true)
+        w.b.duel:Abort("declined", true)
+        w.queue = {}
+        w:advance(4, false)
+        w.a.duel:Begin("INCOMING", w.a.identity, w.b.identity)
+        w.b.duel:Begin("OUTGOING", w.b.identity, w.a.identity)
+        w:advance(24, false)
+        local sent = #w.sent
+        local acceptedA, detailA = w.a.duel:Receive(oldB, w.b.identity.fullName)
+        local acceptedB, detailB = w.b.duel:Receive(oldA, w.a.identity.fullName)
+        eq(acceptedA, false, "35-second old incoming hello rejected after reversed rematch")
+        eq(acceptedB, false, "35-second old outgoing hello rejected after reversed rematch")
+        eq(detailA:find("roles are not complementary", 1, true) ~= nil, true, "stale opposite role explained locally")
+        eq(detailB:find("roles are not complementary", 1, true) ~= nil, true, "stale opposite role explained remotely")
+        eq(#w.sent, sent, "stale original hellos do not receive acknowledgments")
+        eq(w.a.duel.active.peerNonce, nil, "old packet does not bind rematch nonce")
+        eq(w.b.duel.active.peerNonce, nil, "old packet does not bind peer rematch nonce")
+        w.queue = {}
+        local currentA = assert(w.a.fd.Protocol:Encode(w.a.duel:Packet("HELLO")))
+        local currentB = assert(w.b.fd.Protocol:Encode(w.b.duel:Packet("HELLO")))
+        w.a.duel:Receive(currentB, w.b.identity.fullName)
+        w.b.duel:Receive(currentA, w.a.identity.fullName)
+        w:flush()
+        eq(w.a.duel:State(), "READY", "current rematch can still recover discovery")
+        eq(w.b.duel:State(), "READY", "both current rematch roles acknowledged")
+        w:unchanged()
+    end)
 
     for _, proposer in ipairs({ "a", "b" }) do
         scenario("full rated match proposed by " .. proposer, function(w)

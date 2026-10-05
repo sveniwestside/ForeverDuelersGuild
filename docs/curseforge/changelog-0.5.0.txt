@@ -1,0 +1,10 @@
+ForeverDuelersGuild 0.5.0 - Alpha
+Target client: WoW: Forever 1.60.1 (interface 16001)
+
+Adds an opt-in rated-duel matchmaking queue with selectable zone/continent/ruleset reach and level tolerance, bilateral widening rating windows, reserved pairings, native group invitation attempts, faction/level-aware midpoint venues and bounded arrival timers.
+
+Travel estimates assume running below level 40 and a normal +60% mount from level 40. Same-continent plans exclude estimated trips over 15 minutes; cross-continent pairings use a faction hub and a fixed 15-minute deadline. No-shows never alter ratings; proved arrivals can requeue and proved absences receive a two-minute local queue pause.
+
+The existing explicit rated consent, duel protocol 2, rating schema 2 and native result requirements remain intact. Queue state and positions are transient. New simulations cover packet loss, concurrent offers, no-show ordering, loading screens, group ownership and API failures.
+
+This is a local Alpha preparation, not a published release. Native two-client queue validation remains outstanding. No built-in duel place is marked verified: operators must test and register a safe place and copy its identical venue record to both clients. Continent/ruleset discovery is initially gated pending paired live checks. See /duelrating queue help and MANUAL_TESTING.md.

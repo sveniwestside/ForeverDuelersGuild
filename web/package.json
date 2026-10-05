@@ -1,0 +1,14 @@
+{
+  "name": "foreverduelersguild-web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=24.15.0" },
+  "scripts": {
+    "preview": "node preview.mjs",
+    "start": "node --env-file-if-exists=.env server/server.mjs",
+    "demo": "node --env-file-if-exists=.env server/demo.mjs",
+    "manage": "node --env-file-if-exists=.env server/manage.mjs",
+    "test": "node --test server/*.test.mjs tests/*.test.mjs"
+  }
+}

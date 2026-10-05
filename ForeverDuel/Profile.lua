@@ -102,6 +102,7 @@ function Profile:Create()
     label(frame, "GameFontNormalLarge", 24, 23, 600, 25, GOLD):SetText("ForeverDuelersGuild")
     label(frame, "GameFontHighlightSmall", 24, 51, 700, 18, MUTED):SetText("YOUR DUEL RECORD  /  Local rated matches")
     self.zone = button("Players in zone", 156, 692, 25, function() FD.Zone:Show() end)
+    self.queue = button("Rated queue", 104, 580, 25, function() if FD.QueueUI then FD.QueueUI:Show() end end)
     self.close = button("Close", 72, 864, 25, function() frame:Hide() end)
     self.brackets = {}
     for index, bracket in ipairs({ "LEVELING", "MAX_LEVEL", "LEGACY" }) do

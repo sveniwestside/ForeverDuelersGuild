@@ -1,0 +1,8 @@
+ForeverDuelersGuild 0.5.6 - Alpha
+Target client: WoW: Forever 1.60.1 (interface 16001)
+
+Solo rated-duel discovery now tries one native logged-addon HELLO after four seconds without confirmation, while ordinary whisper discovery remains active. The optional path uses the existing protocol and selects logged transport only after an acknowledgment of the current native duel request. Both players still choose Rated separately; original request deadlines, identity checks and rating/result rules remain.
+
+Missing logged API or receive event, failed optional probes and unknown submission returns do not cancel ordinary discovery or establish peer confirmation. Exact native two-player PARTY transport remains preferred when grouped. Status distinguishes optional-route availability, probe delivery attempts and current-request confirmation age.
+
+This is a local Alpha test candidate for the reported solo failure. In-game solo delivery, explicit rated consent and complementary completed results still require both-client verification. No queue reservation-budget/order change or SavedVariables migration is included.
