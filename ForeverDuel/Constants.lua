@@ -1,17 +1,20 @@
 local _, FD = ...
 
 FD.C = {
-    VERSION = "0.6.0", PROTOCOL_VERSION = 2, SCHEMA_VERSION = 2,
+    VERSION = "0.6.0", PROTOCOL_VERSION = 3, SCHEMA_VERSION = 2,
     PREFIX = "ForeverDuel2", INITIAL_RATING = 1500, K_FACTOR = 32,
     MAX_LEVEL_DIFFERENCE = 5, LEVEL_RATING_WEIGHT = 20,
-    PRESENCE_TIMEOUT = 4, NEGOTIATION_TIMEOUT = 12, PENDING_TIMEOUT = 50,
-    INCOMING_RETRY_INTERVAL = 0.5,
-    HELLO_RETRY_INTERVAL = 2,
-    START_TIMEOUT = 8, RESULT_TIMEOUT = 8, MATCH_TIMEOUT = 1200,
-    RESULT_RETRIES = 2, RESULT_RETRY_INTERVAL = 1,
-    SEND_INTERVAL = 0.15, MAX_QUEUE = 24, RECENT_COUNT = 5,
+    -- The native request window bounds the human decision; no separate
+    -- negotiation timer runs inside it.
+    PENDING_TIMEOUT = 50, INCOMING_RETRY_INTERVAL = 0.5,
+    -- Seconds after Begin / after the own rated click. Retries reuse the same
+    -- nonce, so a slow route gains nothing from a dense schedule.
+    HELLO_SCHEDULE = { 0, 1, 3, 7, 15, 31 }, ACCEPT_SCHEDULE = { 0, 2, 5, 10, 20 },
+    ACK_INTERVAL = 3, DELAY_NOTICE = 8, STALE_HELLO = 10,
+    START_TIMEOUT = 8, START_REPEAT = 2, RESULT_TIMEOUT = 30, MATCH_TIMEOUT = 1200,
+    RESULT_SCHEDULE = { 2, 5, 10, 20 }, RECENT_MATCHES = 5, RECENT_TTL = 300,
+    FAILURE_WINDOW = 2, RECENT_COUNT = 5,
 }
--- The four-second presence indicator is not the native request lifetime.
 FD.C.OUTGOING_TIMEOUT = FD.C.PENDING_TIMEOUT
 
 function FD.Copy(value)

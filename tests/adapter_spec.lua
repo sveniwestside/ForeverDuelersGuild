@@ -1,252 +1,8 @@
 return function(_, equal)
-    -- Each client loads the real addon into a private Lua 5.1 environment.
-    -- Fake WoW globals never enter _G, so other suites need no cleanup.
-    local function client(options)
-        options = options or {}
-        local state = { now = 0, timers = {}, frames = {}, sent = {}, prints = {},
-            nativeVisible = false, hides = 0, accepts = 0, declines = 0,
-            registerResult = options.registerResult or 0, sendResult = 0, combat = false }
-        local env = setmetatable({}, { __index = _G })
-        env._G = env
-        local FD = {}
-        local methods = {}
-        function methods:SetSize(width, height) self.width, self.height = width, height end
-        function methods:GetWidth() return self.width or 1280 end
-        function methods:GetHeight() return self.height or 800 end
-        function methods:SetScale(value) self.scale = value end
-        function methods:SetPoint() end
-        function methods:SetFrameStrata() end
-        function methods:SetBackdrop() end
-        function methods:SetBackdropColor() end
-        function methods:SetBackdropBorderColor() end
-        function methods:SetJustifyH() end
-        function methods:SetJustifyV() end
-        function methods:SetWordWrap() end
-        function methods:SetTextColor() end
-        function methods:SetMovable() end
-        function methods:EnableMouse() end
-        function methods:SetClampedToScreen() end
-        function methods:RegisterForDrag() end
-        function methods:StartMoving() end
-        function methods:StopMovingOrSizing() end
-        function methods:SetHighlightTexture() end
-        function methods:SetText(value) self.text = value end
-        function methods:GetText() return self.text or "" end
-        function methods:SetAutoFocus() end
-        function methods:SetMaxLetters() end
-        function methods:ClearFocus() end
-        function methods:SetTextInsets() end
-        function methods:SetFontObject() end
-        function methods:CreateLine() return self:CreateFontString() end
-        function methods:SetThickness(value) self.thickness = value end
-        function methods:SetStartPoint(...) self.startPoint = { ... } end
-        function methods:SetEndPoint(...) self.endPoint = { ... } end
-        function methods:SetColorTexture(...) self.textureColor = { ... } end
-        function methods:SetEnabled(value) self.enabled = value end
-        function methods:Show() self.shown = true end
-        function methods:Hide() self.shown = false end
-        function methods:IsShown() return self.shown end
-        function methods:SetScript(name, callback) self.scripts[name] = callback end
-        function methods:RegisterEvent(event)
-            if event == "CHAT_MSG_ADDON_LOGGED" and options.loggedRegistration == "error" then error("logged event unavailable") end
-            if event == "CHAT_MSG_ADDON_LOGGED" and options.loggedRegistration == false then return false end
-            self.events[event] = true
-        end
-        local function frame()
-            local object = setmetatable({ scripts = {}, events = {}, shown = false }, { __index = methods })
-            state.frames[#state.frames + 1] = object
-            return object
-        end
-        function methods:CreateFontString() return frame() end
-        env.UIParent = frame()
-        env.CreateFrame = function(_, name)
-            local object = frame()
-            if name then env[name] = object end
-            return object
-        end
-        env.GetTime = function() return state.now end
-        env.GetServerTime = function() return 1700000000 + math.floor(state.now) end
-        env.InCombatLockdown = function() return state.combat end
-        env.IsInGroup = function() return state.grouped == true end
-        env.IsInRaid = function() return state.raid == true end
-        env.GetNumGroupMembers = function() return state.members or 0 end
-        env.C_Timer = { After = function(delay, callback)
-            state.timers[#state.timers + 1] = { at = state.now + delay, callback = callback }
-        end }
-        state.secret = {}
-        env.issecretvalue = function(value) return value == state.secret end
-        state.units = options.units or {
-            player = { guid = "Player-1-00000001", name = "Alpha", realm = "Forever", classFile = "MAGE" },
-            target = { guid = "Player-1-00000002", name = "Beta", realm = "Forever", classFile = "ROGUE" },
-        }
-        env.UnitLevel = function(unit)
-            local identity = state.units[unit]
-            if identity then return identity.level or 30 end
-        end
-        env.GetMaxPlayerLevel = function() return state.maxLevel or 60 end
-        if options.missingCap then env.GetMaxPlayerLevel = nil end
-        env.ForeverDuelDB = options.saved
-        env.UnitGUID = function(unit) return state.units[unit] and state.units[unit].guid end
-        env.UnitIsPlayer = function(unit) return state.units[unit] ~= nil end
-        env.UnitFullName = function(unit)
-            local identity = state.units[unit]
-            if identity then return identity.name, options.regionalNames and identity.surname or identity.realm end
-        end
-        env.RegionalUniqueNamesEnabled = function() return options.regionalNames or false end
-        env.UnitNameUnmodified = function(unit)
-            local identity = state.units[unit]
-            if identity then return identity.name, identity.surname end
-        end
-        env.NameUtil = { GetUnmodifiedUnitFullName = function(unit)
-            state.nameHelperCalls = (state.nameHelperCalls or 0) + 1
-            -- The exact Camelot 70170 helper contract, not the legacy helper.
-            local name, surname = env.UnitNameUnmodified(unit)
-            if surname then return name .. " " .. surname end
-            return name
-        end }
-        env.UnitClass = function(unit)
-            local identity = state.units[unit]
-            if identity then return identity.classFile, identity.classFile end
-        end
-        env.GetNormalizedRealmName = function() return "Forever" end
-        env.C_SpecializationInfo = {
-            GetSpecialization = function() return 1 end,
-            GetSpecializationInfo = function() return 62, "Arcane" end,
-        }
-        env.DEFAULT_CHAT_FRAME = { AddMessage = function(_, text) state.prints[#state.prints + 1] = text end }
-        env.SlashCmdList = {}
-        env.UISpecialFrames = {}
-        env.date = os.date
-        env.GetSpecializationNameForSpecID = function(id)
-            if id == 62 then return "Arcane" end
-            if id == 259 then return "Assassination" end
-        end
-        env.Enum = {
-            RegisterAddonMessagePrefixResult = { Success = 0, DuplicatePrefix = 1, InvalidPrefix = 2, MaxPrefixes = 3 },
-            SendAddonMessageResult = { Success = 0, AddonMessageThrottle = 3, InvalidChatType = 4,
-                NotInGroup = 5, GeneralError = 9 },
-        }
-        env.C_ChatInfo = {
-            RegisterAddonMessagePrefix = function() return state.registerResult end,
-            SendAddonMessage = function(prefix, payload, channel, target)
-                local result = options.directory and channel == "YELL" and 4 or state.sendResult
-                state.sent[#state.sent + 1] = { prefix = prefix, payload = payload, channel = channel,
-                    target = target, result = result }
-                return result
-            end,
-        }
-        if options.logged then
-            state.loggedResult = 0
-            env.C_ChatInfo.SendAddonMessageLogged = function(prefix, payload, channel, target)
-                state.loggedCalls = (state.loggedCalls or 0) + 1
-                if state.loggedError then error("logged native send unavailable") end
-                state.sent[#state.sent + 1] = { prefix = prefix, payload = payload, channel = channel,
-                    target = target, result = state.loggedResult, logged = true }
-                return state.loggedResult
-            end
-        end
-        if options.presence then
-            state.zoneMap, state.channelID = 37, 7
-            env.C_Map = { GetBestMapForUnit = function() return state.zoneMap end }
-            env.GetChannelName = function(name)
-                return state.joinedChannel == name and state.channelID or 0
-            end
-            env.JoinTemporaryChannel = function(name) state.joinedChannel = name end
-        end
-        if options.directory then
-            state.selectedChannel = 1
-            env.ChannelFrame = { IsShown = function() return false end }
-            env.GetNumDisplayChannels = function() return 2 end
-            env.GetChannelDisplayInfo = function(index)
-                if index == 1 then return "General", false, false, 1, 1, true end
-                if index == 2 then return "ForeverDuel", false, false, state.channelID,
-                    state.directoryLoaded and #options.directory or nil, true end
-            end
-            env.GetSelectedDisplayChannel = function() return state.selectedChannel end
-            env.SetSelectedDisplayChannel = function(index)
-                state.selectedChannel = index
-                if index == 2 then env.C_Timer.After(0.5, function()
-                    state.directoryLoaded = true
-                    state:emit("CHANNEL_ROSTER_UPDATE", 2, #options.directory)
-                end) end
-            end
-            env.C_ChatInfo.GetChannelRosterInfo = function(index, row)
-                local identity = state.directoryLoaded and index == 2 and options.directory[row]
-                if identity then return identity.name .. " " .. identity.surname, false, false, identity.guid end
-            end
-        end
-        env.AcceptDuel = function() state.accepts = state.accepts + 1 end
-        env.CancelDuel = function() state.declines = state.declines + 1 end
-        state.nativeAccept, state.nativeCancel = env.AcceptDuel, env.CancelDuel
-        env.StartDuel = function() end
-        env.hooksecurefunc = function(name, callback)
-            local original = env[name]
-            env[name] = function(...)
-                original(...)
-                callback(...)
-            end
-        end
-        env.StaticPopupDialogs = { DUEL_REQUESTED = { OnAccept = env.AcceptDuel, OnCancel = env.CancelDuel } }
-        state.nativeDefinition = env.StaticPopupDialogs.DUEL_REQUESTED
-        env.StaticPopup_Show = function(which, name)
-            if which == "DUEL_REQUESTED" then state.nativeVisible, state.nativeName = true, name end
-        end
-        env.StaticPopup_Hide = function(which)
-            if which == "DUEL_REQUESTED" then state.nativeVisible = false; state.hides = state.hides + 1 end
-        end
-        env.StaticPopup_Visible = function(which)
-            if which == "DUEL_REQUESTED" and state.nativeVisible then return "StaticPopup1" end
-        end
-        env.ERR_DUEL_REQUESTED = "You have requested a duel."
-        env.ERR_DUEL_CANCELLED = "Duel canceled."
-        env.GetGameMessageInfo = function(index)
-            state.messageInfoCalls = (state.messageInfoCalls or 0) + 1
-            if state.messageInfoError then error("native message mapping unavailable") end
-            return state.messageInfo and state.messageInfo[index]
-        end
-        env.DUEL_COUNTDOWN = "Duel starting: %d"
-        env.DUEL_WINNER_KNOCKOUT = "%1$s has defeated %2$s in a duel"
-        env.DUEL_WINNER_RETREAT = "%2$s has fled from %1$s in a duel"
-        local toc = assert(io.open("ForeverDuel/ForeverDuel.toc", "r"))
-        for line in toc:lines() do
-            local file = line:match("^([%w_]+%.lua)%s*$")
-            if file then
-                local chunk = assert(loadfile("ForeverDuel/" .. file))
-                setfenv(chunk, env)
-                chunk("ForeverDuel", FD)
-            end
-        end
-        toc:close()
-        function state:emit(event, ...)
-            for _, object in ipairs(self.frames) do
-                if object.events[event] then object.scripts.OnEvent(object, event, ...) end
-            end
-        end
-        function state:advance(seconds)
-            local untilTime, iterations = self.now + seconds, 0
-            while true do
-                local selected, at
-                for index, timer in ipairs(self.timers) do
-                    if timer.at <= untilTime and (not at or timer.at < at) then selected, at = index, timer.at end
-                end
-                if not selected then break end
-                iterations = iterations + 1
-                assert(iterations < 2000, "mock timer runaway")
-                local timer = table.remove(self.timers, selected)
-                self.now = at
-                timer.callback()
-            end
-            self.now = untilTime
-        end
-        function state:incoming(name)
-            self:emit("DUEL_REQUESTED", name or "Beta")
-            -- Intentionally model Blizzard running AFTER the addon handler.
-            env.StaticPopup_Show("DUEL_REQUESTED", name or "Beta")
-        end
-        state.FD, state.env = FD, env
-        state:emit("PLAYER_LOGIN")
-        return state
-    end
+    -- Each client loads the real addon into a private Lua 5.1 environment
+    -- (tests/duel_client.lua). Fake WoW globals never enter _G.
+    local Client = assert(loadfile("tests/duel_client.lua"))()
+    local function client(options) return Client.new(options) end
 
     local function packet(FD, kind)
         return assert(FD.Protocol:Encode({ kind = kind, nonce = "a", echo = kind == "HELLO" and "-" or "b",
@@ -265,12 +21,14 @@ return function(_, equal)
         equal(state.FD.duel.active, active, "debug toggle preserves the active duel")
     end
 
-    local function opponentHello(state)
+    local function opponentHello(state, changes)
         local match = state.FD.duel.active
-        return assert(state.FD.Protocol:Encode({ kind = "HELLO", nonce = "abc-feed", echo = "-",
+        local values = { kind = "HELLO", nonce = "abc-feed", echo = "-",
             guid = match.opponent.guid, peerGUID = match.player.guid, role = "OUTGOING", rating = 1500,
             specId = 0, classFile = match.opponent.classFile, wins = 0, losses = 0,
-            level = match.opponent.level, maxLevel = match.opponent.maxLevel, verdict = "-" }))
+            level = match.opponent.level, maxLevel = match.opponent.maxLevel, verdict = "-" }
+        for key, value in pairs(changes or {}) do values[key] = value end
+        return assert(state.FD.Protocol:Encode(values))
     end
 
     local function makeParty(state)
@@ -278,433 +36,25 @@ return function(_, equal)
         state.units.party1 = state.FD.Copy(state.units.target)
     end
 
-    for _, case in ipairs({
-        { name = "restricted normal payload", logged = false, field = "payload", reason = "restricted native payload" },
-        { name = "restricted logged payload", logged = true, field = "payload", reason = "restricted native payload" },
-        { name = "restricted normal channel", logged = false, field = "channel", reason = "restricted native channel" },
-        { name = "restricted logged sender", logged = true, field = "sender", reason = "restricted native sender" },
-        { name = "unsupported normal CHANNEL", logged = false, channel = "CHANNEL", reason = "unsupported native channel" },
-        { name = "unsupported logged WHISPER_INFORM", logged = true, channel = "WHISPER_INFORM", reason = "unsupported native channel" },
-        { name = "logged PARTY", logged = true, channel = "PARTY", reason = "logged event requires WHISPER" },
-        { name = "unavailable logged registration", logged = true, unavailable = true, reason = "logged event registration unavailable" },
-        { name = "restricted logged prefix", logged = true, field = "prefix", reason = "restricted native prefix" },
-    }) do
-        local state = client({ logged = true })
-        state:incoming()
-        local fd, match = state.FD, state.FD.duel.active
-        equal(fd.Comms.ingressStatusMatch, match, case.name .. " starts counts for this native request")
-        equal(fd.Comms.ingressCounts.logged + fd.Comms.ingressCounts.normal, 0,
-            case.name .. " initially distinguishes no native event")
-        local fields = { prefix = fd.C.PREFIX, payload = opponentHello(state), channel = case.channel or "WHISPER", sender = "Beta" }
-        if case.field then fields[case.field] = state.secret end
-        if case.unavailable then fd.Comms.loggedReceiveAvailable = false end
-        fd.Comms:Receive(fields.prefix, fields.payload, fields.channel, fields.sender, case.logged)
-        equal(fd.Comms.ingressCounts[case.logged and "logged" or "normal"], 1,
-            case.name .. " native event is counted before its early gate")
-        equal(fd.Comms.ingressCounts.rejected, 1, case.name .. " entry gate rejection is counted")
-        equal(fd.Comms.ingressCounts.passed, 0, case.name .. " rejected gate cannot count as passed")
-        equal(fd.Comms.ingressStatus:find(case.reason, 1, true) ~= nil, true, case.name .. " has a descriptive gate reason")
-        equal(fd.Comms.ingressStatus:find("Beta", 1, true), nil, case.name .. " stores no native sender alias")
-        equal(fd.Comms.lastReceive, nil, case.name .. " preserves original pre-receive rejection")
-        equal(fd.duel.active, match, case.name .. " diagnostics cannot abort native request")
-        equal(match.peerNonce, nil, case.name .. " diagnostics cannot prove a peer nonce")
-        equal(state.accepts, 0, case.name .. " diagnostics cannot grant consent")
-        equal(#fd.Database.data.matches, 0, case.name .. " diagnostics cannot mutate history")
+    local function lastRated(state)
+        local routed
+        for _, sent in ipairs(state.sent) do if sent.prefix == state.FD.C.PREFIX then routed = sent end end
+        return routed
     end
 
+    -- The logged-addon route and its ingress probe are gone entirely.
     do
-        local state = client({ logged = true })
-        state:incoming()
-        local fd = state.FD
-        fd.Comms:Receive("UnrelatedAddon", state.secret, state.secret, state.secret, true)
-        fd.Comms:Receive(state.secret, state.secret, state.secret, state.secret, false)
-        equal(fd.Comms.ingressCounts.normal + fd.Comms.ingressCounts.logged, 0,
-            "unrelated readable prefixes and restricted normal prefixes are never observed")
-        local initial = fd.Comms.ingressStatus
-        local untrusted = "Beta payload abc-feed"
-        fd.Comms:Receive(fd.C.PREFIX, opponentHello(state), untrusted, "Beta", true)
-        equal(fd.Comms.ingressStatus:find(untrusted, 1, true), nil, "unexpected channel text cannot enter diagnostics verbatim")
-        equal(fd.Comms.ingressStatus:find("via other", 1, true) ~= nil, true, "unknown native channel uses a bounded generic label")
-        equal(fd.Comms.ingressStatus ~= initial, true, "unexpected native channel distinguishes rejected event from no event")
-        fd.Comms:Receive(fd.C.PREFIX, opponentHello(state), "WHISPER", "Beta", false)
-        equal(fd.Comms.ingressCounts.normal, 1, "actual ordinary native event is separately counted")
-        equal(fd.Comms.ingressCounts.passed, 1, "readable own-prefix normal event passes only entry gates")
-        equal(fd.duel.active.peerNonce, nil, "passed ingress gate never replaces current-request acknowledgment")
-        local old = fd.Comms.ingressStatusMatch
-        fd.duel:Decline(); state:incoming()
-        equal(fd.Comms.ingressStatusMatch ~= old, true, "new native request resets ingress context")
-        equal(fd.Comms.ingressCounts.normal + fd.Comms.ingressCounts.logged, 0, "new request cannot inherit old event counts")
-        equal(fd.Comms.ingressStatus, "no addon event observed for current native request", "fresh status reports absence of current events")
-        fd.duel:Decline()
-        local counts, status = fd.Comms.ingressCounts, fd.Comms.ingressStatus
-        fd.Comms:Receive(fd.C.PREFIX, state.secret, "CHANNEL", "Beta", true)
-        equal(fd.Comms.ingressCounts, counts, "no active native context produces no ingress count snapshot")
-        equal(fd.Comms.ingressStatus, status, "late event cannot produce broad idle ingress diagnostics")
+        local c = client()
+        equal(c.FD.eventHandlers.CHAT_MSG_ADDON_LOGGED, nil, "no logged addon receive route")
+        equal(c.FD.Comms.ScheduleLoggedProbe, nil, "no logged probe")
+        c:incoming(); c:advance(6)
+        for _, sent in ipairs(c.sent) do equal(sent.logged, nil, "only the ordinary addon API is used") end
+        local status = table.concat(c.FD:StatusLines(), "\n")
+        equal(status:find("alternate transport", 1, true), nil, "no logged route status line")
+        equal(status:find("Queued duel packets", 1, true) ~= nil, true, "queue depth shown instead")
     end
 
-    do
-        local state = client({ logged = true })
-        state:incoming()
-        local fd, recorded = state.FD, 0
-        local original = fd.Debug.Log
-        fd.Debug.Log = function(self, topic, ...)
-            if topic == "transport ingress" then recorded = recorded + 1 end
-            return original(self, topic, ...)
-        end
-        local prints = #state.prints
-        for _ = 1, 30 do fd.Comms:Receive(fd.C.PREFIX, "not inspected", "CHANNEL", "Beta", true) end
-        equal(recorded, 1, "identical gate rejections are locally deduplicated before debug logging")
-        equal(fd.Comms.ingressCounts.logged, 30, "deduplicated gate traces retain actual native event count")
-        equal(fd.Comms.ingressCounts.rejected, 30, "deduplicated traces retain rejection count")
-        equal(#state.prints, prints, "ingress diagnostics cannot spam chat with debug disabled")
-        state:advance(10)
-        fd.Comms:Receive(fd.C.PREFIX, "not inspected", "CHANNEL", "Beta", true)
-        equal(recorded, 2, "ongoing identical rejects retain an occasional bounded trace summary")
-        fd.Comms.ingressCounts.logged, fd.Comms.ingressCounts.rejected = 1000000, 1000000
-        fd.Comms:Receive(fd.C.PREFIX, "not inspected", "CHANNEL", "Beta", true)
-        equal(fd.Comms.ingressCounts.logged, 1000000, "native ingress counters have a fixed upper bound")
-        equal(fd.Comms.ingressCounts.rejected, 1000000, "native rejection counters have a fixed upper bound")
-    end
-
-    do
-        local state = client({ logged = true })
-        state:incoming()
-        local fd, match = state.FD, state.FD.duel.active
-        local original = fd.Debug.Log
-        fd.Debug.Log = function(self, topic, ...)
-            if topic == "transport ingress" then error("injected ingress log failure") end
-            return original(self, topic, ...)
-        end
-        state:emit("CHAT_MSG_ADDON_LOGGED", fd.C.PREFIX, state.secret, "WHISPER", "Beta")
-        equal(fd.duel.active, match, "ingress debug log exception cannot abort native request")
-        equal(fd.Comms.ingressCounts.rejected, 1, "failed ingress log still preserves its bounded count")
-        state:emit("CHAT_MSG_ADDON", fd.C.PREFIX, opponentHello(state), "WHISPER", "Beta")
-        equal(fd.Comms.ingressCounts.passed, 1, "failed ingress log cannot block original guarded receive")
-        equal(fd.duel.active, match, "guarded receive retains native request after ingress log failure")
-    end
-
-    do
-        local state = client({ logged = true })
-        local fd = state.FD
-        fd.Comms.InitializeIngressMatch = function() error("injected diagnostic initialization failure") end
-        state:incoming(); state:advance(0.2)
-        equal(fd.duel:State(), "CHECKING_ADDON", "diagnostic initialization exception cannot interrupt primary request")
-        equal(state.sent[1].channel, "WHISPER", "diagnostic initialization exception cannot change primary route")
-        fd.Comms.ObserveIngress = function() error("injected ingress observer failure") end
-        state:emit("CHAT_MSG_ADDON", fd.C.PREFIX, opponentHello(state), "WHISPER", "Beta")
-        equal(fd.duel:State(), "CHECKING_ADDON", "ingress observer exception cannot interrupt original guarded receive")
-        equal(fd.duel.active.peerNonce, nil, "diagnostic exceptions cannot grant session proof")
-        equal(state.accepts, 0, "diagnostic exceptions cannot grant native consent")
-        equal(#fd.Database.data.matches, 0, "diagnostic exceptions cannot alter history")
-    end
-
-    -- The optional native logged event carries the identical strict FD2 wire.
-    -- These real adapters deliberately lose ordinary whispers, so a simulated
-    -- native receipt is the only evidence that the alternate route works.
-    local function loggedPair(options)
-        options = options or {}
-        local alpha = { guid = "Player-4613-00000001", name = "Alpha", surname = "Example", realm = "Forever", classFile = "MAGE" }
-        local beta = { guid = "Player-4619-00000002", name = "Beta", surname = "Example", realm = "Forever", classFile = "ROGUE" }
-        local a = client({ logged = true, regionalNames = true, units = { player = alpha, target = beta } })
-        local b = client({ logged = options.peerAPI ~= false, regionalNames = true, units = { player = beta, target = alpha } })
-        if options.nilResult then a.loggedResult, b.loggedResult = nil, nil end
-        a.env.StartDuel("target")
-        a:emit("CHAT_MSG_SYSTEM", a.env.ERR_DUEL_REQUESTED)
-        b:incoming("Alpha Example")
-        local counts = { normalDropped = 0, loggedHello = 0, loggedACK = 0 }
-        local delivered = { [a] = 0, [b] = 0 }
-        local function exchange(seconds)
-            for _ = 1, math.ceil((seconds or 2) / 0.2) do
-                a:advance(0.2); b:advance(0.2)
-                for _, transfer in ipairs({ { from = a, to = b, name = "Alpha Example" },
-                    { from = b, to = a, name = "Beta Example" } }) do
-                    for index = delivered[transfer.from] + 1, #transfer.from.sent do
-                        local sent = transfer.from.sent[index]
-                        if sent.prefix == a.FD.C.PREFIX then
-                            local decoded = a.FD.Protocol:Decode(sent.payload)
-                            if sent.logged and decoded.kind == "HELLO" then counts.loggedHello = counts.loggedHello + 1 end
-                            if sent.logged and decoded.kind == "HELLO_ACK" then counts.loggedACK = counts.loggedACK + 1 end
-                            local permit = sent.logged and not options.dropLogged
-                                or (not sent.logged and (options.allowNormal or options.normalACK and decoded.kind == "HELLO_ACK"))
-                            if not sent.logged and not permit then counts.normalDropped = counts.normalDropped + 1 end
-                            if permit and (sent.result == 0 or sent.logged and sent.result == nil) then
-                                local event = sent.logged and "CHAT_MSG_ADDON_LOGGED" or "CHAT_MSG_ADDON"
-                                transfer.to:emit(event, sent.prefix, sent.payload, sent.channel, transfer.name, transfer.to == a and "Alpha Example" or "Beta Example")
-                                transfer.to:emit(event, sent.prefix, sent.payload, sent.channel, transfer.name)
-                            end
-                        end
-                    end
-                    delivered[transfer.from] = #transfer.from.sent
-                end
-            end
-        end
-        return a, b, exchange, counts
-    end
-
-    for _, nilResult in ipairs({ false, true }) do
-        local a, b, exchange, counts = loggedPair({ nilResult = nilResult })
-        local originalA, originalB = a.FD.duel.active, b.FD.duel.active
-        exchange(3.8)
-        equal(counts.loggedHello, 0, "logged probe waits four seconds after primary submission")
-        equal(a.FD.duel.active.peerNonce, nil, "primary submission success cannot prove received peer")
-        exchange(2)
-        equal(a.FD.duel:State(), "READY", "logged solo challenger completes current-request handshake")
-        equal(b.FD.duel:State(), "READY", "logged solo recipient completes current-request handshake")
-        equal(a.FD.duel.active.loggedRoute, true, "accepted echoed logged ACK learns challenger route")
-        equal(b.FD.duel.active.loggedRoute, true, "accepted echoed logged ACK learns recipient route")
-        equal(counts.loggedHello, 2, "each solo request sends exactly one logged HELLO probe")
-        equal(counts.normalDropped > 0, true, "solo integration actually loses ordinary whispers")
-        equal(a.accepts + b.accepts, 0, "logged proof never grants either user's consent")
-        equal(a.grouped == true or b.grouped == true, false, "logged solo route does not create a party")
-        equal(a.FD.Comms.loggedStatusMatch, originalA, "acknowledgment age remains bound to current request")
-        equal(a.FD.Comms.loggedStatus:find("after first HELLO submission", 1, true) ~= nil, true,
-            "diagnostic describes current request age instead of packet RTT")
-        equal(a.FD.Comms.loggedStatus:find(originalA.nonce, 1, true), nil, "acknowledgment summary does not persist a nonce")
-        equal(type(originalA.firstHelloAt), "number", "first HELLO submission timing stays in memory")
-        equal(originalA.helloPaths.LOGGED.count, 1, "logged submission timing counts only one probe")
-        a.FD.UI.rated.scripts.OnClick()
-        exchange()
-        equal(b.FD.duel:State(), "REMOTE_ACCEPTED", "logged route carries explicit proposal only")
-        equal(b.accepts, 0, "one solo proposal cannot accept native duel")
-        b.FD.UI.rated.scripts.OnClick()
-        exchange()
-        equal(a.FD.duel:State(), "RATED_CONFIRMED", "logged solo challenger requires mutual explicit consent")
-        equal(b.FD.duel:State(), "RATED_CONFIRMED", "logged solo recipient requires mutual explicit consent")
-        equal(b.accepts, 1, "duplicate logged consent accepts native duel exactly once")
-        a:emit("CHAT_MSG_SYSTEM", "Duel starting: 3")
-        b:emit("CHAT_MSG_SYSTEM", "Duel starting: 3")
-        exchange()
-        a:advance(1.1); b:advance(1.1)
-        equal(a.FD.duel:State(), "IN_PROGRESS", "logged route still requires native countdown evidence")
-        equal(b.FD.duel:State(), "IN_PROGRESS", "logged peer still requires native countdown evidence")
-        a:emit("CHAT_MSG_SYSTEM", "Alpha Example has defeated Beta Example in a duel")
-        a:emit("DUEL_FINISHED")
-        b:emit("DUEL_FINISHED")
-        b:emit("CHAT_MSG_SYSTEM", "Alpha Example has defeated Beta Example in a duel")
-        exchange()
-        equal(#a.FD.Database.data.matches, 1, "logged solo winner commits one native-verified rated result")
-        equal(#b.FD.Database.data.matches, 1, "logged solo loser commits one native-verified rated result")
-        equal(a.FD.Database:GetStats().rating, 1516, "logged result updates solo winner rating")
-        equal(b.FD.Database:GetStats().rating, 1484, "logged result updates solo loser rating")
-        local result
-        for _, sent in ipairs(a.sent) do
-            if sent.prefix == a.FD.C.PREFIX and a.FD.Protocol:Decode(sent.payload).kind == "RESULT" then result = sent end
-        end
-        equal(result.logged, true, "finalized result drains through request's proven logged route")
-        a.FD.Comms:Send(result.payload, "Beta Example", originalA)
-        a:advance(0.2)
-        equal(a.sent[#a.sent].logged, true, "finalized result retains own match's proven route")
-        equal(#a.FD.Database.data.matches, 1, "logged duplicate result cannot duplicate history")
-        a:incoming("Beta Example")
-        b.env.StartDuel("target"); b:emit("CHAT_MSG_SYSTEM", b.env.ERR_DUEL_REQUESTED)
-        equal(a.FD.duel.active ~= originalA, true, "new native request gets a distinct match object")
-        equal(a.FD.duel.active.loggedRoute, nil, "new native request cannot inherit previous proven logged route")
-        equal(b.FD.duel.active ~= originalB, true, "opposite client also receives a fresh request object")
-    end
-
-    do
-        local a, b, exchange, counts = loggedPair({ allowNormal = true })
-        exchange(7)
-        equal(a.FD.duel:State(), "READY", "prompt ordinary whisper remains primary")
-        equal(b.FD.duel:State(), "READY", "prompt primary route confirms both clients")
-        equal(counts.loggedHello, 0, "primary early confirmation prevents optional probe")
-        equal(a.FD.duel.active.loggedRoute, nil, "ordinary proof does not claim logged proof")
-    end
-
-    do
-        local a, b, exchange, counts = loggedPair({ dropLogged = true })
-        exchange(9)
-        equal(counts.loggedHello, 2, "lost optional probes are bounded to one per client")
-        equal(a.FD.duel:State(), "DISCOVERY_WAIT", "lost logged probe leaves ordinary challenger negotiation active")
-        equal(b.FD.duel:State(), "DISCOVERY_WAIT", "lost logged probe leaves ordinary recipient negotiation active")
-        equal(a.FD.duel.active.peerNonce, nil, "lost logged submission cannot prove peer session")
-        equal(a.accepts + b.accepts, 0, "lost probe never implies native acceptance")
-        exchange(42)
-        equal(a.FD.duel:State(), "IDLE", "lost alternate route cannot extend native pending deadline")
-        equal(b.FD.duel:State(), "IDLE", "recipient keeps existing native pending deadline")
-        equal(#a.FD.Database.data.matches + #b.FD.Database.data.matches, 0, "lost alternate route creates no history")
-    end
-
-    for _, failure in ipairs({ "rejected", "error", "restricted", "nil" }) do
-        local state = client({ logged = true })
-        if failure == "rejected" then state.loggedResult = 4
-        elseif failure == "error" then state.loggedError = true
-        elseif failure == "restricted" then state.loggedResult = state.secret
-        else state.loggedResult = nil end
-        state:incoming(); state:advance(6)
-        equal(state.loggedCalls, 1, failure .. " optional probe is attempted only once")
-        equal(state.FD.duel:State(), "DISCOVERY_WAIT", failure .. " optional probe does not unrate ordinary request")
-        equal(state.FD.duel.active.peerNonce, nil, failure .. " optional probe never infers receipt")
-        equal(state.FD.duel.active.loggedRoute, nil, failure .. " optional probe never learns a route")
-        equal(state.accepts, 0, failure .. " optional probe cannot grant native consent")
-        equal(#state.FD.Database.data.matches, 0, failure .. " optional probe cannot create history")
-        equal(state.FD.Comms.loggedStatusMatch, state.FD.duel.active, failure .. " probe diagnosis is request-bound")
-    end
-
-    for _, registration in ipairs({ false, "error" }) do
-        local state = client({ logged = true, loggedRegistration = registration })
-        state:incoming(); state:advance(6)
-        equal(state.FD.Comms.loggedReceiveAvailable, false, "unavailable logged event registration disables optional route")
-        equal(state.loggedCalls, nil, "unregistered logged event never sends a probe")
-        equal(state.FD.duel:State(), "DISCOVERY_WAIT", "unsupported optional event preserves ordinary negotiation")
-        state.FD.Comms:Receive(state.FD.C.PREFIX, opponentHello(state), "WHISPER", "Beta", true)
-        equal(state.FD.duel.active.peerNonce, nil, "unregistered optional event cannot prove peer")
-    end
-
-    do
-        local a, b, exchange, counts = loggedPair({ peerAPI = false, normalACK = true })
-        exchange(7)
-        equal(a.FD.duel:State(), "READY", "mixed API peers can confirm using ordinary ACK")
-        equal(b.FD.duel:State(), "READY", "peer lacking optional send API retains ordinary reply")
-        equal(counts.loggedHello, 1, "only capable client sends a probe")
-        equal(a.FD.duel.active.loggedRoute, nil, "ordinary reply to logged probe does not prove logged ACK receipt")
-        equal(b.FD.duel.active.loggedRoute, nil, "peer lacking logged API cannot claim a proven logged route")
-    end
-
-    do
-        local state = client({ logged = true })
-        state:incoming()
-        state:emit("CHAT_MSG_ADDON", state.FD.C.PREFIX, opponentHello(state), "WHISPER", "Beta", true)
-        state:advance(0.2)
-        equal(state.sent[#state.sent].logged, nil, "ordinary event's fifth native field is never interpreted as logged event")
-        equal(state.FD.duel.active.loggedRoute, nil, "ordinary fifth event argument cannot promote logged route")
-        state:emit("CHAT_MSG_ADDON_LOGGED", state.FD.C.PREFIX, opponentHello(state), "PARTY", "Beta")
-        equal(state.FD.Comms.lastReceive:find("LOGGED", 1, true), nil, "optional event never borrows PARTY route")
-    end
-
-    do
-        local state = client({ logged = true })
-        state:incoming()
-        local match = state.FD.duel.active
-        local hello = opponentHello(state)
-        state:emit("CHAT_MSG_ADDON_LOGGED", state.FD.C.PREFIX, hello, "WHISPER", "Beta")
-        equal(match.peerNonce, nil, "unbound logged HELLO cannot freeze opponent session")
-        equal(match.loggedRoute, nil, "unbound logged HELLO cannot promote transport route")
-        equal(state.FD.UI.rated.enabled, false, "unbound logged HELLO cannot enable rated consent")
-        state:advance(0.4)
-        local reply = state.sent[#state.sent]
-        equal(reply.logged, true, "verified logged HELLO receives exactly scoped logged ACK")
-        equal(state.FD.Protocol:Decode(reply.payload).echo, "abc-feed", "scoped logged ACK echoes received probe nonce")
-        equal(state.FD.Comms.loggedReply, nil, "temporary reply context is cleared after receive")
-        local values = assert(state.FD.Protocol:Decode(hello))
-        values.kind, values.echo = "HELLO_ACK", match.nonce
-        values.guid = "Player-1-00000003"
-        state:emit("CHAT_MSG_ADDON_LOGGED", state.FD.C.PREFIX, assert(state.FD.Protocol:Encode(values)), "WHISPER", "Beta")
-        equal(match.loggedRoute, nil, "wrong native participant cannot promote logged route")
-        equal(match.peerNonce, nil, "wrong native participant cannot bind a nonce via logged route")
-        values.guid, values.role = match.opponent.guid, match.role
-        state:emit("CHAT_MSG_ADDON_LOGGED", state.FD.C.PREFIX, assert(state.FD.Protocol:Encode(values)), "WHISPER", "Beta")
-        equal(match.loggedRoute, nil, "same-role logged ACK cannot promote route")
-        values.role, values.echo = "OUTGOING", "abc-dead"
-        state:emit("CHAT_MSG_ADDON_LOGGED", state.FD.C.PREFIX, assert(state.FD.Protocol:Encode(values)), "WHISPER", "Beta")
-        equal(match.loggedRoute, nil, "logged ACK for another request cannot promote route")
-        equal(state.accepts, 0, "unbound and rejected logged traffic never grants native consent")
-        equal(#state.FD.Database.data.matches, 0, "unbound and rejected logged traffic never writes history")
-        values.echo = match.nonce
-        state:emit("CHAT_MSG_ADDON_LOGGED", state.FD.C.PREFIX, assert(state.FD.Protocol:Encode(values)), "WHISPER", "Beta")
-        equal(match.loggedRoute, true, "valid echoed logged ACK alone can prove alternate route")
-        local confirmed = state.FD.Comms.loggedStatus
-        state:advance(0.4)
-        equal(state.FD.Comms.loggedStatus, confirmed, "reciprocal ACK drain preserves confirmed request-age diagnosis")
-        state.FD.duel:Send("HELLO_ACK")
-        makeParty(state)
-        state:advance(0.2)
-        equal(state.sent[#state.sent].channel, "PARTY", "exact native party takes priority over proven logged route")
-        equal(state.sent[#state.sent].logged, nil, "preferred PARTY uses normal native addon API")
-    end
-
-    do
-        local state = client({ logged = true })
-        state:incoming(); makeParty(state); state:advance(6)
-        equal(state.loggedCalls, nil, "existing exact native party never probes logged whispers")
-        equal(state.sent[#state.sent].channel, "PARTY", "pending exact-party discovery retains proven party route")
-    end
-
-    do
-        local state = client({ logged = true })
-        state:incoming(); state:advance(0.2)
-        local match = state.FD.duel.active
-        local values = assert(state.FD.Protocol:Decode(opponentHello(state)))
-        values.kind, values.echo = "HELLO_ACK", match.nonce
-        local ack = assert(state.FD.Protocol:Encode(values))
-        state:emit("CHAT_MSG_ADDON", state.FD.C.PREFIX, ack, "WHISPER", "Beta")
-        equal(match.loggedRoute, nil, "first ordinary ACK learns only ordinary request proof")
-        local first = match.firstHelloAt
-        state:emit("CHAT_MSG_ADDON_LOGGED", state.FD.C.PREFIX, ack, "WHISPER", "Beta")
-        equal(match.loggedRoute, true, "later valid logged ACK can prove a second route for same request")
-        equal(match.firstHelloAt, first, "later alternate proof retains original first submission time")
-        equal(state.FD.Comms.loggedStatus:find("acknowledged via LOGGED", 1, true) ~= nil, true,
-            "later logged proof updates request-bound route summary")
-        local confirmed = state.FD.Comms.loggedStatus
-        state:emit("CHAT_MSG_ADDON", state.FD.C.PREFIX, ack, "WHISPER", "Beta")
-        equal(match.loggedRoute, true, "late duplicate ordinary ACK cannot revoke proven logged route")
-        equal(state.FD.Comms.loggedStatus, confirmed, "late duplicate ordinary ACK preserves learned-route summary")
-        values.guid, values.peerGUID, values.role = match.player.guid, match.opponent.guid, match.role
-        values.nonce = match.nonce
-        local receive, validation, rejection = state.FD.Comms.lastReceive, state.FD.Comms.lastValidation, state.FD.Comms.lastRejection
-        state:emit("CHAT_MSG_ADDON_LOGGED", state.FD.C.PREFIX, assert(state.FD.Protocol:Encode(values)), "WHISPER", "Alpha")
-        equal(state.FD.Comms.lastReceive, receive, "native own logged echo cannot overwrite peer receipt")
-        equal(state.FD.Comms.lastValidation, validation, "native own logged echo cannot overwrite peer proof")
-        equal(state.FD.Comms.lastRejection, rejection, "native own logged echo preserves prior rejection status")
-        equal(state.accepts, 0, "native own logged echo cannot grant consent")
-        equal(#state.FD.Database.data.matches, 0, "native own logged echo cannot create history")
-    end
-
-    do
-        local state = client({ logged = true })
-        state:incoming(); state:advance(4.2)
-        local old = state.FD.duel.active
-        equal(old.loggedProbeAttempted, true, "probe is queued before cancellation race")
-        state.FD.duel:Decline()
-        state:incoming()
-        local current = state.FD.duel.active
-        equal(current ~= old, true, "cancellation creates fresh incoming native context")
-        state:advance(0.4)
-        equal(state.loggedCalls, nil, "queued probe for cancelled request is never transmitted")
-        local staleACK = assert(state.FD.Protocol:Decode(opponentHello(state)))
-        staleACK.kind, staleACK.echo = "HELLO_ACK", old.nonce
-        state:emit("CHAT_MSG_ADDON_LOGGED", state.FD.C.PREFIX, assert(state.FD.Protocol:Encode(staleACK)), "WHISPER", "Beta")
-        equal(current.peerNonce, nil, "cancelled request's logged ACK cannot bind fresh same-role request")
-        equal(current.loggedRoute, nil, "cancelled request's logged ACK cannot teach fresh route")
-        state.FD.duel:Decline(); state:advance(0.6)
-        state.env.StartDuel("target"); state:emit("CHAT_MSG_SYSTEM", state.env.ERR_DUEL_REQUESTED)
-        current = state.FD.duel.active
-        equal(current.role, "OUTGOING", "native request is explicitly reversed for stale-role replay")
-        staleACK.echo = current.nonce
-        state:emit("CHAT_MSG_ADDON_LOGGED", state.FD.C.PREFIX, assert(state.FD.Protocol:Encode(staleACK)), "WHISPER", "Beta")
-        equal(current.peerNonce, nil, "opposite old native role cannot bind reversed request even with matching echo")
-        equal(current.loggedRoute, nil, "opposite old native role cannot promote reversed request route")
-        equal(state.accepts, 0, "cancelled and reversed probes do not infer rated consent")
-        equal(#state.FD.Database.data.matches, 0, "cancelled and reversed probes preserve rated history")
-    end
-
-    do
-        local state = client({ logged = true })
-        state:incoming()
-        state:emit("CHAT_MSG_ADDON_LOGGED", state.FD.C.PREFIX, opponentHello(state), "WHISPER", "Beta")
-        state.env.AcceptDuel()
-        state:advance(5)
-        equal(state.loggedCalls, nil, "queued optional ACK and future probe stop after native acceptance")
-        equal(state.FD.duel.active.loggedRoute, nil, "native acceptance cannot retroactively prove logged rated request")
-        equal(#state.FD.Database.data.matches, 0, "native ordinary acceptance after probe remains unrated")
-    end
-
-    do
-        local state = client({ logged = true })
-        state:incoming(); state:advance(49.95)
-        local hello = opponentHello(state)
-        local calls = state.loggedCalls
-        state:emit("CHAT_MSG_ADDON_LOGGED", state.FD.C.PREFIX, hello, "WHISPER", "Beta")
-        state:advance(0.4)
-        equal(state.FD.duel:State(), "IDLE", "native pending deadline closes request during queued optional ACK")
-        equal(state.loggedCalls, calls, "optional ACK does not drain after native pending deadline")
-        state:emit("CHAT_MSG_ADDON_LOGGED", state.FD.C.PREFIX, hello, "WHISPER", "Beta")
-        state:advance(0.4)
-        equal(state.FD.duel:State(), "IDLE", "late logged probe cannot recreate expired native request")
-        equal(state.loggedCalls, calls, "late logged probe outside native request cannot send ACK")
-        equal(#state.FD.Database.data.matches, 0, "expired logged traffic cannot write history")
-    end
-
+    -- Own PARTY echoes are ignored; everything else keeps the normal guards.
     do
         local state = client()
         state:incoming()
@@ -714,7 +64,7 @@ return function(_, equal)
         local receive, receivedAt, validation, rejection, peerStatus = fd.Comms.lastReceive, fd.Comms.lastReceiveAt,
             fd.Comms.lastValidation, fd.Comms.lastRejection, match.peerStatus
         local traceSize = #fd.Debug:RequestTrace(64)
-        local ownPacket = fd.duel:Packet("HELLO")
+        local ownPacket = fd.duel:Packet(match, "HELLO")
         for _, sender in ipairs({ "Alpha-Forever", "Alpha" }) do
             state:emit("CHAT_MSG_ADDON", fd.C.PREFIX, assert(fd.Protocol:Encode(ownPacket)), "PARTY", sender)
         end
@@ -761,19 +111,22 @@ return function(_, equal)
         state:incoming()
         makeParty(state)
         local fd, match = state.FD, state.FD.duel.active
-        local ownPacket = assert(fd.Protocol:Encode(fd.duel:Packet("HELLO")))
+        local ownPacket = assert(fd.Protocol:Encode(fd.duel:Packet(match, "HELLO")))
         failure[2](state)
         state:emit("CHAT_MSG_ADDON", fd.C.PREFIX, ownPacket, "PARTY", "Alpha-Forever")
         equal(fd.Comms.lastReceive:find("Alpha-Forever", 1, true) ~= nil, true,
             failure[1] .. " cannot bypass ordinary receipt diagnostics")
-        equal(fd.Comms.lastRejection:find("exact native two-player", 1, true) ~= nil, true,
-            failure[1] .. " retains fail-closed native party requirement")
+        equal(fd.Comms.lastRejection:find("sender mismatch", 1, true) ~= nil, true,
+            failure[1] .. " is still bound to the opponent's native sender")
         equal(fd.duel.active, match, failure[1] .. " diagnostic failure cannot abort current request")
         equal(match.peerNonce, nil, failure[1] .. " echo claim cannot bind a peer")
         equal(state.accepts, 0, failure[1] .. " echo claim cannot accept native duel")
         equal(#fd.Database.data.matches, 0, failure[1] .. " echo claim cannot alter history")
     end
 
+    -- The receiver's own roster view need not be exact: the server supplies
+    -- the PARTY sender and the envelope is still GUID/nonce bound. Sending
+    -- keeps the exact-party requirement and falls back to WHISPER.
     for _, invalid in ipairs({
         { "solo", function(s) s.grouped = false end },
         { "raid", function(s) s.raid = true end },
@@ -785,7 +138,6 @@ return function(_, equal)
         { "unknown party unit", function(s) s.units.party1 = nil end },
         { "wrong party GUID", function(s) s.units.party1.guid = "Player-1-00000003" end },
         { "wrong party name", function(s) s.units.party1.name = "Other" end },
-        { "changed own GUID", function(s) s.units.player.guid = "Player-1-00000003" end },
         { "restricted party GUID", function(s) s.units.party1.guid = s.secret end },
         { "party identity error", function(s)
             local original = s.env.UnitGUID
@@ -800,16 +152,15 @@ return function(_, equal)
         local hello = opponentHello(state)
         makeParty(state)
         invalid[2](state)
-        equal(state.FD.Comms:ExactDuelParty(state.FD.duel.active), false, invalid[1] .. " excludes PARTY route")
+        equal(state.FD.Comms:ExactDuelParty(state.FD.duel.active), false, invalid[1] .. " excludes PARTY sends")
         state:emit("CHAT_MSG_ADDON", state.FD.C.PREFIX, hello, "PARTY", "Beta-Forever")
-        equal(state.FD.duel.active.peerNonce, nil, invalid[1] .. " PARTY receipt cannot bind nonce")
-        equal(state.FD.Comms.lastRejection:find("exact native two-player", 1, true) ~= nil, true,
-            invalid[1] .. " PARTY receipt explains native group requirement")
+        equal(state.FD.Comms.lastValidation:find("acknowledgment queued", 1, true) ~= nil, true,
+            invalid[1] .. " PARTY receipt from the bound opponent is processed")
+        equal(state.FD.duel.active.peerNonce, nil, invalid[1] .. " a HELLO still cannot bind a nonce")
         equal(state.accepts, 0, invalid[1] .. " PARTY receipt never accepts native duel")
         equal(#state.FD.Database.data.matches, 0, invalid[1] .. " PARTY receipt never writes history")
         state:advance(0.25)
-        local routed
-        for _, sent in ipairs(state.sent) do if sent.prefix == state.FD.C.PREFIX then routed = sent end end
+        local routed = lastRated(state)
         equal(routed.channel, "WHISPER", invalid[1] .. " send falls back to ordinary whisper")
         equal(routed.target, "Beta-Forever", invalid[1] .. " whisper fallback retains exact opponent")
     end
@@ -823,112 +174,93 @@ return function(_, equal)
         equal(state.FD.Comms.lastRejection:find("sender mismatch", 1, true) ~= nil, true,
             "third-party sender cannot borrow the legitimate duel party")
         equal(state.FD.duel.active.peerNonce, nil, "outside sender cannot confirm native request")
-        local mismatched = assert(state.FD.Protocol:Decode(opponentHello(state)))
-        mismatched.peerGUID = "Player-1-00000003"
-        state:emit("CHAT_MSG_ADDON", state.FD.C.PREFIX, assert(state.FD.Protocol:Encode(mismatched)), "PARTY", "Beta-Forever")
+        state:emit("CHAT_MSG_ADDON", state.FD.C.PREFIX, opponentHello(state, { peerGUID = "Player-1-00000003" }), "PARTY", "Beta-Forever")
         equal(state.FD.Comms.lastRejection:find("local GUID mismatch", 1, true) ~= nil, true,
             "legitimate native party still requires packet participant GUIDs")
         equal(state.FD.duel.active.peerNonce, nil, "party membership cannot replace participant identity proof")
         state.members = 3
         state:advance(0.25)
-        equal(state.sent[#state.sent].channel, "WHISPER", "membership rechecked when queued HELLO drains")
+        equal(state.sent[1].channel, "WHISPER", "membership rechecked when queued HELLO drains")
         state.members = 2
-        state.FD.duel:Send("HELLO")
-        state:advance(0.25)
-        equal(state.sent[#state.sent].channel, "PARTY", "later drain uses restored exact native party")
-        equal(state.sent[#state.sent].target, nil, "native PARTY send does not use whisper target")
-        equal(state.FD.Comms.lastSend:find("via PARTY", 1, true) ~= nil, true, "send diagnosis names actual route")
         local match = state.FD.duel.active
-        state.FD.Comms:Send(assert(state.FD.Protocol:Encode(state.FD.duel:Packet("HELLO"))), "Other-Forever", match)
+        state.FD.duel:Send(match, "HELLO")
         state:advance(0.25)
-        equal(state.sent[#state.sent].channel, "WHISPER", "unrelated queued target cannot inherit duel party")
-        equal(state.sent[#state.sent].target, "Other-Forever", "explicit unrelated target remains an isolated whisper")
+        equal(lastRated(state).channel, "PARTY", "later drain uses restored exact native party")
+        equal(lastRated(state).target, nil, "native PARTY send does not use whisper target")
+        equal(state.FD.Comms.lastSend:find("via PARTY", 1, true) ~= nil, true, "send diagnosis names actual route")
+        for _, sent in ipairs(state.sent) do
+            if sent.channel == "WHISPER" then equal(sent.target, "Beta-Forever", "rated packets only reach the bound opponent") end
+        end
     end
 
+    -- Native send results are classified by FD.Outbound: route errors fall back
+    -- to WHISPER, throttles are retried, and a failed redundant HELLO never
+    -- unrates.
     for _, outcome in ipairs({
         { name = "unsupported PARTY", result = 4, fallback = true, disabled = true },
-        { name = "group lost during native send", result = 5, fallback = true, changed = true },
-        { name = "PARTY throttle", result = 3 },
-        { name = "PARTY general error", result = 9 },
+        { name = "group lost during native send", result = 5, fallback = true },
+        { name = "PARTY throttle", result = 3, retried = true },
+        { name = "PARTY general error", result = 9, retried = true },
         { name = "PARTY unknown result", result = 99 },
         { name = "PARTY restricted result", restricted = true },
         { name = "PARTY native exception", throws = true },
-        { name = "successful submission followed by group loss", result = 0, changed = true, success = true },
+        { name = "successful submission followed by group loss", result = 0, changed = true },
     }) do
         local state = client()
         state:incoming()
         makeParty(state)
-        local original = state.env.C_ChatInfo.SendAddonMessage
-        local partyResult = outcome.restricted and state.secret or outcome.result or 0
-        state.env.C_ChatInfo.SendAddonMessage = function(prefix, payload, channel, target)
-            local before = state.sendResult
-            state.sendResult = channel == "PARTY" and partyResult or 0
-            local result = original(prefix, payload, channel, target)
-            state.sendResult = before
-            if channel == "PARTY" and outcome.changed then state.grouped, state.members = false, 0 end
-            if channel == "PARTY" and outcome.throws then error("injected native send exception") end
-            return result
+        local partyResult = outcome.restricted and state.secret or outcome.throws and "error" or outcome.result or 0
+        state.sendFilter = function(prefix, payload, channel, target, result)
+            if channel ~= "PARTY" then return result end
+            if outcome.changed then state.grouped, state.members = false, 0 end
+            return partyResult
         end
         state:advance(0.25)
         local attempts = {}
         for _, sent in ipairs(state.sent) do if sent.prefix == state.FD.C.PREFIX then attempts[#attempts + 1] = sent end end
         equal(attempts[1].channel, "PARTY", outcome.name .. " initially verifies native two-player route")
-        equal(#attempts, outcome.fallback and 2 or 1, outcome.name .. " only explicit routing rejection allows one fallback")
+        equal(#attempts, outcome.fallback and 2 or 1, outcome.name .. " only an explicit routing rejection falls back at once")
         if outcome.fallback then
-            equal(attempts[2].channel, "WHISPER", outcome.name .. " attempts legacy route once")
+            equal(attempts[2].channel, "WHISPER", outcome.name .. " retries as a whisper")
             equal(attempts[2].target, "Beta-Forever", outcome.name .. " fallback targets exact opponent")
-            equal(state.FD.Comms.lastSend:find("PARTY rejected", 1, true) ~= nil, true,
-                outcome.name .. " fallback diagnosis retains original routing rejection")
         end
-        equal(state.FD.Comms.partyUnavailable, outcome.disabled == true,
+        equal(state.FD.Outbound.routeUnavailable.PARTY == true, outcome.disabled == true,
             outcome.name .. " only unsupported native chat type disables later PARTY sends")
-        equal(state.FD.duel:State(), (outcome.fallback or outcome.success) and "CHECKING_ADDON" or "UNRATED",
-            outcome.name .. " submission failure never supplies a peer acknowledgment")
+        if outcome.retried then
+            state:advance(3)
+            local retries = 0
+            for _, sent in ipairs(state.sent) do if sent.channel == "PARTY" then retries = retries + 1 end end
+            equal(retries > 1, true, outcome.name .. " is retried with backoff")
+        end
+        equal(state.FD.duel:State(), "CHECKING_ADDON", outcome.name .. " redundant discovery failure never unrates")
         equal(state.FD.duel.active.peerNonce, nil, outcome.name .. " no result implies current request proof")
         equal(state.accepts, 0, outcome.name .. " no route result accepts native duel")
         equal(#state.FD.Database.data.matches, 0, outcome.name .. " no route result writes rated history")
         if outcome.fallback then
             makeParty(state)
             partyResult = 0
-            state.FD.duel:Send("HELLO")
+            state.FD.duel:Send(state.FD.duel.active, "HELLO")
             state:advance(0.25)
-            equal(state.sent[#state.sent].channel, outcome.disabled and "WHISPER" or "PARTY",
+            equal(lastRated(state).channel, outcome.disabled and "WHISPER" or "PARTY",
                 outcome.name .. " later route respects unsupported flag or recovered membership")
         end
     end
 
+    -- A complete grouped rated duel with surname identities over PARTY only.
     do
         local alpha = { guid = "Player-1-00000001", name = "Alpha", surname = "Example", realm = "Forever", classFile = "MAGE" }
         local beta = { guid = "Player-1-00000002", name = "Beta", surname = "Example", realm = "Forever", classFile = "ROGUE" }
-        local a = client({ regionalNames = true, units = { player = alpha, target = beta, party1 = beta } })
-        local b = client({ regionalNames = true, units = { player = beta, target = alpha, party1 = alpha } })
-        a.grouped, a.members, b.grouped, b.members = true, 2, true, 2
-        a.env.StartDuel("target")
-        a:emit("CHAT_MSG_SYSTEM", a.env.ERR_DUEL_REQUESTED)
-        b:incoming("Alpha Example")
-        local originalA = a.FD.duel.active
-        local deliveredA, deliveredB, whisperDrops = 0, 0, 0
-        local function exchange()
-            for _ = 1, 10 do
-                a:advance(0.2); b:advance(0.2)
-                for _, transfer in ipairs({ { from = a, to = b, name = "Alpha Example" },
-                    { from = b, to = a, name = "Beta Example" } }) do
-                    local previous = transfer.from == a and deliveredA or deliveredB
-                    for index = previous + 1, #transfer.from.sent do
-                        local sent = transfer.from.sent[index]
-                        if sent.prefix == a.FD.C.PREFIX then
-                            if sent.channel == "PARTY" then
-                                transfer.to:emit("CHAT_MSG_ADDON", sent.prefix, sent.payload, "PARTY", transfer.name)
-                                transfer.to:emit("CHAT_MSG_ADDON", sent.prefix, sent.payload, "PARTY", transfer.name)
-                                transfer.from:emit("CHAT_MSG_ADDON", sent.prefix, sent.payload, "PARTY", transfer.name)
-                            elseif sent.channel == "WHISPER" then whisperDrops = whisperDrops + 1 end
-                        end
-                    end
-                    if transfer.from == a then deliveredA = #a.sent else deliveredB = #b.sent end
-                end
-            end
+        local net = Client.pair({ regionalNames = true, alpha = alpha, beta = beta, latency = 0.2 })
+        local a, b = net.a, net.b
+        for _, c in ipairs({ a, b }) do c.grouped, c.members, c.units.party1 = true, 2, c.units.target end
+        local whisperDrops = 0
+        net.delay = function(entry)
+            if entry.sent.channel == "WHISPER" then whisperDrops = whisperDrops + 1; return false end
+            return 0.2
         end
-        exchange()
+        net:nativeCountdown()
+        net:challenge(a)
+        net:advance(2)
         equal(a.FD.duel:State(), "READY", "real PARTY sender completes strict handshake")
         equal(b.FD.duel:State(), "READY", "real PARTY receiver completes strict handshake")
         equal(a.accepts + b.accepts, 0, "native party discovery and duplicates never imply consent")
@@ -936,47 +268,42 @@ return function(_, equal)
         equal(b.FD.Comms.lastRejection, nil, "native surname PARTY echo does not overwrite receiver peer status")
         equal(a.FD.Comms.lastReceive:find("via PARTY", 1, true) ~= nil, true, "receive diagnosis names actual route")
         a.FD.UI.rated.scripts.OnClick()
-        exchange()
+        net:advance(1)
         equal(b.FD.duel:State(), "REMOTE_ACCEPTED", "PARTY carries only explicit local rated proposal")
         equal(b.accepts, 0, "one party user's consent cannot accept native duel")
         b.FD.UI.rated.scripts.OnClick()
-        exchange()
-        equal(a.FD.duel:State(), "RATED_CONFIRMED", "party challenger reaches mutual rated agreement")
-        equal(b.FD.duel:State(), "RATED_CONFIRMED", "party receiver reaches mutual rated agreement")
-        equal(b.accepts, 1, "duplicate party consent packets accept native duel only once")
-        a:emit("CHAT_MSG_SYSTEM", "Duel starting: 3")
-        b:emit("CHAT_MSG_SYSTEM", "Duel starting: 3")
-        exchange()
-        a:advance(1.1); b:advance(1.1)
+        equal(b.accepts, 1, "both consents accept the native duel exactly once")
+        equal(b.nativeVisible, false, "after its own AcceptDuel the addon hides Blizzard's popup")
+        equal(b.hides, 1, "popup hidden once")
+        net:advance(1)
+        equal(a.FD.duel:State(), "COUNTDOWN", "party challenger observes the native countdown")
+        equal(b.FD.duel:State(), "COUNTDOWN", "party receiver observes the native countdown")
+        net:advance(3.5)
         equal(a.FD.duel:State(), "IN_PROGRESS", "party match still needs native countdown")
-        equal(b.FD.duel:State(), "IN_PROGRESS", "party peer still needs native countdown")
-        a:emit("CHAT_MSG_SYSTEM", "Alpha Example has defeated Beta Example in a duel")
-        a:emit("DUEL_FINISHED")
-        b:emit("DUEL_FINISHED")
-        b:emit("CHAT_MSG_SYSTEM", "Alpha Example has defeated Beta Example in a duel")
-        exchange()
+        net:finish(a, b)
+        net:advance(2)
         equal(#a.FD.Database.data.matches, 1, "native party winner commits one rated result")
         equal(#b.FD.Database.data.matches, 1, "native party loser commits one rated result")
         equal(a.FD.Database:GetStats().rating, 1516, "party native result updates winner rating")
         equal(b.FD.Database:GetStats().rating, 1484, "party native result updates loser rating")
-        equal(whisperDrops, 0, "complete exact-party duel does not depend on whisper delivery")
-        local finalized = a.FD.Copy(a.FD.Database.data.matches[1])
-        local lastResult
-        for _, sent in ipairs(a.sent) do
-            if sent.prefix == a.FD.C.PREFIX and a.FD.Protocol:Decode(sent.payload).kind == "RESULT" then lastResult = sent end
-        end
-        equal(lastResult.channel, "PARTY", "final result uses exact native party")
-        equal(a.FD.Comms.lastValidation:find("no pending native request", 1, true) ~= nil, true,
-            "duplicate party result after finish cannot resurrect the duel")
-        equal(a.FD.Database.data.matches[1].matchId, finalized.matchId, "duplicate party result preserves finalized history")
-        a.FD.Comms:Send(lastResult.payload, "Beta Example", originalA)
+        equal(whisperDrops, 2, "each client whispered only its first HELLO copy")
+        local result
+        for _, entry in ipairs(net.log) do if entry.from == a and entry.kind == "RESULT" then result = entry end end
+        equal(result.sent.channel, "PARTY", "final result uses exact native party")
+        local finalized = a.FD.Database.data.matches[1].matchId
+        a:emit("CHAT_MSG_ADDON", a.FD.C.PREFIX, b.sent[#b.sent].payload, "PARTY", b.senderName)
+        equal(a.FD.Comms.lastValidation:find("finalized match", 1, true) ~= nil, true,
+            "a late party result after finishing is answered from the finalized cache")
+        equal(a.FD.Database.data.matches[1].matchId, finalized, "late party result preserves finalized history")
+        local original = a.FD.duel.recent[1].match
+        a.FD.duel:Send(original, "RESULT", { verdict = original.localWinner })
         a:advance(0.25)
-        equal(a.sent[#a.sent].channel, "PARTY", "finalized RESULT drains through still-owned exact native party")
-        a.FD.Comms:Send(lastResult.payload, "Beta Example", originalA)
+        equal(lastRated(a).channel, "PARTY", "finalized RESULT drains through still-owned exact native party")
+        a.FD.duel:Send(original, "RESULT", { verdict = original.localWinner })
         a.grouped, a.members = false, 0
         a:advance(0.25)
-        equal(a.sent[#a.sent].channel, "WHISPER", "finalized RESULT rechecks group loss at drain")
-        equal(a.sent[#a.sent].target, "Beta Example", "finalized result fallback remains bound to original opponent")
+        equal(lastRated(a).channel, "WHISPER", "finalized RESULT rechecks group loss at drain")
+        equal(lastRated(a).target, "Beta Example", "finalized result fallback remains bound to original opponent")
         equal(#a.FD.Database.data.matches, 1, "finalized result route changes never duplicate rated history")
     end
 
@@ -998,10 +325,14 @@ return function(_, equal)
         local rejection = fd.Comms.lastRejection
         equal(fd.duel.active.peerStatus, rejection, "transport and active request show the same cause")
         equal(#state.prints, prints, "debug-off rejection does not add chat spam")
-        equal(fd.Debug:RequestTrace(1)[1].event, "peer validation", "rejection survives reload with debug disabled")
+        local saved
+        for _, entry in ipairs(fd.Debug:RequestTrace(64, "lifecycle")) do
+            if entry.event == "peer validation" then saved = entry end
+        end
+        equal(saved ~= nil, true, "rejection survives reload with debug disabled")
         equal(rejection:find(match.nonce, 1, true), nil, "transport diagnostic excludes local nonce")
         equal(rejection:find(values.nonce, 1, true), nil, "transport diagnostic excludes received nonce")
-        fd.duel:Decline()
+        state.env.CancelDuel()
         deliver()
         equal(fd.Comms.lastValidation:find("no pending native request", 1, true) ~= nil, true,
             "retry after decline classified as no pending native request")
@@ -1015,8 +346,6 @@ return function(_, equal)
         equal(fd.duel.active.peerNonce, nil, "transport diagnostics never confer nonce proof")
         equal(state.accepts, 0, "transport diagnostics never accept the native duel")
         equal(#fd.Database.data.matches, 0, "transport diagnostics leave rated history unchanged")
-
-        values.role = "OUTGOING"
         deliver("Other")
         equal(fd.Comms.lastRejection:find("sender mismatch", 1, true) ~= nil, true,
             "normalized sender mismatch retains a specific rejection")
@@ -1030,17 +359,19 @@ return function(_, equal)
     equal(c.env.ForeverDuelDB, c.FD.Database.data, "SavedVariables references initialized database")
     equal(c.FD.Comms.available, true, "register enum zero means success")
     c:incoming()
-    equal(c.FD.UI.frame:IsShown(), true, "replacement exists before native suppression")
-    equal(c.nativeVisible, true, "native shown after addon event handler")
-    equal(c.hides, 0, "native is not hidden synchronously")
-    c:advance(0)
-    equal(c.nativeVisible, false, "deferred replacement wins event ordering")
+    equal(c.FD.duel:State(), "CHECKING_ADDON", "incoming request starts discovery")
+    equal(c.FD.UI.frame:IsShown(), false, "nothing is shown before the challenger is proven")
+    equal(c.nativeVisible, true, "Blizzard's popup stays the ordinary choice")
+    c:advance(1)
+    equal(c.hides, 0, "the native popup is never hidden or replaced")
     equal(c.env.StaticPopupDialogs.DUEL_REQUESTED, c.nativeDefinition, "native definition identity preserved")
     equal(c.nativeDefinition.OnAccept, c.nativeAccept, "native accept callback preserved")
     equal(c.nativeDefinition.OnCancel, c.nativeCancel, "native cancel callback preserved")
     equal(c.accepts, 0, "discovery never accepts underlying duel")
-    c.FD.UI.normal.scripts.OnClick()
-    equal(c.accepts, 1, "ordinary button accepts immediately without handshake")
+    c.env.AcceptDuel()
+    equal(c.accepts, 1, "Blizzard's Accept starts the ordinary duel at once")
+    equal(c.FD.duel:State(), "UNRATED", "Blizzard's Accept is an unrated choice")
+    equal(#c.prints, 0, "an unanswered challenger causes no chat output")
     equal(#c.FD.Database.data.matches, 0, "ordinary acceptance stores no rated match")
     equal(c.FD.Database:GetStats().rating, 1500, "ordinary acceptance leaves rating unchanged")
 
@@ -1049,9 +380,8 @@ return function(_, equal)
         if timing == "before" then toggleDebugOff(c) end
         c:incoming()
         if timing == "during" then toggleDebugOff(c) end
-        equal(c.FD.UI.frame:IsShown(), true, "debug toggled " .. timing .. " request preserves replacement")
-        c:advance(c.FD.C.SEND_INTERVAL)
-        equal(c.nativeVisible, false, "debug toggled " .. timing .. " request preserves native suppression")
+        c:advance(0.2)
+        equal(c.nativeVisible, true, "debug toggled " .. timing .. " request keeps the native popup")
         equal(c.FD.duel:State(), "CHECKING_ADDON", "debug toggle preserves discovery")
         equal(c.FD.Protocol:Decode(c.sent[1].payload).kind, "HELLO", "debug off still sends handshake")
         equal(c.accepts, 0, "debug toggle cannot accept underlying duel")
@@ -1061,20 +391,27 @@ return function(_, equal)
     toggleDebugOff(c)
     local delayedOpponent = c.units.target
     c.units.target = nil
+    local printsBefore = #c.prints
     c:incoming()
     equal(c.FD.duel.active, nil, "unresolved incoming request retains native flow initially")
     equal(c.nativeVisible, true, "unresolved request remains answerable")
+    equal(#c.prints, printsBefore, "unknown challenger gets no targeting hint")
     c:advance(2)
     c.units.target = delayedOpponent
     c:advance(0.5)
-    equal(c.FD.UI.frame:IsShown(), true, "late native identity recovers replacement with debug disabled")
-    equal(c.nativeVisible, false, "recovered replacement suppresses pending native popup")
+    equal(c.FD.duel:State(), "CHECKING_ADDON", "late native identity starts discovery with debug disabled")
     equal(c.FD.duel.active.createdAt, 0, "recovered request preserves original native request time")
     equal(c.accepts, 0, "identity recovery requires explicit duel acceptance")
     c:advance(c.FD.C.PENDING_TIMEOUT - c.now)
     equal(c.FD.duel.active, nil, "identity recovery cannot extend the original pending timeout")
-    equal(c.FD.UI.frame:IsShown(), false, "original deadline removes recovered replacement")
-    equal(c.nativeVisible, true, "original deadline restores ordinary native choice")
+    equal(c.nativeVisible, true, "the native popup was never touched")
+
+    c = client()
+    c.FD.Presence.FindByName = function(_, name) if name == "Beta-Forever" then return { fullName = name } end end
+    c.units.target = nil
+    c:incoming()
+    equal(#c.prints, 1, "a known addon user gets one targeting hint")
+    equal(c.prints[1]:find("target the challenger", 1, true) ~= nil, true, "hint explains the native identity check")
 
     local stopPending = {
         { "native acceptance", function(state) state.env.AcceptDuel() end },
@@ -1082,11 +419,6 @@ return function(_, equal)
         { "native cancellation", function(state) state:emit("CHAT_MSG_SYSTEM", state.env.ERR_DUEL_CANCELLED) end },
         { "countdown", function(state) state:emit("CHAT_MSG_SYSTEM", "Duel starting: 3") end },
         { "finished duel", function(state) state:emit("DUEL_FINISHED") end },
-        { "combat", function(state)
-            state.combat = true
-            state:emit("PLAYER_REGEN_DISABLED")
-            state.combat = false
-        end },
         { "world transition", function(state) state:emit("PLAYER_LEAVING_WORLD") end },
         { "logout", function(state) state:emit("PLAYER_LOGOUT") end },
         { "addon error", function(state) state.FD:Safe(function() error("injected pending failure") end) end },
@@ -1112,9 +444,33 @@ return function(_, equal)
         c.units.target = opponent
         c:advance(1)
         equal(c.FD.duel.active, nil, scenario[1] .. " prevents late identity from reviving negotiation")
-        equal(c.FD.UI.frame:IsShown(), false, scenario[1] .. " leaves no stale replacement")
-        equal(c.hides, 0, scenario[1] .. " does not suppress the native flow")
+        equal(c.FD.UI.frame:IsShown(), false, scenario[1] .. " leaves no stale panel")
+        equal(c.hides, 0, scenario[1] .. " does not touch the native flow")
     end
+
+    -- Combat no longer stops native identity resolution or capture; it only
+    -- disables the rated button until combat ends.
+    c = client()
+    delayedOpponent = c.units.target
+    c.units.target = nil
+    c:incoming()
+    c.combat = true
+    c:emit("PLAYER_REGEN_DISABLED")
+    c.units.target = delayedOpponent
+    c:advance(1)
+    equal(c.FD.duel:State(), "CHECKING_ADDON", "a request that began in combat still discovers its peer")
+    c:emit("CHAT_MSG_ADDON", c.FD.C.PREFIX, opponentHello(c), "WHISPER", "Beta-Forever")
+    local ack = assert(c.FD.Protocol:Decode(opponentHello(c)))
+    ack.kind, ack.echo = "HELLO_ACK", c.FD.duel.active.nonce
+    c:emit("CHAT_MSG_ADDON", c.FD.C.PREFIX, assert(c.FD.Protocol:Encode(ack)), "WHISPER", "Beta-Forever")
+    equal(c.FD.duel:State(), "READY", "peer proven during combat")
+    equal(c.FD.UI.frame:IsShown(), true, "companion shown")
+    equal(c.FD.UI.rated.enabled, false, "rated choice disabled in combat")
+    equal(c.FD.UI.body.text:find("Leave combat", 1, true) ~= nil, true, "combat hint visible")
+    c.combat = false
+    c:emit("PLAYER_REGEN_ENABLED")
+    equal(c.FD.UI.rated.enabled, true, "leaving combat re-enables the rated choice")
+    equal(c.FD.UI.frame.points[1][2], c.popupFrame, "companion anchored below Blizzard's visible popup")
 
     c = client()
     c.env.StaticPopup_Visible = nil
@@ -1165,8 +521,8 @@ return function(_, equal)
     c:incoming()
     c.env.AcceptDuel()
     equal(c.FD.duel:State(), "UNRATED", "external native acceptance immediately invalidates negotiation")
-    equal(c.FD.duel.active.nativeAccepted, true, "external acceptance cannot later restore a pending popup")
-    equal(c.FD.UI.frame:IsShown(), false, "external acceptance removes owned negotiation UI")
+    equal(c.FD.duel.active.nativeAccepted, true, "external acceptance is final")
+    equal(c.FD.UI.frame:IsShown(), false, "external acceptance leaves no panel")
     c:advance(c.FD.C.PENDING_TIMEOUT)
     equal(c.FD.Database:GetStats().rating, 1500, "external acceptance cannot retroactively rate")
 
@@ -1174,17 +530,16 @@ return function(_, equal)
     c:incoming()
     c:incoming("Unknown")
     c:advance(0)
-    equal(c.nativeVisible, true, "stale deferred hide leaves a newer unknown request visible")
+    equal(c.nativeVisible, true, "a newer unknown request stays visible")
     equal(c.FD.duel.active, nil, "unknown incoming identity creates no session")
-    equal(c.FD.UI.frame:IsShown(), false, "unknown incoming identity retains native-only flow")
-    equal(c.hides, 0, "stale suppression callback has no side effect")
+    equal(c.hides, 0, "no suppression side effect")
 
     c = client()
     c:incoming()
     c:advance(c.FD.C.PENDING_TIMEOUT)
     equal(c.FD.duel.active, nil, "pending timeout clears addon session")
-    equal(c.nativeVisible, true, "pending timeout restores still-pending native dialog")
-    equal(c.FD.UI.frame:IsShown(), false, "timeout removes owned dialog")
+    equal(c.nativeVisible, true, "the still-pending native popup was never touched")
+    equal(c.shows, 1, "the addon never re-shows Blizzard's popup")
 
     c = client()
     c:incoming()
@@ -1192,12 +547,9 @@ return function(_, equal)
     c.combat = true
     c:emit("PLAYER_REGEN_DISABLED")
     equal(c.FD.duel:State(), "UNRATED", "combat during negotiation fails unrated")
-    equal(c.FD.UI.frame:IsShown(), true, "combat cancellation preserves ordinary buttons")
-    c:advance(c.FD.C.PENDING_TIMEOUT)
-    equal(c.FD.duel:State(), "UNRATED", "combat expiry retains only an unrated pending request")
-    equal(c.FD.UI.frame:IsShown(), true, "combat expiry cannot remove both duel dialogs")
-    c.FD.UI.normal.scripts.OnClick()
-    equal(c.accepts, 1, "normal acceptance remains available after combat expiry")
+    equal(c.FD.duel.active.reason, "combat", "combat reason recorded")
+    c.env.AcceptDuel()
+    equal(c.accepts, 1, "Blizzard's accept remains available after combat")
 
     c = client()
     c:incoming()
@@ -1206,16 +558,22 @@ return function(_, equal)
     c.FD.duel:Later(0.25, active, function() error("injected timer failure") end)
     c:advance(0.25)
     equal(c.FD.duel.active, nil, "timer exception clears rated session")
-    equal(c.nativeVisible, true, "timer exception restores ordinary duel dialog")
+    equal(c.nativeVisible, true, "timer exception keeps the ordinary duel dialog")
+    equal(#c.FD.Debug:Errors(), 1, "timer exception persisted")
     equal(c.FD.Database:GetStats().rating, 1500, "timer exception does not rate")
 
     c = client()
     c:incoming()
-    c:advance(0)
-    c.FD.Protocol.Decode = function() error("injected transport timer failure") end
-    c:advance(c.FD.C.SEND_INTERVAL)
-    equal(c.FD.duel.active, nil, "transport timer exception clears session")
-    equal(c.nativeVisible, true, "transport timer exception restores ordinary flow")
+    local log = c.FD.Debug.Log
+    c.FD.Debug.Log = function(self, topic, ...)
+        if topic == "transport send" then error("injected send result failure") end
+        return log(self, topic, ...)
+    end
+    c:advance(0.25)
+    equal(c.FD.duel.active, nil, "a send-result callback exception stops the rated flow")
+    equal(#c.FD.Debug:Errors() > 0, true, "send-result callback exception persisted")
+    equal(c.nativeVisible, true, "send-result exception keeps the ordinary flow")
+    c.FD.Debug.Log = log
 
     c = client()
     c:emit("CHAT_MSG_SYSTEM", c.env.ERR_DUEL_REQUESTED)
@@ -1223,6 +581,10 @@ return function(_, equal)
     c.env.StartDuel("missing")
     c:emit("CHAT_MSG_SYSTEM", c.env.ERR_DUEL_REQUESTED)
     equal(c.FD.duel.active, nil, "unresolved requested unit never falls back to current target")
+    equal(#c.prints, 1, "the challenger is told once that tracking could not attach")
+    equal(c.prints[1]:find("could not attach", 1, true) ~= nil, true, "untracked challenge explained")
+    c:emit("CHAT_MSG_SYSTEM", c.env.ERR_DUEL_REQUESTED)
+    equal(#c.prints, 1, "the explanation is not repeated")
     c:emit("CHAT_MSG_SYSTEM", c.env.ERR_DUEL_CANCELLED)
     c.env.StartDuel("target")
     equal(c.FD.duel.active, nil, "StartDuel attempt alone does not open rated session")
@@ -1263,11 +625,11 @@ return function(_, equal)
     equal(diagnostic.detail:find("ERR_DUEL_REQUESTED", 1, true) ~= nil, true,
         "native notice diagnosis contains reliable mapped error name")
 
-    -- Every native attempt that cannot be associated with an exact identity
-    -- can still have an outstanding server acknowledgment. A later readable
-    -- target must not acquire rated or venue state from the first notice.
+    -- An attempt without an exact identity may still produce an unqualified
+    -- acknowledgment: block other captures for that attempt's own window,
+    -- never longer, and tell the user only if a request actually went out.
     for _, failure in ipairs({
-        { "missing identity", function(state) return "missing" end },
+        { "missing identity", function() return "missing" end },
         { "restricted argument", function(state) return state.secret end },
         { "nil argument", function() return nil end },
         { "ambiguous name", function(state)
@@ -1275,7 +637,6 @@ return function(_, equal)
             return "Beta"
         end },
         { "restricted identity", function(state) state.units.target.guid = state.secret; return "target" end },
-        { "native combat", function(state) state.combat = true; return "target" end },
     }) do
         local failed = client()
         failed.env.StartDuel(failure[2](failed))
@@ -1284,17 +645,17 @@ return function(_, equal)
         equal(firstDeadline, failed.now + failed.FD.C.OUTGOING_TIMEOUT, failure[1] .. " quarantines native attempt")
         equal(failed.FD.Wow.outgoing, nil, failure[1] .. " keeps no candidate that can consume an acknowledgment")
         failed.units.target = { guid = "Player-1-00000004", name = "Gamma", realm = "Forever", classFile = "WARRIOR" }
-        failed.combat = false
+        failed.units.focus = nil
         failed:advance(1)
         failed.env.StartDuel("target")
         equal(failed.FD.Wow.outgoing, nil, failure[1] .. " refuses to bind the second request during ambiguity window")
+        equal(failed.FD.Wow.outgoingBlockedUntil, firstDeadline, failure[1] .. " a later attempt never extends the block")
         failed.messageInfo = { [701] = "ERR_DUEL_REQUESTED" }
         failed:emit("UI_INFO_MESSAGE", 701, "Delayed request acknowledgment from first attempt.")
         equal(failed.FD.duel.active, nil, failure[1] .. " late native notice cannot create a rated context for Gamma")
         equal(failed.FD.QueueWow.venueTestPending, nil, failure[1] .. " late native notice cannot create a venue test context")
-        equal(failed.FD.Wow.outgoingBlockedUntil, failed.now + failed.FD.C.OUTGOING_TIMEOUT,
-            failure[1] .. " second native attempt receives its own ambiguity window")
-        failed:advance(failed.FD.C.OUTGOING_TIMEOUT + 0.01)
+        equal(failed:printed("another duel request is still pending"), true, failure[1] .. " the user learns why")
+        failed:advance(failed.FD.C.OUTGOING_TIMEOUT)
         failed.env.StartDuel("target")
         equal(failed.FD.Wow.outgoing.opponent.guid, "Player-1-00000004", failure[1] .. " fresh retry after expiry captures exact Gamma")
         equal(failed.FD.duel.active, nil, failure[1] .. " retry still requires its own native notice")
@@ -1316,6 +677,37 @@ return function(_, equal)
         equal(failed.FD.Wow.outgoing ~= nil, true, ending[1] .. " allows new exact native request immediately")
     end
 
+    -- Native failure notices within two seconds of StartDuel clear the capture.
+    for _, notice in ipairs({
+        { "mapped out of range", 51, "Out of range.", { [51] = "ERR_OUT_OF_RANGE" } },
+        { "unmapped out of range text", 52, "Out of range." },
+        { "target dueling", 53, "Target is currently dueling" },
+    }) do
+        c = client()
+        c.messageInfo = notice[4]
+        c.env.StartDuel("target")
+        c:emit("UI_ERROR_MESSAGE", notice[2], notice[3])
+        equal(c.FD.Wow.outgoing, nil, notice[1] .. " clears the failed capture")
+        equal(c.FD.Wow:RequestDuel("target"), true, notice[1] .. " does not block the next request")
+        equal(c.startedUnit, "target", notice[1] .. " the addon request reaches StartDuel")
+        c:emit("CHAT_MSG_SYSTEM", c.env.ERR_DUEL_REQUESTED)
+        equal(c.FD.duel:State(), "CHECKING_ADDON", notice[1] .. " retry is tracked")
+    end
+    c = client()
+    c.env.StartDuel("target")
+    c:advance(2.5)
+    c:emit("UI_ERROR_MESSAGE", 51, "Out of range.")
+    equal(c.FD.Wow.outgoing ~= nil, true, "a failure notice long after the attempt belongs to something else")
+    c = client()
+    c.env.StartDuel("target")
+    c:emit("UI_ERROR_MESSAGE", 51, "Out of range.")
+    c:emit("CHAT_MSG_SYSTEM", c.env.ERR_DUEL_REQUESTED)
+    equal(c.FD.duel:State(), "CHECKING_ADDON", "a misattributed failure without a newer attempt keeps the acknowledgment usable")
+    c = client()
+    c.env.StartDuel("missing")
+    c:emit("UI_ERROR_MESSAGE", 51, "Out of range.")
+    equal(c.FD.Wow.outgoingBlockedUntil, nil, "a failed unidentified attempt releases its own block")
+
     -- Blizzard's secure /duel handler passes its explicit name, rather than a
     -- unit token. Native UnitGUID(name) can be unavailable while party1 is an
     -- exact readable source for that same full surname identity.
@@ -1326,13 +718,13 @@ return function(_, equal)
     equal(c.FD.Wow.outgoing.opponent.guid, namedPeer.guid, "explicit full surname capture resolved from native party unit")
     equal(c.FD.duel.active, nil, "resolved name still requires a native request acknowledgment")
     c:advance(5)
-    equal(c.FD.Wow.outgoing ~= nil, true, "native capture survives the four second addon discovery UI timeout")
+    equal(c.FD.Wow.outgoing ~= nil, true, "native capture survives several seconds without acknowledgment")
     c.messageInfo = { [701] = "ERR_DUEL_REQUESTED", [702] = "ERR_DUEL_CANCELLED" }
     c:emit("UI_INFO_MESSAGE", 701, "Request sent to Beta Brave.")
     equal(c.FD.duel:State(), "CHECKING_ADDON", "native mapped notice identifies request despite formatted text")
     equal(c.FD.duel.active.opponent.guid, namedPeer.guid, "typed request acknowledgment retains exact captured GUID")
     equal(c.FD.duel.active.createdAt, 0, "delayed acknowledgment does not restart native request deadline")
-    equal(c.FD.duel.active.localAccepted, nil, "native request notice never grants rated consent")
+    equal(c.FD.duel.active.localConsent, nil, "native request notice never grants rated consent")
     equal(c.accepts, 0, "mapped notice does not accept the native duel")
     c:emit("UI_ERROR_MESSAGE", 702, "Formatted cancel notice.")
     equal(c.FD.duel.active, nil, "native mapped cancel ends the same request without text matching")
@@ -1409,9 +801,69 @@ return function(_, equal)
     c = client()
     c.env.StartDuel("target")
     c.units.mouseover = { guid = "Player-1-00000003", name = "Gamma", realm = "Forever", classFile = "WARRIOR" }
+    c:advance(10)
     c.env.StartDuel("mouseover")
+    equal(c.FD.Wow.outgoingBlockedUntil, c.FD.C.OUTGOING_TIMEOUT, "a different target is blocked only for the original window")
     c:emit("CHAT_MSG_SYSTEM", c.env.ERR_DUEL_REQUESTED)
     equal(c.FD.duel.active, nil, "overlapping attempts make unqualified acknowledgement ambiguous")
+    c = client()
+    c.env.StartDuel("target")
+    c:advance(10)
+    c.env.StartDuel("target")
+    equal(c.FD.Wow.outgoingBlockedUntil, nil, "a repeated request to the same player is never blocked")
+    equal(c.FD.Wow.outgoing.at, 10, "the newer attempt replaces the capture")
+    c:emit("CHAT_MSG_SYSTEM", c.env.ERR_DUEL_REQUESTED)
+    equal(c.FD.duel:State(), "CHECKING_ADDON", "the repeated request is tracked")
+    equal(c.FD.duel.active.createdAt, 10, "native window starts at the newer attempt")
+
+    -- A challenger still in combat (e.g. right after a duel) is tracked.
+    c = client()
+    c.combat = true
+    c.env.StartDuel("target")
+    equal(c.FD.Wow.outgoing ~= nil, true, "combat does not block outgoing capture")
+    c:emit("CHAT_MSG_SYSTEM", c.env.ERR_DUEL_REQUESTED)
+    equal(c.FD.duel:State(), "CHECKING_ADDON", "combat request starts discovery")
+    equal(c.FD.Wow:RequestDuel("party1"), false, "addon buttons refuse while a duel is active")
+
+    -- StartDuel(unit, exactMatch, toTheDeath): a Hardcore duel to the death
+    -- is never tracked, and it makes a pending acknowledgment ambiguous.
+    c = client()
+    c.env.StartDuel("target", true, true)
+    equal(c.FD.Wow.outgoing, nil, "duel to the death is not captured")
+    c:emit("CHAT_MSG_SYSTEM", c.env.ERR_DUEL_REQUESTED)
+    equal(c.FD.duel.active, nil, "its acknowledgment starts no rated flow")
+    equal(#c.prints, 0, "and prints nothing")
+    c = client()
+    c.env.StartDuel("target")
+    c.env.StartDuel("target", true, true)
+    equal(c.FD.Wow.outgoing, nil, "a death request discards the pending capture")
+    c:emit("CHAT_MSG_SYSTEM", c.env.ERR_DUEL_REQUESTED)
+    equal(c.FD.duel.active, nil, "an acknowledgment that may belong to the death request is not rated")
+
+    -- FD.Wow:RequestDuel is the single entry for addon duel buttons.
+    c = client()
+    equal(c.FD.Wow:RequestDuel("party1"), true, "submitted, waiting for native acknowledgment")
+    equal(c.startedUnit, "party1", "unit tokens are passed to the native API")
+    local ok, reason = c.FD.Wow:RequestDuel("Beta-Forever")
+    equal(ok, false, "a pending capture refuses another request")
+    equal(type(reason), "string", "refusal has a visible reason")
+    c = client()
+    c.env.StartDuel("missing")
+    ok, reason = c.FD.Wow:RequestDuel("target")
+    equal(ok, false, "an ambiguity block refuses addon requests")
+    equal(reason:find("still pending", 1, true) ~= nil, true, "block reason names the remaining window")
+    c = client()
+    c:incoming()
+    c.FD.duel:Abort("cancelled", false)
+    c.units.target = nil
+    c:incoming()
+    equal(select(2, c.FD.Wow:RequestDuel("target")) ~= nil, true, "a pending incoming request refuses addon requests")
+    c = client()
+    c.combat = true
+    equal(c.FD.Wow:RequestDuel("target"), false, "combat refuses addon requests")
+    c.combat = false
+    c.env.StartDuel = nil
+    equal(c.FD.Wow:RequestDuel("target"), false, "missing native API refuses addon requests")
 
     -- Retain useful request diagnostics when debug is disabled. A missing
     -- challenger dialog must remain diagnosable after its native request window
@@ -1458,9 +910,8 @@ return function(_, equal)
     equal(outgoingStatusPrinted(c):find(acknowledgedStatus, 1, true) ~= nil, true, "status describes the latest attempt after capture is gone")
 
     for _, setup in ipairs({
-        { "unavailable identity", function(state) return "missing" end },
+        { "unavailable identity", function() return "missing" end },
         { "restricted unit", function(state) return state.secret end },
-        { "combat", function(state) state.combat = true; return "target" end },
     }) do
         c = client()
         c.FD.Wow.incomingStatus = "previous incoming request"
@@ -1480,11 +931,6 @@ return function(_, equal)
         { "local cancel", function(state) state.env.CancelDuel() end },
         { "native finish", function(state) state:emit("DUEL_FINISHED") end, true },
         { "native countdown", function(state) state:emit("CHAT_MSG_SYSTEM", "Duel starting: 3") end, true },
-        { "combat entry", function(state)
-            state.combat = true
-            state:emit("PLAYER_REGEN_DISABLED")
-            state.combat = false
-        end },
         { "local acceptance", function(state) state.env.AcceptDuel() end },
         { "cancel notice", function(state) state:emit("CHAT_MSG_SYSTEM", state.env.ERR_DUEL_CANCELLED) end, true },
         { "world transition", function(state) state:emit("PLAYER_LEAVING_WORLD") end, true },
@@ -1497,8 +943,9 @@ return function(_, equal)
             c.env.StartDuel("target")
             if overlap then
                 c:advance(0.5)
-                c.env.StartDuel("target")
-                equal(c.FD.Wow.outgoing, nil, ending[1] .. " setup quarantines overlapping attempts")
+                c.units.mouseover = { guid = "Player-1-00000005", name = "Delta", realm = "Forever", classFile = "MAGE" }
+                c.env.StartDuel("mouseover")
+                equal(c.FD.Wow.outgoing, nil, ending[1] .. " setup quarantines a different target")
                 equal(c.FD.Wow.outgoingBlockedUntil > c.now, true, ending[1] .. " setup has an active quarantine")
             end
             local priorDeadline = c.FD.Wow.outgoingBlockedUntil
@@ -1522,9 +969,8 @@ return function(_, equal)
                 equal(c.FD.Wow.outgoing, nil, ending[1] .. " rejects a different target inside the old acknowledgment window")
                 c:emit("UI_INFO_MESSAGE", 123, c.env.ERR_DUEL_REQUESTED)
                 equal(c.FD.duel.active, nil, ending[1] .. " cannot bind a delayed old acknowledgment to the different target")
-                equal(c.FD.Wow.outgoingBlockedUntil, c.now + c.FD.C.OUTGOING_TIMEOUT,
-                    ending[1] .. " overlapping retry extends the ambiguity window")
-                c:advance(c.FD.C.OUTGOING_TIMEOUT + 0.01)
+                equal(c.FD.Wow.outgoingBlockedUntil, priorDeadline, ending[1] .. " a retry never extends the ambiguity window")
+                c:advance(c.FD.C.OUTGOING_TIMEOUT)
             end
             c.env.StartDuel("target")
             equal(c.FD.Wow.outgoing ~= nil, true, ending[1] .. " allows a fresh attempt after the ambiguity guard permits it")
@@ -1533,6 +979,12 @@ return function(_, equal)
             equal(c.FD.duel:State(), "CHECKING_ADDON", ending[1] .. " allows the freshly acknowledged rematch")
         end
     end
+
+    c = client()
+    c.env.StartDuel("target")
+    c.combat = true
+    c:emit("PLAYER_REGEN_DISABLED")
+    equal(c.FD.Wow.outgoing ~= nil, true, "entering combat keeps the pending capture")
 
     c = client()
     c.env.StartDuel("target")
@@ -1557,44 +1009,49 @@ return function(_, equal)
     equal(c.FD.Wow:Identity("target"), nil, "secret unit GUID is rejected before protocol validation")
     c.units.target.guid = guid
     local receiveCalls = 0
-    c.FD.duel.Receive = function() receiveCalls = receiveCalls + 1 end
+    local receive = c.FD.duel.Receive
+    c.FD.duel.Receive = function(...) receiveCalls = receiveCalls + 1; return receive(...) end
     c.FD.Comms:Receive(c.env.ERR_DUEL_REQUESTED, "x", "WHISPER", "Beta")
     c.FD.Comms:Receive(c.FD.C.PREFIX, c.secret, "WHISPER", "Beta")
+    c.FD.Comms:Receive(c.FD.C.PREFIX, "x", "GUILD", "Beta")
+    equal(receiveCalls, 0, "wrong prefix, route and secret payload rejected before the lifecycle")
     c.FD.Comms:Receive(c.FD.C.PREFIX, "x", "PARTY", "Beta")
-    equal(receiveCalls, 0, "wrong prefix/channel and secret payload rejected")
+    equal(c.FD.Comms.lastRejection:find("invalid envelope", 1, true) ~= nil, true, "malformed PARTY payload rejected")
 
     for _, code in ipairs({ 2, 3 }) do
         c = client({ registerResult = code })
         equal(c.FD.Comms.available, false, "truthy registration failure enum rejected")
-        equal(c.FD.Comms:Send("x", "Beta-Forever", {}), false, "unavailable registration cannot enqueue")
+        equal(c.FD.Comms:Send({ match = {}, kind = "HELLO", payload = "x" }), false, "unavailable registration cannot enqueue")
     end
     c = client({ registerResult = 1 })
     equal(c.FD.Comms.available, true, "already-registered prefix remains available")
 
     c = client()
     c:incoming()
-    c:advance(c.FD.C.SEND_INTERVAL)
+    c:advance(0.2)
     local sent = #c.sent
     local old = c.FD.duel.active
-    c.FD.Comms:Send(packet(c.FD, "ACCEPT"), "Beta-Forever", old)
+    old.peerNonce = "b"
+    c.FD.Comms:Send({ match = old, kind = "ACCEPT", payload = packet(c.FD, "ACCEPT") })
     c.FD.duel.active = nil
-    c:advance(c.FD.C.SEND_INTERVAL)
+    c:advance(0.2)
     equal(#c.sent, sent, "queued obsolete consent dropped after session cancellation")
     old.finalized = true
-    c.FD.Comms:Send(packet(c.FD, "RESULT"), "Beta-Forever", old)
-    c:advance(c.FD.C.SEND_INTERVAL)
+    c.FD.Comms:Send({ match = old, kind = "RESULT", payload = packet(c.FD, "RESULT") })
+    c:advance(0.2)
     equal(#c.sent, sent + 1, "finalized result can drain after active session released")
     equal(c.FD.Protocol:Decode(c.sent[#c.sent].payload).kind, "RESULT", "drained payload is result")
     equal(c.sent[#c.sent].channel, "WHISPER", "transport uses targeted whisper")
     equal(c.sent[#c.sent].target, "Beta-Forever", "transport preserves explicit realm")
 
-    -- Reproduce the live failure through two real native/transport adapters:
-    -- explicit /duel surname, formatted native acknowledgment delayed past
-    -- four seconds, and delayed addon delivery must still show both dialogs.
+    -- The live failure through two real adapters: explicit /duel surname, the
+    -- native acknowledgment arrives after five seconds, addon delivery is
+    -- delayed by ten seconds, and the receiver identifies the challenger late.
     local alpha = { guid = "Player-1-00000001", name = "Alpha", surname = "Example", classFile = "MAGE" }
     local tray = { guid = "Player-1-00000002", name = "Tray", surname = "Taylorr", classFile = "ROGUE" }
-    local a = client({ regionalNames = true, units = { player = alpha, target = tray } })
-    local b = client({ regionalNames = true, units = { player = tray, target = alpha } })
+    local net = Client.pair({ regionalNames = true, alpha = alpha, beta = tray })
+    local a, b = net.a, net.b
+    net.delay = function() return math.max(0, 10.5 - net.clock.now) + 0.2 end
     local target = a.FD.Wow:Identity("target")
     equal(target.fullName, "Tray Taylorr", "Forever uses exact native surname format")
     equal(target.name, "Tray Taylorr", "result names retain the complete character name")
@@ -1607,72 +1064,53 @@ return function(_, equal)
     equal(a.FD.Wow:ResolveIncoming("Tray Taylorr").guid, tray.guid, "full surname distinguishes same first name")
     a.units.focus = nil
     local callsBefore = a.nameHelperCalls
+    local unmodified = a.env.UnitNameUnmodified
     a.env.UnitNameUnmodified = function() return "Tray", a.secret end
     equal(a.FD.Wow:Identity("target"), nil, "restricted surname rejected before native helper")
     equal(a.nameHelperCalls, callsBefore, "restricted surname is never concatenated by helper")
-    a.env.UnitNameUnmodified = function(unit)
-        local identity = a.units[unit]
-        if identity then return identity.name, identity.surname end
-    end
+    a.env.UnitNameUnmodified = unmodified
     toggleDebugOff(a)
     toggleDebugOff(b)
     a.env.StartDuel("Tray Taylorr")
     a.messageInfo = { [701] = "ERR_DUEL_REQUESTED" }
     b.units.target = nil
     b:incoming("Alpha Example")
-    a:advance(5)
+    net:advance(5)
     a:emit("UI_INFO_MESSAGE", 701, "Request sent to Tray Taylorr.")
     equal(a.FD.duel.active.createdAt, 0, "live-order recovery keeps original captured request time")
-    a:advance(5)
-    b:advance(0.5)
+    net:advance(5.5)
     equal(b.FD.duel.active, nil, "surname receiver initially lacks native challenger identity")
     b.units.target = alpha
-    b:advance(9.5)
-    equal(b.nativeVisible, false, "surname receiver recovers the pending request with debug off")
-    equal(a.FD.duel:State(), "DISCOVERY_WAIT", "outgoing discovery survives delayed delivery")
-    equal(b.FD.duel:State(), "DISCOVERY_WAIT", "incoming discovery survives delayed delivery")
-    equal(a.FD.UI.frame:IsShown(), true, "outgoing soft timeout keeps the waiting dialog visible")
-    equal(a.FD.UI.rated.enabled, false, "visible outgoing waiting dialog cannot grant rated consent")
-    equal(b.FD.UI.frame:IsShown(), true, "incoming soft timeout preserves ordinary choice")
-    equal(b.FD.UI.rated.enabled, false, "timeout alone never grants consent")
-    equal(b.FD.UI.normal.text, "Accept Normal Duel", "ordinary action is clear after soft timeout")
+    net:advance(0.5)
+    equal(a.FD.duel:State(), "CHECKING_ADDON", "outgoing discovery waits for delayed delivery")
+    equal(b.FD.duel:State(), "CHECKING_ADDON", "incoming discovery survives delayed identity")
+    equal(a.FD.UI.frame:IsShown(), false, "nothing shown before the peer is proven")
+    equal(b.nativeVisible, true, "the receiver keeps Blizzard's popup throughout")
     equal(a.sent[1].target, "Tray Taylorr", "whisper target is the canonical surname name")
+    local helloB = assert(b.FD.Protocol:Encode(b.FD.duel:Packet(b.FD.duel.active, "HELLO")))
     for _, sender in ipairs({ "Tray", "Tray-Taylorr", "Tray Other", "Tray Taylorr-Forever" }) do
-        a:emit("CHAT_MSG_ADDON", a.FD.C.PREFIX, b.sent[1].payload, "WHISPER", sender)
-        equal(a.FD.duel.active.peerNonce, nil, "unqualified or altered surname sender rejected: " .. sender)
+        a:emit("CHAT_MSG_ADDON", a.FD.C.PREFIX, helloB, "WHISPER", sender)
+        equal(a.FD.Comms.lastRejection:find("sender mismatch", 1, true) ~= nil, true,
+            "unqualified or altered surname sender rejected: " .. sender)
     end
-    local deliveredA, deliveredB = 0, 0
-    local function exchange()
-        for _ = 1, 8 do
-            while deliveredA < #a.sent do
-                deliveredA = deliveredA + 1
-                local p = a.sent[deliveredA]
-                b:emit("CHAT_MSG_ADDON", p.prefix, p.payload, p.channel, "Alpha Example")
-            end
-            while deliveredB < #b.sent do
-                deliveredB = deliveredB + 1
-                local p = b.sent[deliveredB]
-                a:emit("CHAT_MSG_ADDON", p.prefix, p.payload, p.channel, "Tray Taylorr")
-            end
-            a:advance(0.15)
-            b:advance(0.15)
-        end
-    end
-    exchange()
+    net.delay = function() return 0.3 end
+    net:advance(6)
     equal(a.FD.duel:State(), "READY", "delayed surname handshake reaches outgoing ready")
     equal(b.FD.duel:State(), "READY", "delayed surname handshake reaches incoming ready")
-    equal(a.FD.UI.frame:IsShown(), true, "late mapped native acknowledgment ultimately opens challenger addon dialog")
+    equal(a.FD.UI.frame:IsShown(), true, "late mapped native acknowledgment ultimately opens challenger panel")
     equal(a.FD.UI.rated.enabled, true, "verified two-client handshake enables challenger rated choice")
     equal(b.FD.UI.rated.enabled, true, "verified two-client handshake enables recipient rated choice")
-    toggleDebugOff(b)
     equal(a.FD.duel.active.matchId, b.FD.duel.active.matchId, "real adapters agree on the same session")
+    local match = a.FD.duel.active
     local visibleOpponent = a.units.target
     a.units.target = nil
-    equal(a.FD.duel:Fresh(), false, "lost native peer identity prevents rated consent")
+    equal(a.FD.duel:Fresh(match), true, "an opponent that no unit resolves is unknown, not changed")
     a.units.target = visibleOpponent
     local priorLevel = visibleOpponent.level
     visibleOpponent.level = 31
-    equal(a.FD.duel:Fresh(), false, "changed native level is detected without a level event")
+    local fresh, freshReason = a.FD.duel:Fresh(match)
+    equal(fresh, false, "a positively observed level change is detected without a level event")
+    equal(freshReason, "level", "level change has its own reason")
     visibleOpponent.level = priorLevel
     a.units.focus = { guid = "Player-1-00000003", name = "Third", surname = "Player", classFile = "MAGE", level = 31 }
     a:emit("UNIT_LEVEL", "focus")
@@ -1680,29 +1118,23 @@ return function(_, equal)
     a.units.focus = nil
     equal(b.accepts, 0, "recovered discovery never accepts native duel automatically")
     a.FD.UI.rated.scripts.OnClick()
-    exchange()
+    net:advance(1)
     equal(b.accepts, 0, "one surname peer's consent does not start native duel")
     b.FD.UI.rated.scripts.OnClick()
-    exchange()
-    equal(b.accepts, 1, "both explicit clicks complete handshake through real surname transport")
+    equal(b.accepts, 1, "both explicit clicks complete the agreement through real surname transport")
     local winner = a.FD.Results:Parse("Alpha Example has defeated Tray Taylorr in a duel",
-        a.env.DUEL_WINNER_KNOCKOUT, a.env.DUEL_WINNER_RETREAT, a.FD.duel.active.player, a.FD.duel.active.opponent)
+        a.env.DUEL_WINNER_KNOCKOUT, a.env.DUEL_WINNER_RETREAT, match.player, match.opponent)
     equal(winner, alpha.guid, "full surnamed result resolves known participants")
     winner = a.FD.Results:Parse("Alpha has defeated Tray in a duel",
-        a.env.DUEL_WINNER_KNOCKOUT, a.env.DUEL_WINNER_RETREAT, a.FD.duel.active.player, a.FD.duel.active.opponent)
+        a.env.DUEL_WINNER_KNOCKOUT, a.env.DUEL_WINNER_RETREAT, match.player, match.opponent)
     equal(winner, nil, "native-request aliases never qualify result evidence")
 
     a.env.SlashCmdList.FOREVERDUEL("ui")
     a:emit("CHAT_MSG_SYSTEM", "Duel starting: 3")
     b:emit("CHAT_MSG_SYSTEM", "Duel starting: 3")
-    a:advance(3)
-    b:advance(3)
-    exchange()
-    a:emit("DUEL_FINISHED")
-    b:emit("DUEL_FINISHED")
-    a:emit("CHAT_MSG_SYSTEM", "Alpha Example has defeated Tray Taylorr in a duel")
-    b:emit("CHAT_MSG_SYSTEM", "Alpha Example has defeated Tray Taylorr in a duel")
-    exchange()
+    net:advance(3.5)
+    net:finish(a, b)
+    net:advance(2)
     equal(a.FD.Database:GetStats().rating, 1516, "completed native-adapter match updates winner rating")
     equal(b.FD.Database:GetStats().rating, 1484, "completed native-adapter match updates loser rating")
     equal(a.FD.Profile.stats[1].text, "1516", "open overview refreshes after real finalization")
@@ -1718,7 +1150,7 @@ return function(_, equal)
     -- existing explicit consent/native evidence flow -> advertised new rating.
     a = client({ presence = true, directory = { alpha, tray }, regionalNames = true, units = { player = alpha } })
     b = client({ presence = true, directory = { alpha, tray }, regionalNames = true, units = { player = tray } })
-    deliveredA, deliveredB = 0, 0
+    local deliveredA, deliveredB = 0, 0
     local function exchangeWithPresence()
         for _ = 1, 8 do
             while deliveredA < #a.sent do
@@ -1808,7 +1240,8 @@ return function(_, equal)
     equal(profile.stats[3].text, "--", "empty win rate is not fabricated")
     equal(profile.previous.enabled, false, "empty history has no previous page")
     equal(profile.next.enabled, false, "empty history has no next page")
-    equal(c.env.UISpecialFrames[1], "ForeverDuelProfile", "native Escape list owns only overview frame")
+    equal(c.env.UISpecialFrames[1], "ForeverDuelDialog", "native Escape list owns the duel panel")
+    equal(c.env.UISpecialFrames[2], "ForeverDuelProfile", "native Escape list owns the overview frame")
     c.env.SlashCmdList.FOREVERDUEL("")
     equal(profile.frame:IsShown(), false, "overview command toggles closed")
     for index = 1, 17 do
@@ -1816,7 +1249,7 @@ return function(_, equal)
         local won = index % 2 == 1
         local after, delta = c.FD.Rating:Calculate(player.rating, 1500, won)
         local record = {
-            schemaVersion = 2, protocolVersion = 2, bracket = "LEVELING", matchId = "overview-" .. index,
+            schemaVersion = 2, protocolVersion = c.FD.C.PROTOCOL_VERSION, bracket = "LEVELING", matchId = "overview-" .. index,
             player = c.FD.Wow:Identity("player", true), opponent = c.FD.Wow:Identity("target"),
             startedAt = 1700000000 + index * 100, endedAt = 1700000037 + index * 100,
             winnerGUID = won and c.units.player.guid or c.units.target.guid,
@@ -1851,7 +1284,7 @@ return function(_, equal)
     profile.close.scripts.OnClick()
     c.env.SlashCmdList.FOREVERDUEL("ui")
     equal(profile.page, 1, "reopening starts at latest history")
-    equal(#c.env.UISpecialFrames, 1, "reopening does not duplicate Escape registration")
+    equal(#c.env.UISpecialFrames, 2, "reopening does not duplicate Escape registration")
     local detail = c.FD.History:Details("overview-17")
     detail.match.opponent.specId = 259
     profile:RenderDetails(detail)
@@ -1897,11 +1330,11 @@ return function(_, equal)
     profile:RefreshIfShown()
     equal(profile.frame:IsShown(), false, "failed overview closes only itself")
     equal(c.FD.duel.active, pending, "overview failure does not cancel pending rated negotiation")
-    equal(c.FD.UI.frame:IsShown(), true, "overview failure preserves duel accept and decline")
+    equal(c.nativeVisible, true, "overview failure preserves Blizzard's accept and decline")
     equal(#c.FD.Database.data.matches, 17, "overview failure preserves saved history")
-    local printed = #c.prints
+    local printedCount = #c.prints
     c.env.SlashCmdList.FOREVERDUEL("summary")
-    equal(#c.prints > printed, true, "chat summary remains available independently of overview")
+    equal(#c.prints > printedCount, true, "chat summary remains available independently of overview")
 
     c = client()
     c.env.SlashCmdList.FOREVERDUEL("ui")
@@ -1922,7 +1355,7 @@ return function(_, equal)
     c.FD.Zone:RefreshIfShown()
     equal(c.FD.Zone.frame:IsShown(), false, "presence query error closes browser")
     equal(c.FD.duel.active, pending, "presence query error does not enter duel-aborting recovery")
-    equal(c.FD.UI.frame:IsShown(), true, "presence query error preserves consent actions")
+    equal(c.nativeVisible, true, "presence query error preserves the native choice")
     c.env.C_Map = { GetBestMapForUnit = function() error("injected map API error") end }
     c.env.SlashCmdList.FOREVERDUEL("status")
     equal(c.FD.duel.active, pending, "optional discovery diagnostics cannot abort pending rated negotiation")
@@ -1930,18 +1363,19 @@ return function(_, equal)
     c = client()
     c.sendResult = 3
     c:incoming()
-    c:advance(c.FD.C.SEND_INTERVAL)
-    equal(c.FD.duel:State(), "UNRATED", "truthy throttle enum fails unrated")
-    equal(c.FD.UI.frame:IsShown(), true, "transport failure preserves normal choice")
+    c:advance(5)
+    equal(c.FD.duel:State(), "CHECKING_ADDON", "a throttled discovery message is retried, never fatal")
+    equal(#c.sent > 1, true, "throttled message submitted again after backoff")
     equal(c.FD.Database:GetStats().rating, 1500, "transport failure never changes rating")
 
     c = client()
     c.units.target.level = 36
     c:incoming(); c:advance(0)
     equal(c.FD.duel:State(), "UNRATED", "native opponent six levels higher blocks rated")
-    equal(c.FD.UI.rated.enabled, false, "level guard disables rated action")
-    equal(c.FD.UI.body.text:find("within 5 levels", 1, true) ~= nil, true, "clear level-gap explanation")
-    c.FD.UI.normal.scripts.OnClick()
+    equal(c.FD.UI.frame:IsShown(), false, "ineligible request shows no panel")
+    equal(#c.prints, 0, "unknown ineligible challenger causes no chat output")
+    equal(#c.sent, 0, "ineligible request sends no discovery")
+    c.env.AcceptDuel()
     equal(c.accepts, 1, "ineligible level keeps native ordinary acceptance")
 
     c = client()
@@ -1961,6 +1395,7 @@ return function(_, equal)
     c.units.target.level = 31
     c:emit("UNIT_LEVEL", "target")
     equal(c.FD.duel:State(), "UNRATED", "native peer level-up invalidates pending rating")
+    equal(c.FD.duel.active.reason, "level", "level reason recorded")
 
     c = client()
     c:incoming()
