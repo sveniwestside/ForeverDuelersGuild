@@ -651,7 +651,10 @@ function Presence:Tick()
     for name, last in pairs(self.queries) do if at - last >= FORGET then self.queries[name] = nil end end
     for name, last in pairs(self.replies) do if at - last >= MIN_REPLY then self.replies[name] = nil end end
     for name, last in pairs(self.whispered) do
-        if at - last >= NOT_FOUND_WINDOW then self.whispered[name], self.forgotten[name] = nil, nil end
+        if at - last >= NOT_FOUND_WINDOW then self.whispered[name] = nil end
+    end
+    for name in pairs(self.forgotten) do
+        if not self.whispered[name] and not FD.Outbound:Whispered(name, NOT_FOUND_WINDOW) then self.forgotten[name] = nil end
     end
     for seq, probe in pairs(self.pings) do
         if at - probe.queuedAt >= PING_TIMEOUT then
@@ -733,8 +736,17 @@ function Presence:Leave(logout)
     self:Refresh()
 end
 
--- "No player named '%s' is currently playing." is hidden only for names
--- this module whispered within the last five seconds; the name is dropped.
+-- A recipient whispered within the not-found window whose name the server's
+-- line shows (it may omit the realm).
+local function recipient(record, name, at)
+    for whispered, sent in pairs(record) do
+        if at - sent < NOT_FOUND_WINDOW and (whispered == name or whispered:match("^[^%-]+") == name) then return whispered end
+    end
+end
+
+-- "No player named '%s' is currently playing." is hidden only for names this
+-- addon (discovery, queue or duel) whispered within the last five seconds;
+-- every module then forgets the name (Outbound:Unreachable).
 function Presence:NotFound(message)
     if not FD.Wow:Readable(message) or type(message) ~= "string" or type(ERR_CHAT_PLAYER_NOT_FOUND_S) ~= "string" then return false end
     if not self.notFoundPattern then
@@ -747,16 +759,13 @@ function Presence:NotFound(message)
     -- Every chat frame that shows system messages runs the filter for the
     -- same line: the verdict is a pure lookup, and Forget runs once per name.
     local at = GetTime()
-    for whispered, sent in pairs(self.whispered) do
-        if at - sent < NOT_FOUND_WINDOW and (whispered == name or whispered:match("^[^%-]+") == name) then
-            if not self.forgotten[whispered] then
-                self.forgotten[whispered] = true
-                self:Forget(whispered)
-            end
-            return true
-        end
+    local whispered = recipient(self.whispered, name, at) or recipient(FD.Outbound.whispered, name, at)
+    if not whispered then return false end
+    if not self.forgotten[whispered] then
+        self.forgotten[whispered] = true
+        FD.Outbound:Unreachable(whispered)
     end
-    return false
+    return true
 end
 
 function Presence:InstallFilter()
@@ -914,6 +923,8 @@ local function on(event, handler, optional)
     end, true, optional)
 end
 local function zoneShown() return FD.Zone and FD.Zone.IsShown and FD.Zone:IsShown() end
+-- An offline player reported for any module's whisper leaves the caches.
+FD.Outbound:OnUnreachable(function(name) Presence:Run(function() Presence:Forget(name) end) end)
 on("CHAT_MSG_ADDON", function(...) Presence:Receive(...) end)
 on("PLAYER_ENTERING_WORLD", function() Presence:Enter() end)
 on("PLAYER_LEAVING_WORLD", function() Presence:Leave(false) end)

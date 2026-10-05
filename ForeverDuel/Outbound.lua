@@ -5,7 +5,8 @@ local _, FD = ...
 -- messages with no shared budget, and a throttled send was either dropped or
 -- treated as fatal. This module owns pacing, priorities, token budgets,
 -- retry of transient failures and per-prefix traffic counters.
-FD.Outbound = { lanes = { {}, {}, {} }, buckets = {}, routeUnavailable = {}, registered = {}, lastSend = -math.huge }
+FD.Outbound = { lanes = { {}, {}, {} }, buckets = {}, routeUnavailable = {}, registered = {}, lastSend = -math.huge,
+    whispered = {}, whisperedCount = 0, unreachableHandlers = {} }
 local Outbound = FD.Outbound
 
 Outbound.CONTROL, Outbound.QUEUE, Outbound.BACKGROUND = 1, 2, 3
@@ -19,6 +20,9 @@ local DEFAULT_TTL = 10
 local BUCKETS = { group = { capacity = 10, refill = 1 }, WHISPER = { capacity = 8, refill = 1 } }
 -- Background traffic leaves this many tokens for duel and queue control.
 local BACKGROUND_RESERVE = 3
+-- Whisper recipients are remembered this long (any prefix), so the server's
+-- "No player named ..." line can be traced to an addon whisper.
+local WHISPER_MEMORY, WHISPER_MEMORY_LIMIT = 10, 64
 
 -- Pinned Forever SendAddonMessageResult values; names win when present.
 local DEFAULT_CODES = { Success = 0, InvalidPrefix = 1, InvalidMessage = 2, AddonMessageThrottle = 3,
@@ -171,6 +175,42 @@ function Outbound:Resolve(item)
     return channel, (channel == "WHISPER" or channel == "CHANNEL") and target or nil
 end
 
+function Outbound:RememberWhisper(target)
+    if self.whispered[target] == nil then
+        if self.whisperedCount >= WHISPER_MEMORY_LIMIT then
+            local at = now()
+            for name, sent in pairs(self.whispered) do
+                if at - sent >= WHISPER_MEMORY then self.whispered[name], self.whisperedCount = nil, self.whisperedCount - 1 end
+            end
+            if self.whisperedCount >= WHISPER_MEMORY_LIMIT then return end
+        end
+        self.whisperedCount = self.whisperedCount + 1
+    end
+    self.whispered[target] = now()
+end
+
+-- When this client last whispered `name` (any prefix), within `window` s.
+function Outbound:Whispered(name, window)
+    local at = self.whispered[name]
+    if at and now() - at < (window or WHISPER_MEMORY) then return at end
+end
+
+-- handler(name) runs when the server reports a whispered player offline.
+function Outbound:OnUnreachable(handler)
+    if type(handler) == "function" then self.unreachableHandlers[#self.unreachableHandlers + 1] = handler end
+end
+
+-- The server reported `name` offline (TargetOffline, or its "No player named"
+-- line for one of our whispers). Every module forgets the player, so neither
+-- discovery nor the queue keeps whispering it; each such whisper would show
+-- the player another system line.
+function Outbound:Unreachable(name)
+    if type(name) ~= "string" or not readable(name) then return end
+    log("outbound", "unreachable whisper target")
+    self:Drop(function(item) return item.channel == "WHISPER" and item.target == name end)
+    for _, handler in ipairs(self.unreachableHandlers) do pcall(handler, name) end
+end
+
 -- Submit one item to the native API now. Returns class, code.
 function Outbound:Submit(item, channel, target, ignoreBudget)
     local bucket = self:Bucket(item.prefix, channel)
@@ -183,12 +223,17 @@ function Outbound:Submit(item, channel, target, ignoreBudget)
     if class == "success" then
         bucket.tokens = math.max(0, bucket.tokens - 1)
         count(item.prefix, channel, "success", target)
+        if channel == "WHISPER" then self:RememberWhisper(target) end
     elseif class == "throttle" then
         bucket.tokens = 0
         count(item.prefix, channel, "throttled", target)
     else
         count(item.prefix, channel, "failed", target)
         if class == "route" and code == self:Code("InvalidChatType") then self.routeUnavailable[channel] = true end
+        -- After the caller has settled this item: Unreachable drops queued items.
+        if channel == "WHISPER" and code == self:Code("TargetOffline") and C_Timer and type(C_Timer.After) == "function" then
+            C_Timer.After(0, function() self:Unreachable(target) end)
+        end
     end
     if not ignoreBudget and class ~= "success" then
         log("outbound", item.prefix, channel, class, self:CodeName(code))

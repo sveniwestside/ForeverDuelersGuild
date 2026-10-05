@@ -26,6 +26,8 @@ end
 FD:OnEvent("CHAT_MSG_ADDON", function(prefix, payload, channel, sender)
     run(function() FD.QueueTransport:Receive(prefix, payload, channel, sender) end)
 end)
+-- A queue peer the server reports offline is no longer queried.
+FD.Outbound:OnUnreachable(function(name) run(function() FD.queue:Unreachable(name) end) end)
 FD:OnEvent("PLAYER_LEAVING_WORLD", function()
     run(function()
         FD.QueueWow:ObserveDuel("world")
