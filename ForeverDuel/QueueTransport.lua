@@ -1,14 +1,21 @@
 local _, FD = ...
 
-FD.QueueTransport = { queue = {}, lastAttempt = -math.huge, partyUnavailable = false }
+-- Queue packets go through FD.Outbound: shared pacing and budgets, retries on
+-- throttle, PARTY->WHISPER fallback. Ticket packets use PARTY only while the
+-- exact ticket pair is grouped and are checked again at drain (isCurrent).
+FD.QueueTransport = {}
 local Transport = FD.QueueTransport
-local PREFIX, PACE, LIMIT, TTL = "ForeverDuelQ1", 0.2, 64, 10
-local ticketKinds = { OFFER = true, ACK = true, COMMIT = true, CONFIRM = true,
-    GROUP = true, POSITION = true, PLAN = true, PLAN_ACK = true, GO = true,
-    GO_ACK = true, ARRIVED = true, READY = true, CANCEL = true }
+local Protocol = FD.QueueProtocol
+local PREFIX = Protocol.PREFIX
+local TTL = { QUERY = 8, PROFILE = 8, LEAVE = 10, CANCEL = 30, VENUE = 20, VENUE_ACK = 20, VENUE_REJECT = 20 }
+-- Discovery is background traffic: it never takes the whisper budget that
+-- match controls and the rated duel need.
+local DISCOVERY = { QUERY = true, PROFILE = true, LEAVE = true }
+-- A PROFILE stays current while it can still pair or re-key a ticket.
+local PROFILE_STATES = { SEARCHING = true, PAUSED = true, INVITING = true, INVITED = true, GROUPING = true }
 
 local function readable(...)
-    return FD.Wow and FD.Wow:Readable(...)
+    return not FD.Wow or FD.Wow:Readable(...)
 end
 
 local function validName(value)
@@ -18,8 +25,8 @@ end
 
 local function now()
     if type(GetTime) ~= "function" then return 0 end
-    local value = GetTime()
-    return readable(value) and type(value) == "number" and value or 0
+    local ok, value = pcall(GetTime)
+    return ok and readable(value) and type(value) == "number" and value or 0
 end
 
 local function log(...)
@@ -49,212 +56,190 @@ function Transport:KnownPlayer(sender)
     if ok and type(player) == "table" and readable(player.fullName) and player.fullName == sender then return player end
 end
 
+-- A queue peer whose PROFILE was accepted earlier (while Presence knew it).
+function Transport:QueuePeer(sender)
+    local engine = FD.queue
+    if not engine or type(engine.peers) ~= "table" then return nil end
+    for _, peer in pairs(engine.peers) do if peer.fullName == sender then return peer end end
+end
+
 function Transport:TicketMatches(packet, ticket, outgoing)
-    if not ticketKinds[packet.kind] or type(ticket) ~= "table"
+    if not Protocol.TICKET_KINDS[packet.kind] or type(ticket) ~= "table"
         or not readable(ticket.id, ticket.ownSession, ticket.peerSession) then return false end
     return packet.ticket == ticket.id
         and packet.session == (outgoing and ticket.ownSession or ticket.peerSession)
         and packet.peerSession == (outgoing and ticket.peerSession or ticket.ownSession)
 end
 
-function Transport:ExactTicketParty(ticket, target)
-    local ok, own, peer = pcall(function()
-        local engine = FD.queue
-        if type(ticket) ~= "table" or not engine or type(engine.ownProfile) ~= "table"
-            or type(ticket.player) ~= "table" or type(ticket.peer) ~= "table"
-            or type(IsInGroup) ~= "function" or type(IsInRaid) ~= "function"
-            or type(GetNumGroupMembers) ~= "function" or not FD.Wow
-            or type(FD.Wow.Identity) ~= "function" then return nil end
-        if not readable(engine.ownProfile.guid, ticket.player.guid, ticket.peer.guid, ticket.peer.fullName, target)
-            or not FD.QueueProtocol:ValidGUID(engine.ownProfile.guid)
-            or not FD.QueueProtocol:ValidGUID(ticket.peer.guid)
-            or ticket.player.guid ~= engine.ownProfile.guid
-            or ticket.peer.guid == engine.ownProfile.guid
-            or not validName(ticket.peer.fullName)
-            or target ~= nil and target ~= ticket.peer.fullName then return nil end
-        local grouped, raid, count = IsInGroup(), IsInRaid(), GetNumGroupMembers()
-        if not readable(grouped, raid, count) or grouped ~= true or raid ~= false or count ~= 2 then return nil end
-        local nativeOwn, nativePeer = FD.Wow:Identity("player", true), FD.Wow:Identity("party1")
-        if type(nativeOwn) ~= "table" or type(nativePeer) ~= "table"
-            or not readable(nativeOwn.guid, nativeOwn.fullName, nativePeer.guid, nativePeer.fullName)
-            or not validName(nativeOwn.fullName) or not validName(nativePeer.fullName)
-            or nativeOwn.guid ~= engine.ownProfile.guid or nativePeer.guid ~= ticket.peer.guid
-            or nativePeer.fullName ~= ticket.peer.fullName then return nil end
-        return nativeOwn, nativePeer
-    end)
-    if ok and own and peer then return own, peer end
+-- The PARTY channel is server-scoped to group members and the sender name is
+-- authoritative; the ticket tuple and sender bind it. The one exception is an
+-- OFFER (from the ticket peer while a ticket exists): a grouped invitee binds
+-- or re-keys from it, or answers one naming its earlier session with its
+-- current PROFILE. PARTY never discovers peers; the engine validates OFFERs.
+function Transport:PartyAccepts(packet, sender, engine)
+    engine = engine or FD.queue
+    if type(engine) ~= "table" or not engine.session then return false end
+    local ticket = engine.ticket
+    if ticket and (type(ticket.peer) ~= "table" or sender ~= ticket.peer.fullName) then return false end
+    return packet.kind == "OFFER" or ticket ~= nil and self:TicketMatches(packet, ticket, false)
 end
 
-function Transport:PartyTicket(packet, owner)
-    local engine = FD.queue
-    if not engine or type(owner) ~= "table" or not self:TicketMatches(packet, owner, true) then return nil end
-    -- Only an original terminal cancellation may drain after ticket retirement.
-    -- Native membership and the current character are still checked at drain.
-    if owner ~= engine.ticket and packet.kind ~= "CANCEL" then return nil end
-    return owner
+function Transport:ExactTicketParty(ticket)
+    return type(ticket) == "table" and type(ticket.peer) == "table" and FD.QueueWow ~= nil
+        and FD.QueueWow:GroupState(ticket.peer) == "EXACT"
 end
 
 function Transport:Initialize()
-    self.queue, self.lastAttempt = {}, -math.huge
-    if not C_ChatInfo or type(C_ChatInfo.RegisterAddonMessagePrefix) ~= "function" then self.available = false; return false end
-    local ok, result = pcall(C_ChatInfo.RegisterAddonMessagePrefix, PREFIX)
-    local values = Enum and Enum.RegisterAddonMessagePrefixResult
-    self.available = ok and readable(result) and values ~= nil
-        and (result == values.Success or result == values.DuplicatePrefix)
-    log("queue prefix registration", self.available and "available" or "unavailable")
+    self.available = FD.Outbound and FD.Outbound:Register(PREFIX) or false
     return self.available
 end
 
 function Transport:Recipient(target, packet)
     if not validName(target) then return false end
-    if packet.kind == "VENUE" then
-        local proof = FD.QueueWow and FD.QueueWow.venueTest
+    local proof = FD.QueueWow and FD.QueueWow.venueTest
+    if Protocol.SETUP_KINDS[packet.kind] then
+        if packet.kind ~= "VENUE" then return true end
         return proof and type(proof.peer) == "table" and readable(proof.peer.fullName, proof.peer.guid)
             and proof.peer.fullName == target and proof.peer.guid == packet.testPairGUID or false
     end
     if self:KnownPlayer(target) then return true end
+    if packet.kind == "QUERY" then return false end
     local ticket = FD.queue and FD.queue.ticket
-    return packet.kind ~= "QUERY" and ticket and type(ticket.peer) == "table"
-        and readable(ticket.peer.fullName) and ticket.peer.fullName == target
+    return ticket and type(ticket.peer) == "table" and readable(ticket.peer.fullName) and ticket.peer.fullName == target
+        or packet.kind == "CANCEL" or packet.kind == "LEAVE" and self:QueuePeer(target) ~= nil
 end
 
-function Transport:Send(packet, target, owner)
-    if not self.available or type(packet) ~= "table" or not FD.QueueProtocol
-        or #self.queue >= LIMIT then return false end
-    for key, value in pairs(packet) do if not readable(key, value) then return false end end
-    if not self:Recipient(target, packet) then return false end
-    local ok, payload, reason = pcall(FD.QueueProtocol.Encode, FD.QueueProtocol, packet)
-    if not ok or not payload then log("queue encode rejected", readable(reason) and reason or "restricted data"); return false end
-    -- Store immutable wire bytes, not caller-owned profile/ticket tables.
-    self.queue[#self.queue + 1] = { payload = payload, target = target, queuedAt = now(), owner = owner }
-    self:Schedule()
-    return true
-end
-
+-- A queued packet still describes the current queue session and ticket.
 function Transport:Current(packet, owner)
-    if packet.kind == "VENUE" then
+    local kind, engine = packet.kind, FD.queue
+    if kind == "VENUE" then
         if not FD.QueueWow or type(FD.QueueWow.CaptureStatus) ~= "function" then return false end
         local ok, current = pcall(FD.QueueWow.CaptureStatus, FD.QueueWow, true)
         return ok and current == true
     end
-    if packet.kind == "QUERY" or packet.kind == "LEAVE" then return true end
-    if packet.kind == "CANCEL" then
-        return self:TicketMatches(packet, owner or FD.queue and FD.queue.ticket, true)
-    end
-    local engine = FD.queue
+    -- Terminal and reply packets stay valid after their ticket ended.
+    if kind == "QUERY" or kind == "LEAVE" or kind == "CANCEL" or Protocol.SETUP_KINDS[kind] then return true end
     if not engine or engine.session ~= packet.session then return false end
-    if packet.kind == "PROFILE" then return engine.state == "SEARCHING" or engine.state == "PAUSED" end
+    if kind == "PROFILE" then return PROFILE_STATES[engine.state] == true end
     local ticket = engine.ticket
-    if owner ~= nil and owner ~= ticket then return false end
-    return ticket and ticket.id == packet.ticket and ticket.ownSession == packet.session
-        and ticket.peerSession == packet.peerSession
+    return owner ~= nil and owner == ticket and self:TicketMatches(packet, ticket, true)
 end
 
-function Transport:Schedule()
-    if self.scheduled or #self.queue == 0 or not C_Timer or type(C_Timer.After) ~= "function" then return end
-    self.scheduled = true
-    C_Timer.After(PACE, function()
-        self.scheduled = false
-        local ok, err = pcall(self.Tick, self)
-        if not ok then log("queue transport error", readable(err) and err or "restricted error") end
-        self:Schedule()
-    end)
+function Transport:Route(packet, owner, target)
+    if Protocol.TICKET_KINDS[packet.kind] and type(owner) == "table" and type(owner.peer) == "table"
+        and owner.peer.fullName == target and self:ExactTicketParty(owner) then return "PARTY" end
+    return "WHISPER", target
 end
 
-function Transport:Tick()
-    if not self.available or not C_ChatInfo or type(C_ChatInfo.SendAddonMessage) ~= "function" then return end
-    local at = now()
-    if at - self.lastAttempt < PACE then return end
-    local item = table.remove(self.queue, 1)
-    if not item then return end
-    self.lastAttempt = at
-    if at - item.queuedAt >= TTL then return end
-    local packet = FD.QueueProtocol:Decode(item.payload)
-    if not packet or not self:Current(packet, item.owner) then return end
-    if ticketKinds[packet.kind] then
-        local intended = packet.kind == "CANCEL" and item.owner or FD.queue and FD.queue.ticket
-        if not intended or type(intended.peer) ~= "table" or item.target ~= intended.peer.fullName then return end
+function Transport:Remember(kind, target, route, status, code)
+    self.lastSend = FD.Locale:Format("%s to %s via %s (%s)", kind, target, tostring(route), status)
+    self.lastSendAt, self.lastSendRoute, self.lastSendStatus = now(), route, status
+    log("queue send", kind, tostring(route), status, code ~= nil and tostring(code) or nil)
+end
+
+function Transport:Item(packet, target, owner, payload)
+    local kind = packet.kind
+    local key
+    if Protocol.TICKET_KINDS[kind] and kind ~= "CANCEL" then key = kind .. ":" .. packet.ticket
+    elseif kind == "QUERY" or kind == "PROFILE" or kind == "LEAVE" then key = kind .. ":" .. target
+    elseif Protocol.SETUP_KINDS[kind] then key = kind .. ":" .. packet.venueID .. ":" .. target end
+    local item = { prefix = PREFIX, payload = payload, channel = "WHISPER", target = target,
+        priority = DISCOVERY[kind] and FD.Outbound.BACKGROUND or FD.Outbound.QUEUE,
+        ttl = TTL[kind] or 10, key = key, owner = owner }
+    item.isCurrent = function() return self:Current(packet, owner) end
+    item.route = function()
+        local channel, routeTarget = self:Route(packet, owner, target)
+        item.lastRoute = channel
+        return channel, routeTarget
     end
-    if not self:Recipient(item.target, packet) then
-        -- A cancellation/leave already bound to a queued peer may drain after
-        -- ticket cleanup and profile expiry; it can never reserve a new match.
-        if packet.kind ~= "CANCEL" and packet.kind ~= "LEAVE" then return end
+    item.onResult = function(status, code)
+        self:Remember(kind, target, item.forceWhisper and "WHISPER" or item.lastRoute or "WHISPER", status, code)
     end
-    local ticket = self:PartyTicket(packet, item.owner)
-    local route = not self.partyUnavailable and ticket and self:ExactTicketParty(ticket, item.target)
-        and "PARTY" or "WHISPER"
-    local target = route == "WHISPER" and item.target or nil
-    local ok, result = pcall(C_ChatInfo.SendAddonMessage, PREFIX, item.payload, route, target)
-    local values = Enum and Enum.SendAddonMessageResult
-    local function remember(fallback)
-        local safe = ok and readable(result)
-        local code = not ok and "Lua error" or not safe and "restricted" or tostring(result)
-        local success = safe and values and result == values.Success
-        self.lastSend = packet.kind .. " to " .. item.target .. " via " .. route .. " (" .. code
-            .. "; " .. (success and "submitted" or "rejected") .. ")" .. (fallback or "")
-        self.lastSendAt, self.lastSendRoute = at, route
-        self.lastSendResultCode = safe and type(result) == "number" and result or nil
-        log("queue send", self.lastSend, "at", at)
+    return item
+end
+
+local function encode(self, packet, target)
+    if not self.available or type(packet) ~= "table" or not FD.Outbound then return nil end
+    for key, value in pairs(packet) do if not readable(key, value) then return nil end end
+    if not self:Recipient(target, packet) then return nil end
+    local ok, payload, reason = pcall(Protocol.Encode, Protocol, packet)
+    if not ok or not payload then
+        log("transport rejected", "queue encode", readable(reason) and reason or "restricted data")
+        return nil
     end
-    remember()
-    local safe = ok and readable(result)
-    local unsupported = route == "PARTY" and safe and values
-        and type(values.InvalidChatType) == "number" and result == values.InvalidChatType
-    local notGrouped = route == "PARTY" and safe and values
-        and type(values.NotInGroup) == "number" and result == values.NotInGroup
-    if unsupported or notGrouped then
-        if unsupported then self.partyUnavailable = true end
-        local reason = unsupported and "InvalidChatType" or "NotInGroup"
-        route = "WHISPER"
-        ok, result = pcall(C_ChatInfo.SendAddonMessage, PREFIX, item.payload, route, item.target)
-        remember(" | PARTY rejected: " .. reason)
+    return payload
+end
+
+function Transport:Send(packet, target, owner)
+    local payload = encode(self, packet, target)
+    if not payload then return false end
+    return FD.Outbound:Send(self:Item(packet, target, owner, payload))
+end
+
+-- Terminal CANCEL: submitted synchronously on PARTY (while the pair group
+-- still exists) and on WHISPER; a throttled or failed copy is queued for
+-- retry with control priority instead of being dropped.
+function Transport:SendNow(packet, target, owner)
+    local payload = encode(self, packet, target)
+    if not payload then return false end
+    local sent = false
+    local routes = { "WHISPER" }
+    if self:Route(packet, owner, target) == "PARTY" then table.insert(routes, 1, "PARTY") end
+    for _, channel in ipairs(routes) do
+        local item = self:Item(packet, target, owner, payload)
+        item.channel, item.noWhisperFallback, item.route, item.onResult = channel, channel == "PARTY", nil, nil
+        local status, code = FD.Outbound:SendNow(item)
+        self:Remember(packet.kind, target, channel, status, code)
+        if status == "sent" then sent = true
+        elseif channel == "WHISPER" then
+            item.priority, item.isCurrent = FD.Outbound.CONTROL, function() return true end
+            FD.Outbound:Send(item)
+        end
     end
+    return sent
+end
+
+function Transport:Deliver(packet, sender, channel)
+    self.lastReceive = FD.Locale:Format("%s from %s via %s", packet.kind, sender, channel)
+    self.lastReceiveAt, self.lastReceiveRoute = now(), channel
+    log("queue receive", packet.kind, channel)
+    -- Queue errors stay within this subsystem (Queue:Run) and never reach
+    -- Core:Safe's rated-duel recovery.
+    return FD.queue:Run(function() FD.queue:Receive(packet, sender); return true end) == true
 end
 
 function Transport:Receive(prefix, payload, channel, sender)
-    if not self.available or not FD.QueueProtocol
-        or not readable(prefix, payload, channel, sender) or prefix ~= PREFIX
+    if not self.available or not readable(prefix, payload, channel, sender) or prefix ~= PREFIX
         or (channel ~= "WHISPER" and channel ~= "PARTY") then return false end
-    local packet = FD.QueueProtocol:Decode(payload)
+    local packet = Protocol:Decode(payload)
     sender = self:NormalizeSender(sender)
     if not packet or not sender then return false end
     if channel == "PARTY" then
-        local ticket = FD.queue and FD.queue.ticket
-        if not self:TicketMatches(packet, ticket, false) then return false end
-        local own, peer = self:ExactTicketParty(ticket)
-        if not own or sender ~= peer.fullName then return false end
-        -- Exact native ticket context supplies the transport identity even
-        -- while zone presence is unavailable after a loading transition.
-        self.lastReceive = packet.kind .. " from " .. sender .. " via PARTY"
-        self.lastReceiveAt, self.lastReceiveRoute = now(), channel
-        log("queue receive", self.lastReceive, "at", self.lastReceiveAt)
-        local ok, result = pcall(FD.queue.Receive, FD.queue, packet, sender)
-        if not ok then log("queue receive error", readable(result) and result or "restricted error"); return false end
-        return true
+        if not self:PartyAccepts(packet, sender) then return false end
+        return self:Deliver(packet, sender, channel)
     end
     local known = self:KnownPlayer(sender)
-    if packet.kind == "VENUE" then
-        local proof = FD.QueueWow and FD.QueueWow.venueTest
-        if not known and not (proof and proof.peer.fullName == sender) then return false end
-        if type(FD.ReceiveQueueVenue) ~= "function" then return false end
-        self.lastReceive = packet.kind .. " from " .. sender
+    if Protocol.SETUP_KINDS[packet.kind] then
+        local proof, share = FD.QueueWow and FD.QueueWow.venueTest, FD.queueVenueShare
+        if not known and not (proof and proof.peer.fullName == sender) and not (share and share.target == sender) then return false end
+        if type(FD.ReceiveQueueSetup) ~= "function" then return false end
+        self.lastReceive = FD.Locale:Format("%s from %s", packet.kind, sender)
         self.lastReceiveAt, self.lastReceiveRoute = now(), channel
-        log("queue receive", self.lastReceive, "at", self.lastReceiveAt)
-        local ok, result, reason = pcall(FD.ReceiveQueueVenue, FD, packet, sender)
-        if not ok then log("queue venue receive error", readable(result) and result or "restricted error"); return false end
-        if result ~= true then log("queue venue receive rejected", readable(reason) and reason or "proof unavailable"); return false end
-        return true
+        log("queue receive", packet.kind, channel)
+        local ok, result = pcall(FD.ReceiveQueueSetup, FD, packet, sender)
+        if not ok then
+            if FD.Debug and FD.Debug.Error then pcall(FD.Debug.Error, FD.Debug, "queue venue", readable(result) and result or "restricted error") end
+            return false
+        end
+        return result == true
     end
     if not FD.queue then return false end
     local ticket = FD.queue.ticket
     local activePeer = ticket and type(ticket.peer) == "table" and ticket.peer.fullName == sender
-    if packet.kind == "QUERY" and not known or not known and not activePeer then return false end
-    if packet.guid and (not known or packet.guid ~= known.guid) then return false end
-    self.lastReceive = packet.kind .. " from " .. sender .. " via WHISPER"
-    self.lastReceiveAt, self.lastReceiveRoute = now(), channel
-    log("queue receive", self.lastReceive, "at", self.lastReceiveAt)
-    -- Queue errors stay within this subsystem and never call Core:Safe.
-    local ok, result = pcall(FD.queue.Receive, FD.queue, packet, sender)
-    if not ok then log("queue receive error", readable(result) and result or "restricted error"); return false end
-    return true
+    local queuePeer = self:QueuePeer(sender)
+    if packet.kind == "QUERY" or packet.kind == "PROFILE" then
+        if not known then return false end
+    elseif not known and not activePeer and not queuePeer then return false end
+    if packet.guid and (not (known or queuePeer) or packet.guid ~= (known or queuePeer).guid) then return false end
+    return self:Deliver(packet, sender, channel)
 end

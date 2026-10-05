@@ -142,4 +142,46 @@ return function(FD, equal)
     equal(venues:Select(a, b, { catalog = { venue(), venue() } }), nil, "duplicate local IDs cannot produce plans")
     equal(venues:Resolve("test-a", { catalog = { venue({ x = 1000001 }) } }), nil, "world coordinate bounds enforced")
     equal(venues:Resolve("bad|id", { catalog = { venue({ id = "bad|id" }) } }), nil, "wire-unsafe local venue ID rejected")
+
+    -- PROFILE venue digest: stable short hashes of the places a player can use.
+    equal(venues:Hash("test-a"), venues:Hash("test-a"), "venue hash is deterministic")
+    equal(venues:Hash("test-a"):match("^%x%x%x%x%x$") ~= nil, true, "venue hash has five hex digits")
+    equal(venues:Hash("test-a") ~= venues:Hash("test-b"), true, "different IDs normally hash differently")
+    local catalog = {}
+    for index = 1, 12 do catalog[#catalog + 1] = venue({ id = "spot-" .. index, x = index * 100 }) end
+    catalog[#catalog + 1] = venue({ id = "alliance-only", x = 1, factions = { Alliance = true } })
+    catalog[#catalog + 1] = venue({ id = "too-hard", x = 2, minPlayerLevel = 40 })
+    catalog[#catalog + 1] = venue({ id = "other-zone", x = 3, mapID = 11 })
+    catalog[#catalog + 1] = venue({ id = "unverified", x = 4, verified = false })
+    local digest = venues:Digest(player({ scope = "ZONE" }), { catalog = catalog })
+    equal(#digest, 8, "digest is bounded to eight places")
+    equal(digest[1], venues:Hash("spot-1"), "digest lists the nearest usable place first")
+    equal(digest[8], venues:Hash("spot-8"), "digest keeps the nearest eight")
+    local listed = {}
+    for _, hash in ipairs(digest) do listed[hash] = true end
+    for _, excluded in ipairs({ "alliance-only", "too-hard", "other-zone", "unverified", "spot-9" }) do
+        equal(listed[venues:Hash(excluded)], nil, "digest excludes " .. excluded)
+    end
+    equal(#venues:Digest(player({ mapID = 0 }), { catalog = catalog }), 0, "unknown position has no digest")
+    local wide = venues:Digest(player({ scope = "RULESET", continentID = 1 }),
+        { catalog = { venue({ id = "far" }), venue({ id = "near", continentID = 1 }) } })
+    equal(wide[1], venues:Hash("near"), "same-continent places precede other continents")
+    equal(#wide, 2, "whole-ruleset digest includes other continents")
+
+    -- Selection restricted to the intersection minus rejected places.
+    env = { catalog = { venue({ id = "mid", x = 500 }), venue({ id = "edge", x = 100 }) } }
+    equal(venues:Select(a, b, env).id, "mid", "unrestricted selection takes the midpoint")
+    equal(venues:Select(a, b, env, function(record) return record.id ~= "mid" end).id, "edge",
+        "filtered selection skips excluded places")
+    selected, _, reason = venues:Select(a, b, env, function() return false end)
+    equal(selected, nil, "empty intersection selects nothing")
+    equal(reason, "NO_VENUE", "empty intersection is NO_VENUE")
+
+    -- One tested spot saved by both duel partners is one meeting place.
+    local first, second = venue({ id = "test-b", x = 0 }), venue({ id = "test-a", x = 12 })
+    equal(venues:SameSpot(first, second), true, "records within the arrival radius are the same spot")
+    equal(venues:SameSpot(first, venue({ id = "far", x = 41 })), false, "records beyond the radius stay separate")
+    equal(venues:SameSpot(first, venue({ id = "map", mapID = 11 })), false, "different maps stay separate")
+    equal(venues:SameSpot(venue({ factions = { Horde = true } }), venue({ id = "x", factions = { Alliance = true } })), false,
+        "different faction approvals stay separate")
 end

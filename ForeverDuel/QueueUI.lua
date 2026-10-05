@@ -1,18 +1,21 @@
 local _, FD = ...
 FD.QueueUI = {}
 local QueueUI = FD.QueueUI
-local WIDTH, HEIGHT = 800, 766
+local L = FD.L
+local WIDTH, HEIGHT = 800, 812
 local GOLD = { 0.94, 0.75, 0.38 }
 local MUTED = { 0.61, 0.65, 0.70 }
 local WHITE = { 0.92, 0.94, 0.97 }
 local GREEN = { 0.36, 0.85, 0.61 }
+local NOTICE = { 1.00, 0.55, 0.35 }
+local NOTICE_SECONDS = 10
 local SCOPES = { "ZONE", "CONTINENT", "RULESET" }
 local SCOPE_NAMES = { ZONE = "Zone", CONTINENT = "Continent", RULESET = "Whole ruleset" }
 local RULESET_NAMES = { NORMAL = "Normal", PVP = "PvP", RP = "RP", HARDCORE = "Hardcore" }
 local STATE_NAMES = {
     IDLE = "Not queued", SEARCHING = "Searching for an opponent", PAUSED = "Search paused",
-    RESERVING = "Confirming a match", GROUPING = "Forming your duel party",
-    PLANNING = "Choosing a duel venue", TRAVELLING = "Travel to the duel venue",
+    INVITING = "Inviting your opponent", INVITED = "Group invitation received",
+    GROUPING = "Confirming the match", PLANNING = "Choosing a duel venue", TRAVELLING = "Travel to the duel venue",
     READY = "Both players have arrived", DUEL = "Duel in progress", CLEANUP = "Finishing the queue match",
 }
 
@@ -21,7 +24,7 @@ local function readable(value)
 end
 
 local function plain(value)
-    if not readable(value) then return "Unavailable" end
+    if not readable(value) then return L["Unavailable"] end
     return (tostring(value or ""):gsub("|", "||"))
 end
 
@@ -33,6 +36,12 @@ end
 local function duration(value)
     value = math.max(0, math.floor(value))
     return string.format("%d:%02d", math.floor(value / 60), value % 60)
+end
+
+local function serverTime()
+    if type(GetServerTime) ~= "function" then return nil end
+    local ok, value = pcall(GetServerTime)
+    return ok and number(value) and value or nil
 end
 
 local function surface(frame, fill, border)
@@ -69,7 +78,7 @@ function QueueUI:Run(callback)
     if ok then return true, result, reason end
     if self.frame then pcall(self.frame.Hide, self.frame) end
     pcall(function()
-        FD.Debug:Print("Could not display the duel queue. Try /duelrating queue again.")
+        FD.Debug:Print(L["Could not display the duel queue. Try /duelrating queue again."])
         if readable(result) then FD.Debug:Log("queue window error", result) end
     end)
     return false
@@ -77,27 +86,35 @@ end
 
 function QueueUI:GetStatus()
     if not FD.queue or type(FD.queue.GetStatus) ~= "function" then
-        return { state = "IDLE", reason = "The duel queue is unavailable.", settings = {}, unavailable = true }
+        return { state = "IDLE", reason = L["The duel queue is unavailable."], settings = {}, unavailable = true }
     end
     local status = FD.queue:GetStatus()
     if type(status) ~= "table" then error("Queue status is unavailable") end
     return status
 end
 
+-- Action notices are shown on their own line and expire on the next state
+-- change or after a few seconds, so they never hide the live queue status.
+function QueueUI:Notice(text)
+    self.notice = text
+    self.noticeAt = serverTime()
+    self.noticeState = self:GetStatus().state
+end
+
 function QueueUI:Action(method, argument)
     if not FD.queue or type(FD.queue[method]) ~= "function" then
-        self.notice = "The duel queue is unavailable."
+        self:Notice(L["The duel queue is unavailable."])
     else
         local success, reason = FD.queue[method](FD.queue, argument)
-        self.notice = success == false and (reason or "This queue action is unavailable.") or nil
+        if success == false then self:Notice(reason or L["This queue action is unavailable."]) else self.notice = nil end
     end
     self:CloseDropdown()
     self:Refresh()
 end
 
 function QueueUI:Configure(changes)
-    if self:GetStatus().state ~= "IDLE" then
-        self.notice = "Leave the queue before changing your search criteria."
+    if self:GetStatus().state ~= "IDLE" and changes.autoAcceptQueueInvite == nil then
+        self:Notice(L["Leave the queue before changing your search criteria."])
         self:CloseDropdown()
         return self:Refresh()
     end
@@ -106,12 +123,12 @@ end
 
 function QueueUI:CaptureVenue()
     if self:GetStatus().state ~= "IDLE" then
-        self.notice = "Leave the queue before saving a tested place."
+        self:Notice(L["Leave the queue before saving a tested place."])
     elseif type(FD.CaptureQueueVenue) ~= "function" then
-        self.notice = "Saving a tested place is unavailable."
+        self:Notice(L["Saving a tested place is unavailable."])
     else
         local success, reason = FD:CaptureQueueVenue()
-        self.notice = reason or (success == false and "This place could not be saved." or "Tested place saved.")
+        self:Notice(reason or (success == false and L["This place could not be saved."] or L["Tested place saved."]))
     end
     self:Refresh()
 end
@@ -154,7 +171,7 @@ function QueueUI:Create()
     frame:SetScript("OnHide", function()
         frame:StopMovingOrSizing()
         self:CloseDropdown()
-        self.elapsed = 0
+        self.elapsed, self.notice = 0, nil
     end)
     frame:SetScript("OnUpdate", function(_, elapsed)
         if not frame:IsShown() then return end
@@ -212,124 +229,159 @@ function QueueUI:Create()
         return control
     end
     label(frame, "GameFontNormalLarge", 24, 23, 470, 25, GOLD):SetText("ForeverDuelersGuild")
-    label(frame, "GameFontHighlightSmall", 24, 51, 460, 18, MUTED):SetText("RATED DUEL QUEUE")
-    self.overview = button(frame, "Your record", 120, 568, 25, function()
+    label(frame, "GameFontHighlightSmall", 24, 51, 460, 18, MUTED):SetText(L["RATED DUEL QUEUE"])
+    self.overview = button(frame, L["Your record"], 120, 568, 25, function()
         if FD.Profile then FD.Profile:Toggle() end
         frame:Hide()
     end)
-    self.close = button(frame, "Close", 72, 704, 25, function() frame:Hide() end)
+    self.close = button(frame, L["Close"], 72, 704, 25, function() frame:Hide() end)
 
-    local criteria = panel(frame, 24, 85, 752, 182)
-    label(criteria, "GameFontHighlightSmall", 16, 13, 710, 18, GOLD):SetText("SEARCH CRITERIA  /  Change before joining")
+    local criteria = panel(frame, 24, 85, 752, 212)
+    label(criteria, "GameFontHighlightSmall", 16, 13, 710, 18, GOLD):SetText(L["SEARCH CRITERIA  /  Change before joining"])
     self.scopes = {}
     for index, scope in ipairs(SCOPES) do
         local selectedScope = scope
-        self.scopes[scope] = button(criteria, SCOPE_NAMES[scope], 232, 16 + (index - 1) * 244, 38,
+        self.scopes[scope] = button(criteria, L[SCOPE_NAMES[scope]], 232, 16 + (index - 1) * 244, 38,
             function() self:Configure({ scope = selectedScope }) end)
     end
     self.scopeHint = label(criteria, "GameFontHighlightSmall", 16, 73, 720, 38, MUTED)
-    label(criteria, "GameFontHighlightSmall", 16, 121, 345, 16, MUTED):SetText("RULESET  /  AUTOMATIC")
-    label(criteria, "GameFontHighlightSmall", 382, 121, 345, 16, MUTED):SetText("MAXIMUM LEVEL DIFFERENCE")
+    label(criteria, "GameFontHighlightSmall", 16, 121, 345, 16, MUTED):SetText(L["RULESET  /  AUTOMATIC"])
+    label(criteria, "GameFontHighlightSmall", 382, 121, 345, 16, MUTED):SetText(L["MAXIMUM LEVEL DIFFERENCE"])
     self.ruleset = label(criteria, "GameFontHighlight", 16, 147, 354, 22, GOLD)
-    local levels = { "Same level", "Up to 1 level", "Up to 2 levels", "Up to 3 levels", "Up to 4 levels", "Up to 5 levels" }
+    local levels = { L["Same level"] }
+    for gap = 1, 5 do levels[#levels + 1] = FD.Locale:Format(gap == 1 and "Up to %d level" or "Up to %d levels", gap) end
     self.levelGap = dropdown(criteria, 354, 382, 142, levels,
         function() return ((self:GetStatus().settings or {}).levelGap or 0) + 1 end,
         function(index) self:Configure({ levelGap = index - 1 }) end)
+    self.autoAccept = CreateFrame("CheckButton", nil, criteria, "UICheckButtonTemplate")
+    self.autoAccept:SetSize(24, 24)
+    self.autoAccept:SetPoint("TOPLEFT", 12, -178)
+    self.autoAccept:SetScript("OnClick", function()
+        self:Run(function() self:Configure({ autoAcceptQueueInvite = not self:GetStatus().autoAccept }) end)
+    end)
+    label(criteria, "GameFontHighlightSmall", 42, 183, 690, 18, WHITE)
+        :SetText(L["Accept the group invitation of a matched queue opponent automatically"])
 
-    self.help = label(frame, "GameFontHighlightSmall", 24, 280, 752, 65, MUTED)
-    local statusPanel = panel(frame, 24, 354, 752, 125)
+    self.help = label(frame, "GameFontHighlightSmall", 24, 308, 752, 52, MUTED)
+    local statusPanel = panel(frame, 24, 366, 752, 168)
     self.status = label(statusPanel, "GameFontHighlightLarge", 16, 13, 720, 27, GOLD)
-    self.reason = label(statusPanel, "GameFontHighlightSmall", 16, 49, 720, 36, WHITE)
-    self.timer = label(statusPanel, "GameFontHighlightSmall", 16, 97, 470, 18, MUTED)
-    self.discovery = label(statusPanel, "GameFontHighlightSmall", 498, 97, 238, 18, MUTED)
+    self.reason = label(statusPanel, "GameFontHighlightSmall", 16, 45, 720, 34, WHITE)
+    self.lastMatch = label(statusPanel, "GameFontHighlightSmall", 16, 81, 720, 30, MUTED)
+    self.cleanup = label(statusPanel, "GameFontHighlightSmall", 16, 113, 720, 18, MUTED)
+    self.noticeText = label(statusPanel, "GameFontHighlightSmall", 16, 133, 720, 16, NOTICE)
+    self.timer = label(statusPanel, "GameFontHighlightSmall", 16, 150, 470, 16, MUTED)
+    self.discovery = label(statusPanel, "GameFontHighlightSmall", 498, 150, 238, 16, MUTED)
     self.discovery:SetJustifyH("RIGHT")
 
-    local matchPanel = panel(frame, 24, 491, 752, 156)
+    local matchPanel = panel(frame, 24, 546, 752, 156)
     self.opponent = label(matchPanel, "GameFontHighlight", 16, 13, 720, 28)
     self.venue = label(matchPanel, "GameFontHighlightSmall", 16, 48, 720, 32, GOLD)
     self.arrival = label(matchPanel, "GameFontHighlightSmall", 16, 91, 720, 20, MUTED)
-    self.matchHelp = label(matchPanel, "GameFontHighlightSmall", 16, 119, 720, 28, MUTED)
-    self.join = button(frame, "Join queue", 170, 24, 662, function()
+    self.matchHelp = label(matchPanel, "GameFontHighlightSmall", 16, 115, 720, 34, MUTED)
+    self.join = button(frame, L["Join queue"], 170, 24, 714, function()
         self:Action(self:GetStatus().state == "IDLE" and "Join" or "Leave")
     end)
-    self.invite = button(frame, "Invite opponent", 170, 218, 662, function() self:Action("Invite") end)
-    self.waypoint = button(frame, "Show waypoint", 170, 412, 662, function() self:Action("Waypoint") end)
-    self.challenge = button(frame, "Request duel", 170, 606, 662, function() self:Action("Challenge") end)
-    self.saveVenue = button(frame, "Save tested place", 200, 24, 709, function() self:CaptureVenue() end)
-    self.setup = label(frame, "GameFontHighlightSmall", 240, 705, 536, 42, MUTED)
-    self.setup:SetText("After a successful ordinary duel, leave the party and save this spot within five minutes. Place details are filled automatically and sent to your test partner.")
+    self.waypoint = button(frame, L["Show waypoint"], 170, 218, 714, function() self:Action("Waypoint") end)
+    self.challenge = button(frame, L["Request duel"], 170, 412, 714, function() self:Action("Challenge") end)
+    self.leaveGroup = button(frame, L["Leave group"], 170, 606, 714, function() self:Action("LeaveGroup") end)
+    self.saveVenue = button(frame, L["Save tested place"], 200, 24, 758, function() self:CaptureVenue() end)
+    self.setup = label(frame, "GameFontHighlightSmall", 240, 754, 536, 42, MUTED)
+    self.setup:SetText(L["After a successful ordinary duel, leave the party and save this spot within five minutes. Place details are filled automatically and sent to your test partner."])
     UISpecialFrames[#UISpecialFrames + 1] = "ForeverDuelQueue"
+end
+
+local function matchHelp(state, status, name)
+    if state == "INVITING" then return FD.Locale:Format("Waiting for %s to accept your group invitation.", name) end
+    if state == "INVITED" then
+        return FD.Locale:Format("Accept the group invitation from %s to start your rated queue match.", name)
+            .. (status.autoAccept and " " .. L["Automatic acceptance is on."] or "")
+    end
+    if state == "GROUPING" or state == "PLANNING" then
+        return FD.Locale:Format("Confirming the match and the meeting place with the client of %s.", name)
+    end
+    if state == "READY" then
+        local text = status.coordinator and L["Request a normal duel. Both players still explicitly accept rated in the duel dialog."]
+            or FD.Locale:Format("Waiting for %s to send the duel request. Both players still explicitly accept rated in the duel dialog.", name)
+        return status.colocation and text .. " " .. plain(status.colocation) or text
+    end
+    if state == "TRAVELLING" then return L["Both players must arrive before the timer expires. A cancelled queue match changes no rating."] end
+    if state == "DUEL" then return L["The rated duel flow now controls this match."] end
+    return L["The queue chooses a tested meeting place that both players have saved."]
 end
 
 function QueueUI:Refresh()
     local status = self:GetStatus()
     local state, settings = status.state or "IDLE", status.settings or {}
     local idle = state == "IDLE" and not status.unavailable
+    local now = serverTime()
     if state ~= "IDLE" then self:CloseDropdown() end
+    if self.notice and (state ~= self.noticeState or not now or not self.noticeAt or now - self.noticeAt >= NOTICE_SECONDS) then
+        self.notice = nil
+    end
     for _, scope in ipairs(SCOPES) do
         self.scopes[scope]:SetEnabled(idle)
-        self.scopes[scope]:SetText((scope == (settings.scope or "ZONE") and "> " or "") .. SCOPE_NAMES[scope])
+        self.scopes[scope]:SetText((scope == (settings.scope or "ZONE") and "> " or "") .. L[SCOPE_NAMES[scope]])
     end
-    self.scopeHint:SetText("Choose how far your search should reach. Discovery includes reachable addon users within your selected scope.")
+    self.scopeHint:SetText(L["Choose how far your search should reach. Discovery includes reachable addon users within your selected scope."])
     local rulesetName = readable(settings.ruleset) and RULESET_NAMES[settings.ruleset]
-    self.ruleset:SetText(rulesetName and rulesetName .. " (automatic)" or "Detecting ruleset...")
+    self.ruleset:SetText(rulesetName and FD.Locale:Format("%s (automatic)", L[rulesetName]) or L["Detecting ruleset..."])
     local gap = number(settings.levelGap) and settings.levelGap or 0
     self.levelGap:SetEnabled(idle)
-    self.levelGap:SetText(gap == 0 and "Same level" or "Up to " .. gap .. " levels")
-    local movement = number(status.level) and status.level >= 40 and "Normal mount (+60%)" or "On foot"
-    self.help:SetText("Rating range widens from +/-100 to +/-200 to +/-400 while you wait. Max-level and leveling pools stay separate.\nTravel estimate: "
-        .. movement .. ". Travel is limited to 15 minutes; straight-line estimates do not account for terrain or routes.")
-    self.status:SetText(STATE_NAMES[state] or plain(state))
-    self.reason:SetText(plain(self.notice or (state == "IDLE" and not settings.ruleset and settings.rulesetReason)
-        or status.reason or (state == "IDLE" and not settings.ruleset
-        and "Waiting for automatic ruleset detection." or "")))
-    local now = type(GetServerTime) == "function" and GetServerTime() or nil
+    self.levelGap:SetText(gap == 0 and L["Same level"] or FD.Locale:Format(gap == 1 and "Up to %d level" or "Up to %d levels", gap))
+    self.autoAccept:SetChecked(status.autoAccept == true)
+    self.autoAccept:SetEnabled(not status.unavailable)
+    local movement = number(status.level) and status.level >= 40 and L["Normal mount (+60%)"] or L["On foot"]
+    self.help:SetText(L["Rating range widens from +/-100 to +/-200 to +/-400 while you wait. Max-level and leveling pools stay separate."] .. "\n"
+        .. FD.Locale:Format("Travel estimate: %s. Travel is limited to 15 minutes; straight-line estimates do not account for terrain or routes.", movement))
+    self.status:SetText(STATE_NAMES[state] and L[STATE_NAMES[state]] or plain(state))
+    local reason = status.reason
+    if idle and not settings.ruleset then reason = settings.rulesetReason or L["Waiting for automatic ruleset detection."] end
+    self.reason:SetText(plain(reason or ""))
+    local cancel = type(status.cancel) == "table" and status.cancel or nil
+    self.lastMatch:SetText(cancel and cancel.text and state ~= "IDLE" and state ~= "CLEANUP"
+        and FD.Locale:Format("Last match: %s", plain(cancel.text)) or "")
+    self.cleanup:SetText(status.cleanupStatus and plain(status.cleanupStatus) or "")
+    self.noticeText:SetText(self.notice and plain(self.notice) or "")
     local timer = ""
-    if number(now) and number(status.deadline) then
-        timer = "Time remaining: " .. duration(status.deadline - now)
-    elseif number(now) and number(status.cooldownUntil) and status.cooldownUntil > now then
-        timer = "Queue cooldown: " .. duration(status.cooldownUntil - now)
-    elseif number(now) and number(status.queuedAt) and state ~= "IDLE" then
-        timer = "Waiting: " .. duration(now - status.queuedAt)
+    if now and number(status.deadline) then
+        timer = FD.Locale:Format("Time remaining: %s", duration(status.deadline - now))
+    elseif now and number(status.cooldownUntil) and status.cooldownUntil > now then
+        timer = FD.Locale:Format("Queue cooldown: %s", duration(status.cooldownUntil - now))
+    elseif now and number(status.queuedAt) and state ~= "IDLE" then
+        timer = FD.Locale:Format("Waiting: %s", duration(now - status.queuedAt))
     end
     if number(status.ratingWindow) and state == "SEARCHING" then
-        timer = timer .. (timer ~= "" and "  /  " or "") .. "Rating +/-" .. status.ratingWindow
+        timer = timer .. (timer ~= "" and "  /  " or "") .. FD.Locale:Format("Rating +/-%d", status.ratingWindow)
     end
     self.timer:SetText(timer)
-    self.discovery:SetText(number(status.discovered) and "Queue profiles found: " .. status.discovered or "")
+    self.discovery:SetText(number(status.discovered) and FD.Locale:Format("Queue profiles found: %d", status.discovered) or "")
     local opponent = type(status.opponent) == "table" and status.opponent or nil
-    self.opponent:SetText(opponent and "Opponent: " .. plain(opponent.fullName or opponent.name or "Unknown")
-        or "Opponent: waiting for a match")
+    local name = opponent and plain(opponent.fullName or opponent.name or L["Unknown"]) or nil
+    self.opponent:SetText(name and FD.Locale:Format("Opponent: %s", name) or L["Opponent: waiting for a match"])
     local venue = type(status.venue) == "table" and status.venue or nil
-    local venueText = venue and "Venue: " .. plain(venue.name or venue.id or "Duel venue") or "Venue: chosen after matching"
+    local venueText = venue and FD.Locale:Format("Venue: %s", plain(venue.name or venue.id or L["Duel venue"])) or L["Venue: chosen after matching"]
     if venue and number(venue.mapX) and number(venue.mapY) then
         venueText = venueText .. string.format("  (%.1f, %.1f)", venue.mapX * 100, venue.mapY * 100)
-    elseif venue and number(venue.mapID) then
-        venueText = venueText .. "  /  Map " .. venue.mapID
     end
     if not venue and status.venueCount == 0 then
-        venueText = "No tested places saved yet. Complete an ordinary duel here, then use Save tested place."
+        venueText = L["No tested places saved yet. Complete an ordinary duel here, then use Save tested place."]
     end
     self.venue:SetText(venueText)
     local arrival = ""
     if venue then
-        arrival = "You: " .. (status.ownArrived and "arrived" or "travelling")
-            .. "  /  Opponent: " .. (status.peerArrived and "arrived" or "travelling")
+        arrival = FD.Locale:Format("You: %s  /  Opponent: %s", status.ownArrived and L["arrived"] or L["travelling"],
+            status.peerArrived and L["arrived"] or L["travelling"])
     end
     self.arrival:SetText(arrival)
     self.arrival:SetTextColor(unpack(status.ownArrived and status.peerArrived and GREEN or MUTED))
-    self.matchHelp:SetText(state == "READY" and "Request a normal duel. Both players still explicitly accept rated in the duel dialog."
-        or state == "GROUPING" and (status.inviter and "Your opponent must accept the native party invitation."
-            or "Accept your matched opponent's native party invitation.")
-        or venue and "Both players must arrive before the timer expires. A cancelled queue match changes no rating."
-        or "The queue chooses a suitable meeting place from both players' positions.")
-    self.join:SetText(state == "IDLE" and "Join queue" or "Leave queue")
-    local coolingDown = state == "IDLE" and number(now) and number(status.cooldownUntil) and status.cooldownUntil > now
-    self.join:SetEnabled(not status.unavailable and not coolingDown and state ~= "DUEL" and state ~= "CLEANUP")
-    self.invite:SetEnabled(not status.unavailable and state == "GROUPING" and status.inviter == true and status.inviteFallback == true)
+    self.matchHelp:SetText(matchHelp(state, status, name))
+    self.join:SetText(state == "IDLE" and L["Join queue"] or L["Leave queue"])
+    local coolingDown = state == "IDLE" and now and number(status.cooldownUntil) and status.cooldownUntil > now
+    self.join:SetEnabled(not status.unavailable and not coolingDown and state ~= "DUEL")
     self.waypoint:SetEnabled(not status.unavailable and venue ~= nil and (state == "TRAVELLING" or state == "READY"))
-    self.challenge:SetEnabled(not status.unavailable and state == "READY" and number(now)
-        and number(status.deadline) and now < status.deadline)
+    self.challenge:SetEnabled(not status.unavailable and state == "READY" and status.coordinator == true
+        and now ~= nil and number(status.deadline) and now < status.deadline)
+    self.leaveGroup:SetEnabled(not status.unavailable and status.groupAction == true)
     self.saveVenue:SetEnabled(idle)
 end
 

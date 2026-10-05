@@ -5,7 +5,7 @@ return function(FD, equal)
         kind = "PROFILE", session = "abcd-1234", guid = "Player-1234-0000ABCD",
         rating = 1500, level = 30, maxLevel = 60, scope = "ZONE", levelGap = 5,
         ruleset = "PVP", faction = "Alliance", joinedAt = 1791100000,
-        mapID = 1429, continentID = 0, x = -1000, y = 2000,
+        mapID = 1429, continentID = 0, x = -1000, y = 2000, venues = "0a1b2.ffff0",
     }
     local function profile(changes)
         local result = {}
@@ -28,29 +28,52 @@ return function(FD, equal)
                 equal(decoded[key], value, packet.kind .. " round trip " .. key)
             end
         end
-        equal(decoded.protocolVersion, 1, packet.kind .. " version")
+        equal(decoded.protocolVersion, 2, packet.kind .. " version")
         equal(protocol:Encode(decoded), payload, packet.kind .. " canonical re-encoding")
         return payload, decoded
     end
-    equal(protocol.PREFIX, "ForeverDuelQ1", "dedicated queue prefix")
+    equal(protocol.PREFIX, "ForeverDuelQ2", "queue protocol 2 uses its own prefix")
+    equal(protocol.WIRE_VERSION, "FQ2", "queue protocol 2 wire tag")
     equal(protocol.MAX_BYTES, 255, "addon wire byte limit")
     equal(protocol.MAP_SCALE, 100000000, "venue fractions retain eight decimal places")
     local encoded = roundTrip(base)
     roundTrip({ kind = "QUERY" })
     roundTrip({ kind = "LEAVE", session = base.session, guid = base.guid })
-    for _, kind in ipairs({ "OFFER", "ACK", "COMMIT", "CONFIRM", "GROUP", "PLAN_ACK", "GO_ACK", "ARRIVED" }) do
-        roundTrip(control(kind))
+    roundTrip(control("OFFER"))
+    roundTrip(control("GROUP", { mapID = 1429, continentID = 0, x = 12, y = -40 }))
+    roundTrip(control("GROUP", { mapID = 0, continentID = 0, x = 0, y = 0 }))
+    roundTrip(control("PLAN", { venueID = "test-venue.1", deadline = 1791100900, duration = 900,
+        mapID = 1429, continentID = 0, x = -1000, y = 2000 }))
+    roundTrip(control("PLAN_ACK", { venueID = "test-venue.1", deadline = 1791100900 }))
+    roundTrip(control("PLAN_REJECT", { venueID = "test-venue.1" }))
+    for flags = 0, 3 do roundTrip(control("STATUS", { mapID = 1429, continentID = 0, x = 1, y = 2, flags = flags })) end
+    local reasons = { "CANCELLED", "DECLINED", "BUSY", "INVITE_FAILED", "GROUP_TIMEOUT", "PEER_SILENT",
+        "GROUP_CHANGED", "OPPONENT_LEFT", "NO_VENUE", "PLAN_INVALID", "TRAVEL_TIMEOUT", "START_TIMEOUT",
+        "DUEL", "FINISHED", "ERROR", "RELOAD" }
+    for _, reason in ipairs(reasons) do roundTrip(control("CANCEL", { reason = reason })) end
+    local count = 0
+    for _ in pairs(protocol.REASONS) do count = count + 1 end
+    equal(count, #reasons, "every wire reason has a protocol code")
+    for _, removed in ipairs({ "ACK", "COMMIT", "CONFIRM", "GO", "GO_ACK", "ARRIVED", "READY", "POSITION" }) do
+        equal(protocol:Encode(control(removed)), nil, "protocol 1 handshake kind removed: " .. removed)
     end
-    roundTrip(control("READY", { deadline = 0 }))
-    roundTrip(control("READY", { deadline = 1791100120 }))
-    roundTrip(control("POSITION", { mapID = 1429, continentID = 0, x = 0, y = -2000 }))
-    for _, kind in ipairs({ "PLAN", "GO" }) do
-        roundTrip(control(kind, { venueID = "test-venue.1", deadline = 1791100900, duration = 900,
-            mapID = 1429, continentID = 0, x = -1000, y = 2000 }))
+    equal(protocol:Encode(control("CANCEL", { reason = "TECHNICAL" })), nil, "generic technical reason replaced by specific codes")
+
+    -- Venue digest: up to eight five-hex-digit hashes or "-".
+    roundTrip(profile({ venues = "-" }))
+    roundTrip(profile({ venues = "00000.11111.22222.33333.44444.55555.66666.77777" }))
+    for _, digest in ipairs({ "", "0a1b", "0a1b23", "0A1B2", "0a1b2.", ".0a1b2", "0a1b2..ffff0", "zzzzz",
+        "00000.11111.22222.33333.44444.55555.66666.77777.88888", "0a1b2,ffff0", 5 }) do
+        equal(protocol:Encode(profile({ venues = digest })), nil, "invalid venue digest " .. tostring(digest))
     end
-    for _, reason in ipairs({ "CANCELLED", "GROUP_TIMEOUT", "TRAVEL_TIMEOUT", "START_TIMEOUT", "TECHNICAL", "DUEL", "FINISHED" }) do
-        roundTrip(control("CANCEL", { reason = reason }))
-    end
+    local largestProfile = protocol:Encode(profile({ session = string.rep("a", 32),
+        guid = "Player-" .. string.rep("a", 28) .. "-" .. string.rep("b", 28), rating = -100000, level = 255,
+        maxLevel = 255, scope = "CONTINENT", ruleset = "HARDCORE", joinedAt = 4102444800, mapID = 100000,
+        continentID = 100000, x = -1000000, y = -1000000,
+        venues = "00000.11111.22222.33333.44444.55555.66666.77777" }))
+    equal(type(largestProfile), "string", "largest profile with a full digest fits the native wire")
+    equal(#largestProfile <= 255, true, "largest profile under byte limit")
+
     local metadata = profile({ fullName = "Native-Name", lastSeen = 25 })
     equal(protocol:Encode(metadata), encoded, "native transport metadata is never serialized")
     equal(protocol:ValidProfile(metadata), true, "local profile metadata is permitted")
@@ -58,7 +81,6 @@ return function(FD, equal)
     profileWithoutKind.kind = nil
     equal(protocol:ValidProfile(profileWithoutKind), true, "adapter profiles need no packet kind")
     roundTrip(profile({ mapID = 0, continentID = 0, x = 0, y = 0 }))
-    roundTrip(control("POSITION", { mapID = 0, continentID = 0, x = 0, y = 0 }))
     roundTrip(profile({ scope = "CONTINENT", faction = "Horde", ruleset = "NORMAL", levelGap = 0,
         rating = -100000, x = -1000000, y = 1000000, joinedAt = 0 }))
     roundTrip(profile({ scope = "RULESET", ruleset = "RP", level = 255, maxLevel = 255,
@@ -77,7 +99,7 @@ return function(FD, equal)
         mapID = { -1, 100001, 0.5, "1429" }, continentID = { -1, 100001, 0.5, "0" },
         x = { -1000001, 1000001, 0.5, "0", math.huge },
         y = { -1000001, 1000001, 0.5, "0", 0 / 0 },
-        protocolVersion = { 0, 2, "1" },
+        protocolVersion = { 0, 1, 3, "2" },
     }) do
         for _, value in ipairs(values) do equal(protocol:Encode(profile({ [key] = value })), nil, "invalid profile " .. key) end
     end
@@ -86,14 +108,14 @@ return function(FD, equal)
     equal(protocol:Encode(profile({ mapID = 0, x = 0, y = 0, continentID = 1 })), nil, "unknown position has no continent")
     equal(protocol:Encode(nil), nil, "nil packet")
     equal(protocol:Encode({}), nil, "missing packet kind")
-    equal(protocol:Encode({ kind = "QUERY", protocolVersion = 2 }), nil, "query version mismatch")
+    equal(protocol:Encode({ kind = "QUERY", protocolVersion = 1 }), nil, "query version mismatch")
 
     for key, values in pairs({
         session = { "", "a|b", string.rep("b", 33) },
         peerSession = { "", "a|b", base.session, string.rep("b", 33) },
         ticket = { "", "...", "a:b", string.rep("b", 81) },
     }) do
-        for _, value in ipairs(values) do equal(protocol:Encode(control("ACK", { [key] = value })), nil, "invalid control " .. key) end
+        for _, value in ipairs(values) do equal(protocol:Encode(control("OFFER", { [key] = value })), nil, "invalid control " .. key) end
     end
     local plan = { venueID = "test-venue", deadline = 1791100300, duration = 300,
         mapID = 1429, continentID = 0, x = -1000, y = 2000 }
@@ -111,20 +133,25 @@ return function(FD, equal)
     }) do
         for _, value in ipairs(values) do equal(protocol:Encode(changedPlan({ [key] = value })), nil, "invalid plan " .. key) end
     end
-    equal(protocol:Encode(control("CANCEL", { reason = "NO_SHOW" })), nil, "unknown cancellation reason")
-    for _, value in ipairs({ -1, 4102444801, 0.5, "1791100120", math.huge }) do
-        equal(protocol:Encode(control("READY", { deadline = value })), nil, "invalid ready deadline")
+    equal(protocol:Encode(control("PLAN_ACK", { venueID = "test-venue" })), nil, "plan acknowledgment names the deadline")
+    equal(protocol:Encode(control("PLAN_ACK", { venueID = "Bad|ID", deadline = 1 })), nil, "plan acknowledgment venue validated")
+    equal(protocol:Encode(control("PLAN_REJECT", {})), nil, "plan rejection names its venue")
+    for _, flags in ipairs({ -1, 4, 0.5, "1" }) do
+        equal(protocol:Encode(control("STATUS", { mapID = 1, continentID = 0, x = 0, y = 0, flags = flags })), nil,
+            "invalid status flags " .. tostring(flags))
     end
-    equal(protocol:Encode(control("READY")), nil, "ready always carries proposal or shared deadline")
+    equal(protocol:Encode(control("STATUS", { mapID = 0, continentID = 1, x = 0, y = 0, flags = 0 })), nil,
+        "status unknown position cannot carry a continent")
+    equal(protocol:Encode(control("CANCEL", { reason = "NO_SHOW" })), nil, "unknown cancellation reason")
     local largestPlan = protocol:Encode(changedPlan({ session = string.rep("a", 32), peerSession = string.rep("b", 32),
         ticket = string.rep("c", 80), venueID = string.rep("d", 48),
         deadline = 4102444800, mapID = 100000, continentID = 100000, x = -1000000, y = -1000000 }))
-    equal(#largestPlan, 252, "largest control schema remains under native byte limit")
+    equal(#largestPlan <= 255, true, "largest control schema remains under native byte limit")
     equal(type(protocol:Decode(largestPlan)), "table", "largest valid control packet round-trips")
 
     for _, payload in ipairs({
-        "", string.rep("a", 256), "FDQ0|QUERY", "FDQ2|QUERY", "FDQ1|UNKNOWN", "FDQ1|QUERY|",
-        "FDQ1|QUERY|unexpected", encoded .. "|unexpected", "|" .. encoded,
+        "", string.rep("a", 256), "FDQ1|QUERY", "FQ1|QUERY", "FQ3|QUERY", "FQ2|UNKNOWN", "FQ2|QUERY|",
+        "FQ2|QUERY|unexpected", encoded .. "|unexpected", "|" .. encoded,
         encoded:sub(1, #encoded - 5), encoded:gsub("1500", "01500", 1),
         encoded:gsub("1500", "1e3", 1), encoded:gsub("1500", "+1500", 1),
         encoded:gsub("1500", "1500.0", 1), encoded:gsub("1500", "-0", 1),
@@ -133,6 +160,7 @@ return function(FD, equal)
         encoded:gsub("PVP", "PV\195\164P", 1), encoded:gsub("PVP", "PV\0P", 1),
         encoded:gsub("1791100000", "4102444801", 1), encoded:gsub("%-1000", "-01000", 1),
     }) do equal(protocol:Decode(payload), nil, "reject malformed queue wire payload") end
+    equal(protocol:Decode("FDQ1|ACK|abcd-1234|abcd-5678|ab.cd-1234-5678"), nil, "old protocol 1 control packets are ignored")
     equal(protocol:Decode(nil), nil, "nil wire payload")
     equal(protocol:Decode({}), nil, "table wire payload")
     local planWire = protocol:Encode(control("PLAN", plan))
@@ -164,7 +192,7 @@ return function(FD, equal)
         mapID = 100000, continentID = 100000, mapX = protocol.MAP_SCALE, mapY = protocol.MAP_SCALE,
         minPlayerLevel = 255, zoneMinLevel = 255, zoneMaxLevel = 255, testedAt = 4102444800,
         faction = "Alliance", hubFaction = "Alliance" }))
-    equal(#largestVenue, 199, "largest venue setup record fits native addon wire")
+    equal(#largestVenue <= 255, true, "largest venue setup record fits native addon wire")
     equal(type(protocol:Decode(largestVenue)), "table", "largest setup record round-trips")
     equal(protocol:Encode(venue({ fullName = "Native-Forever", verified = true, name = "Local map label", rated = true })),
         venueWire, "setup transport never serializes trust flags or rated evidence")
@@ -195,4 +223,14 @@ return function(FD, equal)
         venueWire:gsub("12345678", "-0", 1), venueWire:gsub("NONE", "NO\nNE", 1),
         venueWire:gsub("NONE", "NO\195\164NE", 1), venueWire:gsub("98765432", "100000001", 1),
     }) do equal(protocol:Decode(payload), nil, "setup wire is strict canonical ASCII") end
+
+    -- Acknowledged venue sharing.
+    roundTrip({ kind = "VENUE_ACK", venueID = "test-1-2-3-a", keptID = "test-1-2-3-a" })
+    roundTrip({ kind = "VENUE_ACK", venueID = "test-1-2-3-a", keptID = "test-1-2-2-a" })
+    for code in pairs(protocol.VENUE_REJECTIONS) do
+        roundTrip({ kind = "VENUE_REJECT", venueID = "test-1-2-3-a", reason = code })
+    end
+    equal(protocol:Encode({ kind = "VENUE_REJECT", venueID = "test-1-2-3-a", reason = "SECRET" }), nil, "unknown venue rejection")
+    equal(protocol:Encode({ kind = "VENUE_ACK", venueID = "test-1-2-3-a" }), nil, "venue acknowledgment names the kept ID")
+    equal(protocol:Encode({ kind = "VENUE_ACK", venueID = "Bad", keptID = "ok" }), nil, "venue acknowledgment IDs validated")
 end
