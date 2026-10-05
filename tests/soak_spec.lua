@@ -502,4 +502,25 @@ return function(_, equal)
     w:advance(15)
     eq(a.leaves, 0, "the manual group is never left automatically")
     ok(a.group ~= nil and d.group ~= nil, "the manual group stays")
+
+    -- An unreadable character identity is not damaged saved data: commands
+    -- say so instead of advising a repair, and repair retries the start.
+    scenario = "identity unavailable"
+    w = newWorld({})
+    local lost = w:client({ guid = "not-a-guid" })
+    lost:command("summary")
+    ok(lost:printed("ForeverDuelersGuild is still starting"), "commands wait while the start is retried")
+    w:advance(40)
+    local before = #lost.prints
+    lost:command("summary")
+    ok(lost:printed("Character identity is unavailable", lost.prints[before + 1] and lost.prints[before + 1].at),
+        "commands name the identity problem after the retries")
+    ok(not lost:printed("Type /duelrating repair"), "no repair is advised for valid saved data")
+    lost:command("repair confirm")
+    ok(not lost:printed("Repair failed"), "repair does not fail on a missing identity")
+    lost.guid = "Player-1-00000042"
+    lost:command("repair")
+    eq(lost.FD.initialized, true, "repair starts the addon once the identity is readable")
+    ok(lost:printed("Saved data is valid; nothing to repair."), "and says the data was fine")
+    eq(lost.FD.Database.data ~= nil, true, "rating is enabled")
 end

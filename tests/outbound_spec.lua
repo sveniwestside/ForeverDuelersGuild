@@ -153,6 +153,18 @@ return function(_, equal, newNamespace)
     equal(#s.sent, 2, "synchronous send falls back to WHISPER immediately")
     equal(#s.timers, 0, "synchronous send schedules nothing")
 
+    -- A failing callback of a sending module is persisted, never lost.
+    s = setup()
+    s.Outbound:Send(item({ payload = "current", isCurrent = function() error("isCurrent broke") end }))
+    s.Outbound:Send(item({ payload = "result", onResult = function() error("onResult broke") end }))
+    s.Outbound:Send(item({ payload = "route", route = function() error("route broke") end }))
+    s:advance(2)
+    local contexts = {}
+    for _, saved in ipairs(s.FD.Debug:Errors()) do contexts[saved.context] = saved.message end
+    equal(contexts["outbound isCurrent"] ~= nil, true, "an isCurrent error is saved")
+    equal(contexts["outbound callback"] ~= nil, true, "an onResult error is saved")
+    equal(contexts["outbound route"] ~= nil, true, "a route error is saved")
+
     -- Drop removes queued items for an ended match.
     s = setup()
     local owner = {}

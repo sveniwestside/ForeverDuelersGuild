@@ -26,6 +26,8 @@ return function(FD, equal)
     end
     function FD.Debug:Print(message) state.prints[#state.prints + 1] = message end
     function FD.Debug:Log(...) state.logs[#state.logs + 1] = { ... } end
+    -- Window failures are persisted addon errors (/duelrating errors).
+    function FD.Debug:Error(context, message) state.logs[#state.logs + 1] = { context, message } end
     function FD:Safe() error("Zone UI must not enter duel-aborting recovery") end
     local methods, widget = {}, nil
     widget = function() return setmetatable({ scripts = {} }, { __index = methods }) end
@@ -271,6 +273,7 @@ return function(FD, equal)
     equal(FD.Zone.frame:IsShown(), false, "read failure hides broken browser")
     equal(FD.Zone.classFilter.menu:IsShown(), false, "UI failure also closes the dropdown")
     equal(#state.logs, 1, "read failure logged without core recovery")
+    equal(state.logs[1][1], "zone browser", "as a persisted zone browser error")
     preserved("failed rendering")
     state.failRead = false
     state.players = { { guid = "Player-1-3", fullName = "Peer-Realm", rating = 1600 } }
@@ -289,6 +292,7 @@ return function(FD, equal)
     preserved("failed dropdown selection")
     FD.Debug.Print = function() error("logger failed") end
     FD.Debug.Log = function() error("logger failed") end
+    FD.Debug.Error = function() error("logger failed") end
     state.failRead = true
     equal(pcall(function() FD.Zone:Show() end), true, "logger failure cannot escape isolated recovery")
     preserved("failed logger")

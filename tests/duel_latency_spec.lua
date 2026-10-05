@@ -429,6 +429,21 @@ return function(_, equal)
     eq(net.a.FD.duel.active and net.a.FD.duel.active.held, nil, "the held request is released at once")
     eq(#net.a.FD.Database.data.matches, 0, "a cancelled parked match is not recorded")
 
+    label = "reset while the previous duel is parked"
+    ratedDuel(25)
+    net:challenge(net.b)
+    net:advance(1)
+    eq(net.a.FD.duel.parked ~= nil, true, "A parked duel 1")
+    net.a.env.CancelDuel()
+    eq(net.a.FD.duel.active, nil, "A declined the rematch")
+    net.a.env.SlashCmdList.FOREVERDUEL("reset")
+    net.a.env.SlashCmdList.FOREVERDUEL("reset confirm")
+    eq(net.a:printed("Finish or cancel the pending duel before resetting."), true, "reset is refused while a duel is parked")
+    eq(net.a.FD.resetUntil, nil, "no reset confirmation is opened")
+    net:advance(40)
+    eq(#net.a.FD.Database.data.matches, 1, "the parked duel commits into the unreset history")
+    eq(net.a.FD.Database:GetStats().rating, 1516, "with its rating change")
+
     label = "exact party route while the receiver's roster is still loading"
     net = Client.pair({ latency = 0.5, tokens = true })
     for _, c in ipairs({ net.a, net.b }) do c.grouped, c.members, c.units.party1 = true, 2, c.units.target end

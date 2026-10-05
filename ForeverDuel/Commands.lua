@@ -42,7 +42,15 @@ function FD:Command(text)
         return
     end
     if not command.anyState and not (self.Database and self.Database.data) then
-        say(FD.L["Saved data unavailable; rating is disabled. Type /duelrating repair to start a fresh rating while keeping a copy of the old data."])
+        -- Only a database error needs repair; otherwise the character identity
+        -- is not readable yet (or at all) and the saved data is untouched.
+        if self.databaseError then
+            say(FD.L["Saved data unavailable; rating is disabled. Type /duelrating repair to start a fresh rating while keeping a copy of the old data."])
+        elseif self.initializeRetryPending then
+            say(FD.L["ForeverDuelersGuild is still starting; try again in a few seconds."])
+        else
+            say(FD.L["Character identity is unavailable; rated duels are disabled until /reload."])
+        end
         return
     end
     if self.Database and self.Database.data and self.Wow then

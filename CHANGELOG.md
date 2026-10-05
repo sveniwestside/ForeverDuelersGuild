@@ -54,7 +54,10 @@ _Review-driven rework. Simulated in the test suites; the live two-client run ([M
 
 ### Diagnostics
 
-- New `/duelrating errors` shows saved Lua errors with their stack. The chat mentions the first new error once.
+- New `/duelrating errors` shows saved Lua errors with their stack. The chat mentions the first new error once. Errors in the queue window, zone browser, minimap button, player tooltip and in message callbacks are saved too.
+- Traffic counters no longer show an old minute as "this minute", and the saved last minute records when it started.
+- A client whose duel message formats contain grammar codes says so once at login.
+- When the character identity cannot be read, commands say so instead of advising a repair of valid saved data, and `/duelrating repair` retries the start. `/duelrating reset` waits for a previous duel's result that is still being exchanged.
 - `/duelrating diagnose lifecycle` and `diagnose transport` show separate saved logs, so message traffic can no longer push out duel evidence. Status and diagnose show traffic counters per addon prefix and route.
 - `/duelrating status` shows the installed build, the discovery round trip and the opponent's addon version.
 

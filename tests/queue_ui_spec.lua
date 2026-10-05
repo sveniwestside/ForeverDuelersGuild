@@ -15,6 +15,7 @@ return function(_, equal)
         function FD.Wow:Readable(value) return value ~= state.secret end
         function FD.Debug:Print(value) state.prints[#state.prints + 1] = value end
         function FD.Debug:Log(...) state.logs[#state.logs + 1] = { ... } end
+        function FD.Debug:Error(context, message) state.logs[#state.logs + 1] = { context, message } end
         function FD:Safe() error("Queue UI must not invoke duel-aborting recovery") end
         function FD:CaptureQueueVenue()
             state.captures = state.captures + 1
@@ -316,10 +317,12 @@ return function(_, equal)
     c.failAction, c.failStatus = nil, true
     equal(ui:Show(), false, "status errors remain isolated")
     equal(ui.frame:IsShown(), false, "failed status does not leave stale clickable panel")
+    equal(c.logs[#c.logs][1], "queue window", "window failures are persisted addon errors")
     local logged = #c.logs
     c.errorValue = c.secret
     ui:Show()
-    equal(#c.logs, logged, "secret error detail never enters debug log")
+    equal(#c.logs, logged + 1, "a secret failure is still recorded")
+    equal(c.logs[#c.logs][2], "restricted error", "secret error detail never enters the saved errors")
 
     local absent = client({ noQueue = true })
     equal(absent.FD.QueueUI:Show(), true, "missing engine displays unavailable guidance")

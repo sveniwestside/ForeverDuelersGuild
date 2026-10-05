@@ -38,7 +38,7 @@ end
 
 -- A failed browser or challenge must never enter Core's duel-aborting recovery.
 function Zone:Run(callback)
-    return Widgets.Run(self, callback, L("Could not display players in your zone. Try /duelrating zone again."), "zone browser error")
+    return Widgets.Run(self, callback, L("Could not display players in your zone. Try /duelrating zone again."), "zone browser")
 end
 
 function Zone:IsShown()

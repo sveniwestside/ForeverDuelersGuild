@@ -156,15 +156,23 @@ function Outbound:Send(item)
     return true
 end
 
+-- A failing callback of a sending module is persisted, never silently lost.
+local function report(context, err)
+    if FD.Debug and FD.Debug.Error then pcall(FD.Debug.Error, FD.Debug, context, err) end
+end
+
 local function notify(item, status, code)
-    if type(item.onResult) == "function" then pcall(item.onResult, status, code) end
+    if type(item.onResult) ~= "function" then return end
+    local ok, err = pcall(item.onResult, status, code)
+    if not ok then report("outbound callback", err) end
 end
 
 function Outbound:Resolve(item)
     local channel, target = item.channel, item.target
     if type(item.route) == "function" then
         local ok, routeChannel, routeTarget = pcall(item.route)
-        if ok and type(routeChannel) == "string" then channel, target = routeChannel, routeTarget end
+        if ok and type(routeChannel) == "string" then channel, target = routeChannel, routeTarget
+        elseif not ok then report("outbound route", routeChannel) end
     end
     if item.forceWhisper or channel ~= "WHISPER" and self.routeUnavailable[channel] then
         if type(item.target) ~= "string" or item.noWhisperFallback then return nil end
@@ -311,6 +319,7 @@ function Outbound:Pump()
             if type(item.isCurrent) == "function" then
                 local ok, value = pcall(item.isCurrent)
                 current = ok and value == true
+                if not ok then report("outbound isCurrent", value) end
             end
             if not current then
                 table.remove(lane, index)

@@ -4,7 +4,7 @@ return function(_, equal)
         local env = setmetatable({}, { __index = _G })
         env._G = env
         local active = { state = "IN_PROGRESS", matchId = "preserve-duel" }
-        local state = { created = 0, toggles = 0, prints = {}, logs = {}, cursorX = 320, cursorY = 320 }
+        local state = { created = 0, toggles = 0, prints = {}, logs = {}, errors = {}, cursorX = 320, cursorY = 320 }
         local FD = {
             Database = { data = { settings = options.settings or { debug = false },
                 player = { rating = 1516, wins = 1, losses = 0 }, matches = { "existing-record" } } },
@@ -20,6 +20,9 @@ return function(_, equal)
         end
         function FD.Debug:Print(message) state.prints[#state.prints + 1] = message end
         function FD.Debug:Log(...) state.logs[#state.logs + 1] = { ... } end
+        function FD.Debug:Error(context, message, stack)
+            state.errors[#state.errors + 1] = { context = context, message = message, stack = stack }
+        end
         function FD:Safe() error("Minimap must not invoke duel-aborting recovery") end
         local methods = {}
         function methods:SetSize(width, height) self.width, self.height = width, height end
@@ -188,7 +191,9 @@ return function(_, equal)
     c.failToggle = true
     c:click()
     equal(#c.prints, 1, "action failure reports slash-command fallback")
-    equal(#c.logs, 1, "action failure remains locally logged")
+    equal(#c.errors, 1, "action failure is persisted as an addon error")
+    equal(c.errors[1].context, "minimap button", "under the minimap button context")
+    equal(tostring(c.errors[1].message):find("toggle failed", 1, true) ~= nil, true, "with its message")
     c:preserved("failed toggle")
     c:click()
     equal(#c.prints, 1, "repeated failure does not spam fallback text")

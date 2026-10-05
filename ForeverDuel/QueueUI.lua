@@ -30,7 +30,7 @@ end
 
 -- Queue presentation and optional actions must not enter duel-aborting recovery.
 function QueueUI:Run(callback)
-    return Widgets.Run(self, callback, L["Could not display the duel queue. Try /duelrating queue again."], "queue window error")
+    return Widgets.Run(self, callback, L["Could not display the duel queue. Try /duelrating queue again."], "queue window")
 end
 
 function QueueUI:GetStatus()

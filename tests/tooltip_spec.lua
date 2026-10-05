@@ -35,6 +35,7 @@ return function(FD, equal)
         end
         function FD.Presence:GetOwnPlayer() return state.own end
         function FD.Debug:Log(...) state.logs[#state.logs + 1] = { ... } end
+        function FD.Debug:Error(context, message) state.logs[#state.logs + 1] = { context, message } end
         function FD:Safe() error("tooltip must not invoke duel-aborting recovery") end
         env.UnitTokenFromGUID = function(guid)
             if state.noToken then return nil end

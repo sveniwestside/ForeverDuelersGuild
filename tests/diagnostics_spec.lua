@@ -145,6 +145,23 @@ return function(FD, equal)
     FD.Debug:ClearErrors()
     equal(#FD.Debug:Errors(), 0, "errors can be cleared")
 
+    -- Window errors (queue window, zone browser through Widgets.Run) are
+    -- persisted with their stack, not only logged under an unrouted topic.
+    local widgets = assert(loadfile("ForeverDuel/Widgets.lua"))
+    setfenv(widgets, env)("ForeverDuel", FD)
+    equal(FD.Widgets.Run({}, function() error("boom in queue window") end, "Could not display the duel queue.",
+        "queue window"), false, "the window failure is contained")
+    local saved = FD.Debug:Errors(1)[1]
+    equal(saved and saved.context, "queue window", "a window error is saved for /duelrating errors")
+    equal(saved and saved.message:find("boom in queue window", 1, true) ~= nil, true, "with its message")
+    FD.Debug:ClearErrors()
+
+    -- The grammar-code warning for the duel formats is lifecycle evidence.
+    FD.Debug:Record("duel format contains grammar codes", "%s |4wins:win; %s", "extra")
+    local grammar = FD.Debug:RequestTrace(1, "lifecycle")[1]
+    equal(grammar.event, "duel format contains grammar codes", "the grammar-code warning is persisted")
+    equal(grammar.detail, "%s |4wins:win; %s", "only the client format string is kept")
+
     -- Traffic counters: totals, rolling minute and unique recipients.
     FD.Debug:Count("ForeverDuel2", "WHISPER", "submitted", "Beta-Forever")
     FD.Debug:Count("ForeverDuel2", "WHISPER", "success", "Beta-Forever")
@@ -159,6 +176,18 @@ return function(FD, equal)
     FD.Debug:Count("ForeverDuel2", "WHISPER", "submitted", "Beta-Forever")
     equal(snapshot.settings.trafficCounters["ForeverDuel2 WHISPER"].lastMinute.recipients, 2,
         "the previous full minute is persisted when a new minute starts")
+    equal(type(snapshot.settings.trafficCounters["ForeverDuel2 WHISPER"].lastMinute.at), "number",
+        "the saved minute records when it started")
+    -- A quiet key never shows an old window as "this minute".
+    clock = clock + 60
+    lines = FD.Debug:TrafficLines()
+    equal(lines[1]:find("this minute: none (0 recipients) | previous minute: submitted 1", 1, true) ~= nil, true,
+        "one minute later the counts are the previous minute")
+    clock = clock + 600
+    lines = FD.Debug:TrafficLines()
+    equal(lines[1]:find("this minute: none (0 recipients) | last activity", 1, true) ~= nil, true,
+        "ten minutes later only the age of the last activity is shown")
+    equal(lines[1]:find("submitted 1 (", 1, true), nil, "old counts are not reported as current")
     FD.Debug:Session(false, true)
     equal(FD.Debug:RequestTrace(1, "lifecycle")[1].detail, "reload", "reload and login are distinguished")
 end

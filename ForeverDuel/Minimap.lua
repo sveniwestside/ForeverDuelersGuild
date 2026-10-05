@@ -11,8 +11,16 @@ local function settings()
 end
 
 -- A launcher failure must not enter Core:Safe, which aborts an active duel.
+-- It is persisted with its stack like every other addon error.
 function MinimapButton:Run(callback)
-    local ok, result = pcall(callback)
+    local stack
+    local ok, result = xpcall(callback, function(err)
+        if type(debugstack) == "function" then
+            local captured, value = pcall(debugstack, 2, 8, 0)
+            if captured then stack = value end
+        end
+        return err
+    end)
     if ok then return true, result end
     self.dragging = false
     if self.button then pcall(self.button.SetScript, self.button, "OnUpdate", nil) end
@@ -20,8 +28,8 @@ function MinimapButton:Run(callback)
         if not self.errorReported then
             FD.Debug:Print(FD.L["Minimap button unavailable. Use /duelrating to open your record."])
         end
-        if readable(result) then FD.Debug:Log("minimap button error", result) end
     end)
+    pcall(FD.Debug.Error, FD.Debug, "minimap button", readable(result) and result or "restricted error", stack)
     self.errorReported = true
     return false
 end

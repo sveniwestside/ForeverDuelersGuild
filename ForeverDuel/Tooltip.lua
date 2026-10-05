@@ -6,13 +6,20 @@ local Native = FD.Native
 local readable = Native.Readable
 
 -- Optional presentation must never enter Core:Safe and abort an active duel.
+-- The first failure of a session is persisted with its stack; a tooltip that
+-- fails on every hover saves one entry.
 function Tooltip:Run(callback)
-    local ok, result = pcall(callback)
+    local stack
+    local ok, result = xpcall(callback, function(err)
+        if not self.errorReported and type(debugstack) == "function" then
+            local captured, value = pcall(debugstack, 2, 8, 0)
+            if captured then stack = value end
+        end
+        return err
+    end)
     if not ok and not self.errorReported then
         self.errorReported = true
-        pcall(function()
-            if readable(result) then FD.Debug:Log("player tooltip error", result) end
-        end)
+        pcall(FD.Debug.Error, FD.Debug, "player tooltip", readable(result) and result or "restricted error", stack)
     end
     return ok, result
 end

@@ -132,6 +132,16 @@ function FD:Initialize()
     self.Debug:Log("loaded", addonName, self.C.VERSION, "transport", self.Comms.available)
     if type(DUEL_COUNTDOWN) ~= "string" or type(DUEL_WINNER_KNOCKOUT) ~= "string" then
         self.Debug:Print(self.L["Duel evidence formats unavailable. This client cannot finalize rated duels."])
+    else
+        -- Results.lua parses these unchanged; whether such a locale's system
+        -- messages carry the codes raw or resolved is unverified.
+        for _, format in ipairs({ DUEL_COUNTDOWN, DUEL_WINNER_KNOCKOUT, DUEL_WINNER_RETREAT }) do
+            if type(format) == "string" and format:find("|", 1, true) then
+                self.Debug:Print(self.L["This client's duel message formats contain grammar codes; rated results may not be recognised."])
+                pcall(self.Debug.Record, self.Debug, "duel format contains grammar codes", format)
+                break
+            end
+        end
     end
     if #failed > 0 then
         self.Debug:Print(self.Locale:Format("Some features failed to start: %s. Type /duelrating errors for details.",
@@ -148,7 +158,12 @@ FD:RegisterCommand("history", function() FD.UI:History(20) end, "Print up to 20 
 
 FD:RegisterCommand("reset", function(rest)
     if FD.queue and FD.queue.state ~= "IDLE" then say(FD.L["Leave the queue before resetting."]); return end
-    if FD.duel and FD.duel.active then say(FD.L["Finish or cancel the pending duel before resetting."]); return end
+    -- A parked duel still waits for its result and would commit into the
+    -- reset history; this check also runs for "reset confirm".
+    if FD.duel and (FD.duel.active or FD.duel.parked) then
+        say(FD.L["Finish or cancel the pending duel before resetting."])
+        return
+    end
     if rest ~= "confirm" then
         FD.resetUntil = GetTime() + 15
         say(FD.L["This deletes this character's rating and history. Type /duelrating reset confirm within 15 seconds."])
@@ -165,13 +180,22 @@ FD:RegisterCommand("reset", function(rest)
     else say(FD.Locale:Format("Reset refused: %s", tostring(err))) end
 end, "Delete this character's rating and history (asks for confirmation).", 70)
 
+-- Initialization without a database error: the character identity was
+-- unavailable, not the saved data. Try again instead of repairing.
+local function retryInitialize()
+    if FD:Initialize() then say(FD.L["Saved data is valid; nothing to repair."])
+    else say(FD.L["Character identity is unavailable; rated duels are disabled until /reload."]) end
+end
+
 FD:RegisterCommand("repair", function(rest)
     if FD.Database.data then say(FD.L["Saved data is valid; nothing to repair."]); return end
+    if not FD.databaseError then return retryInitialize() end
     if rest ~= "confirm" then
         say(FD.L["Repair starts a fresh rating for this character. The unreadable data stays in the saved file under 'quarantine'. Type /duelrating repair confirm."])
         return
     end
     local db, err = FD.Database:Repair(ForeverDuelDB, FD.Wow:Identity("player", true))
+    if err == "nothing_to_repair" then return retryInitialize() end
     if not db then say(FD.Locale:Format("Repair failed: %s", tostring(err))); return end
     ForeverDuelDB = db
     FD.databaseReported = nil

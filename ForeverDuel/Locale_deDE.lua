@@ -29,10 +29,12 @@ FD.Locale:Register("deDE", {
     -- Core.lua
     ["Rated flow stopped after an addon error. Use the normal duel dialog."] = "Gewerteter Ablauf nach einem Addon-Fehler gestoppt. Nutze den normalen Duelldialog.",
     ["Character identity is unavailable; rated duels are disabled until /reload."] = "Charakteridentität nicht verfügbar; gewertete Duelle sind bis /reload deaktiviert.",
+    ["ForeverDuelersGuild is still starting; try again in a few seconds."] = "ForeverDuelersGuild startet noch; versuche es in ein paar Sekunden erneut.",
     ["Saved data could not be loaded (%s). Rated duels are disabled; the data is untouched. Type /duelrating repair to start fresh while keeping a copy."] = "Gespeicherte Daten konnten nicht geladen werden (%s). Gewertete Duelle sind deaktiviert; die Daten bleiben unverändert. Gib /duelrating repair ein, um neu zu beginnen und eine Kopie zu behalten.",
     ["Previous rating preserved in Legacy. Leveling and Max level have separate ratings."] = "Bisherige Wertung unter 'Archiv' erhalten. Leveln und Höchststufe haben getrennte Wertungen.",
     ["Saved data of another character with this name was archived. This character starts with a fresh rating."] = "Gespeicherte Daten eines anderen Charakters mit diesem Namen wurden archiviert. Dieser Charakter beginnt mit neuer Wertung.",
     ["Duel evidence formats unavailable. This client cannot finalize rated duels."] = "Duell-Nachweisformate nicht verfügbar. Dieser Client kann keine gewerteten Duelle abschließen.",
+    ["This client's duel message formats contain grammar codes; rated results may not be recognised."] = "Die Duell-Nachrichtenformate dieses Clients enthalten Grammatikcodes; gewertete Ergebnisse werden eventuell nicht erkannt.",
     ["Some features failed to start: %s. Type /duelrating errors for details."] = "Einige Funktionen konnten nicht starten: %s. Gib /duelrating errors für Details ein.",
     ["Open the rating overview."] = "Öffnet die Wertungsübersicht.",
     ["Print ratings and recent results."] = "Zeigt Wertungen und letzte Ergebnisse.",

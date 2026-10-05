@@ -9,7 +9,8 @@ end
 
 -- Some locales use inline grammar codes (|1..;..; and similar). Whether the
 -- system message carries them raw or resolved is unverified, so parsing is
--- unchanged; debug chat names such a format once to make a failure visible.
+-- unchanged; such a format is recorded once (lifecycle diagnostics, debug
+-- chat) to make a failure visible. Core warns in chat at initialization.
 local reported = {}
 local function reportGrammar(format)
     if reported[format] or not format:find("|", 1, true) then return end

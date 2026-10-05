@@ -77,15 +77,21 @@ end
 
 -- Optional presentation must never enter Core:Safe, whose recovery aborts an
 -- active duel: a failure hides only the owner's window, tells the player
--- `message` and logs a readable error under `context`.
+-- `message` and persists the error with its stack under `context`
+-- (/duelrating errors), like every other addon error.
 function Widgets.Run(owner, callback, message, context)
-    local ok, result, reason = pcall(callback)
+    local stack
+    local ok, result, reason = xpcall(callback, function(err)
+        if type(debugstack) == "function" then
+            local captured, value = pcall(debugstack, 2, 8, 0)
+            if captured then stack = value end
+        end
+        return err
+    end)
     if ok then return true, result, reason end
     if owner.frame then pcall(owner.frame.Hide, owner.frame) end
-    pcall(function()
-        FD.Debug:Print(message)
-        if FD.Native.Readable(result) then FD.Debug:Log(context, result) end
-    end)
+    pcall(function() FD.Debug:Print(message) end)
+    pcall(FD.Debug.Error, FD.Debug, context, FD.Native.Readable(result) and result or "restricted error", stack)
     return false
 end
 

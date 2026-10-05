@@ -184,9 +184,11 @@ return function(_, equal)
     W.Fit(window, 800, 600)
     equal(window.scale, 0.1, "the scale never drops below 0.1")
 
-    local prints, logs = {}, {}
+    local prints, errors = {}, {}
     FD.Debug = { Print = function(_, text) prints[#prints + 1] = text end,
-        Log = function(_, ...) logs[#logs + 1] = { ... } end }
+        Error = function(_, context, message, stack)
+            errors[#errors + 1] = { context = context, message = message, stack = stack }
+        end }
     local owner = { frame = window }
     window:Show()
     local ok, first, second = W.Run(owner, function() return "value", "reason" end, "failed", "context")
@@ -194,10 +196,10 @@ return function(_, equal)
     equal(W.Run(owner, function() error("broken") end, "failed", "context"), false, "Run contains errors")
     equal(window.shown, false, "a failure hides the owner's window")
     equal(prints[1], "failed", "the player is told")
-    equal(logs[1][1], "context", "a readable error is logged")
-    equal(tostring(logs[1][2]):find("broken", 1, true) ~= nil, true, "the error message is logged")
+    equal(errors[1].context, "context", "the error is persisted under its context (/duelrating errors)")
+    equal(tostring(errors[1].message):find("broken", 1, true) ~= nil, true, "with its message")
     W.Run(owner, function() error(secret) end, "failed", "context")
-    equal(#logs, 1, "a secret error never reaches the log")
+    equal(errors[2].message, "restricted error", "a secret error never reaches the saved errors")
     FD.Debug.Print = function() error("print failed") end
     equal(W.Run({}, function() error("again") end, "failed", "context"), false, "a failing report stays contained")
 

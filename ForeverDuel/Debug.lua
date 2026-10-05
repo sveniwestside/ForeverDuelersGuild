@@ -18,6 +18,7 @@ local routes = {
     ["queue cancel"] = "lifecycle", ["queue invite"] = "lifecycle", ["queue venue"] = "lifecycle",
     ["addon prefix registration"] = "lifecycle", ["version mismatch"] = "lifecycle",
     ["UI_INFO_MESSAGE"] = "lifecycle", ["UI_ERROR_MESSAGE"] = "lifecycle",
+    ["duel format contains grammar codes"] = "lifecycle",
     -- Transport: individual submissions and receipts, plus latency probes.
     ["transport send"] = "transport", ["transport receive"] = "transport",
     ["transport ingress"] = "transport", ["transport sender mismatch"] = "transport",
@@ -27,7 +28,8 @@ local routes = {
 }
 -- Arguments retained per topic. Later arguments may carry negotiation IDs.
 local argumentLimits = { ["state"] = 3, ["queue state"] = 4, ["queue group"] = 2,
-    ["queue planning"] = 2, ["duel detected"] = 2, ["queue cancel"] = 4 }
+    ["queue planning"] = 2, ["duel detected"] = 2, ["queue cancel"] = 4,
+    ["duel format contains grammar codes"] = 1 }
 -- Repeated identical waiting/idle entries are summarized instead of appended.
 local repeatIntervals = { ["peer validation"] = 10, ["transport ingress"] = 10, ["queue group"] = 10,
     ["queue planning"] = 10, ["transport send"] = 5, ["transport receive"] = 5,
@@ -248,16 +250,21 @@ function Debug:Count(prefix, channel, outcome, target)
     local now = clientTime() or 0
     local key = prefix .. " " .. channel
     local entry = self.traffic[key]
+    -- Server time of the window start, so a saved minute shows its age.
+    local server = serverTime()
+    local opened = server and math.floor(server - (now - window(now) * 60))
     if not entry then
-        entry = { prefix = prefix, channel = channel, totals = {}, minute = window(now), current = {}, recipients = {}, previous = nil }
+        entry = { prefix = prefix, channel = channel, totals = {}, minute = window(now), current = {}, recipients = {},
+            previous = nil, openedAt = opened }
         self.traffic[key] = entry
     end
     if entry.minute ~= window(now) then
         local uniques = 0
         for _ in pairs(entry.recipients) do uniques = uniques + 1 end
-        entry.previous = { minute = entry.minute, counts = entry.current, recipients = uniques }
-        entry.minute, entry.current, entry.recipients = window(now), {}, {}
+        entry.previous = { minute = entry.minute, counts = entry.current, recipients = uniques, at = entry.openedAt }
+        entry.minute, entry.current, entry.recipients, entry.openedAt = window(now), {}, {}, opened
     end
+    entry.lastT = now
     entry.totals[outcome] = (entry.totals[outcome] or 0) + 1
     entry.current[outcome] = (entry.current[outcome] or 0) + 1
     if outcome == "submitted" and type(target) == "string" and readable(target) then entry.recipients[target] = true end
@@ -271,7 +278,7 @@ function Debug:Count(prefix, channel, outcome, target)
         persisted.version, persisted.lastAt = self:Version(), serverTime()
         if entry.previous then
             persisted.lastMinute = { counts = FD.Copy and FD.Copy(entry.previous.counts) or entry.previous.counts,
-                recipients = entry.previous.recipients }
+                recipients = entry.previous.recipients, at = entry.previous.at }
         end
     end
 end
@@ -286,17 +293,30 @@ local function describe(counts)
     return #parts > 0 and table.concat(parts, ", ") or "none"
 end
 
--- Human-readable traffic lines for status/diagnose output.
+-- Human-readable traffic lines for status/diagnose output. A window rolls
+-- over only when its key counts again, so an older window is reported as the
+-- previous minute or by its age, never as "this minute".
 function Debug:TrafficLines()
     local lines, keys = {}, {}
+    local now = clientTime() or 0
+    local current = window(now)
     for key in pairs(self.traffic) do keys[#keys + 1] = key end
     table.sort(keys)
     for _, key in ipairs(keys) do
         local entry = self.traffic[key]
         local uniques = 0
         for _ in pairs(entry.recipients) do uniques = uniques + 1 end
-        lines[#lines + 1] = string.format("%s | this minute: %s (%d recipients) | session: %s",
-            key, describe(entry.current), uniques, describe(entry.totals))
+        local minute
+        if entry.minute == current then
+            minute = string.format("this minute: %s (%d recipients)", describe(entry.current), uniques)
+        elseif entry.minute == current - 1 then
+            minute = string.format("this minute: none (0 recipients) | previous minute: %s (%d recipients)",
+                describe(entry.current), uniques)
+        else
+            minute = string.format("this minute: none (0 recipients) | last activity %ds ago",
+                math.floor(now - (entry.lastT or now)))
+        end
+        lines[#lines + 1] = string.format("%s | %s | session: %s", key, minute, describe(entry.totals))
     end
     return lines
 end
