@@ -5,8 +5,12 @@ local _, FD = ...
 --
 -- Traffic policy: discovery is on demand. Whisper queries go only to the
 -- current target/mouseover (shown in a tooltip or while the zone window is
--- open, same faction), to ForeverDuel channel members while the zone window
--- is open or the queue is searching, and replies go only to trusted senders.
+-- open, same faction) and to ForeverDuel channel members while the zone window
+-- is open or the queue is searching. A query proves the sender runs the addon,
+-- so every query is answered (rate limited); the own map is disclosed only to
+-- senders that reported the same map or are visible or queue partners. Our
+-- profile is posted to the channel after joining and every minute while
+-- discovery is active.
 -- Nothing is queried while a duel or a queue ticket is active. Every send
 -- goes through FD.Outbound; discovery hands it one whisper at a time with
 -- BACKGROUND priority, so it can neither fill the shared lane nor delay duel
@@ -26,8 +30,9 @@ local _, FD = ...
 -- only rare facts: the CHANNEL experiment, changed CHANNEL outcomes, the
 -- CHANNEL route becoming audible and the first whisper failure of each kind,
 -- so a busy channel cannot evict duel and queue evidence.
-FD.Presence = { players = {}, suspended = false, queries = {}, asked = {}, replies = {}, held = {}, whispered = {},
-    forgotten = {}, failures = {}, work = {}, workCount = 0, seq = 0, pings = {}, pongs = {}, pingSeq = 0 }
+FD.Presence = { players = {}, suspended = false, queries = {}, asked = {}, replies = {}, whispered = {},
+    forgotten = {}, failures = {}, work = {}, workCount = 0, seq = 0, pings = {}, pongs = {}, pingSeq = 0,
+    received = { profile = 0, query = 0, channel = 0 } }
 local Presence = FD.Presence
 local PREFIX = "ForeverDuelZone2"
 local TICK, PULSE = 2, 5            -- event-driven ticks are coalesced; housekeeping cadence
@@ -38,7 +43,7 @@ local EXPIRY, FORGET, MAX_PLAYERS = 180, 600, 300
 local HEARTBEAT = 45                -- per-peer query interval for known addon users
 local STRANGER = 600                -- per-name interval for players that never answered
 local ASK_GAP, MANUAL = 3, 10       -- tooltip query spacing; explicit refresh window
-local MIN_REPLY, HOLD = 5, 20       -- per-sender replies; wait for an unverified sender
+local MIN_REPLY = 5                 -- per-sender reply spacing
 local GREET_GAP = 10                -- at most one whisper greeting per 10 s to CHANNEL newcomers
 local WORK_LIMIT, WORK_TTL = 30, 30 -- pending discovery whispers and their lifetime
 local QUERY_BACKLOG = 6             -- member queries waiting at once (refilled every Tick)
@@ -288,13 +293,14 @@ function Presence:Trust(name, guid)
 end
 
 -- Map disclosure in replies: queue partners and visible units get the real
--- map; channel members only when they already reported this map; everyone
--- else gets map 0, which never lists us in their zone browser.
+-- map; anyone else only when they already reported this map themselves (in
+-- their query, profile or channel post). Everyone else gets map 0, which
+-- never lists us in their zone browser.
 function Presence:MapFor(own, name)
     local player = self.players[name]
     local trust = self:Trust(name, player and player.guid)
     if trust == "native" or trust == "queue" then return own.mapID or 0 end
-    if trust == "member" and player and own.mapID and player.mapID == own.mapID then return own.mapID end
+    if player and own.mapID and player.mapID == own.mapID then return own.mapID end
     return 0
 end
 
@@ -424,7 +430,7 @@ end
 
 -- Remove a name that is offline or unknown to the server.
 function Presence:Forget(name)
-    self.players[name], self.held[name] = nil, nil
+    self.players[name] = nil
     self.queries[name] = GetTime()
     local entry = self.work[name]
     if entry and not entry.item then self.work[name], self.workCount = nil, self.workCount - 1 end
@@ -432,7 +438,7 @@ function Presence:Forget(name)
 end
 
 function Presence:DropWork()
-    self.work, self.workCount, self.inflight, self.held = {}, 0, nil, {}
+    self.work, self.workCount, self.inflight = {}, 0, nil
     if FD.Outbound then FD.Outbound:Drop(function(item) return item.owner == self end) end
 end
 
@@ -502,7 +508,22 @@ function Presence:Store(name, player, solicited)
     return fresh(old, at) and old or nil
 end
 
-function Presence:Receive(prefix, payload, distribution, sender, _, _, localID)
+local function ourChannel(name)
+    return FD.Wow:Readable(name) and type(name) == "string"
+        and name:lower() == (FD.Roster and FD.Roster.CHANNEL or "ForeverDuel"):lower()
+end
+
+-- The first whispered receipt of each kind per session is persisted, so a
+-- live trace shows which discovery route delivered (CHANNEL receipts are
+-- recorded in Receive).
+function Presence:Count(kind, distribution)
+    self.received[kind] = (self.received[kind] or 0) + 1
+    if self.received[kind] == 1 and kind ~= "channel" then
+        FD.Debug:Log("zone receive", "first " .. kind .. " via " .. distribution)
+    end
+end
+
+function Presence:Receive(prefix, payload, distribution, sender, _, _, localID, channelName)
     if not self:Live() or not FD.Wow:Readable(prefix, payload, distribution, sender, localID)
         or prefix ~= PREFIX or type(payload) ~= "string" or #payload > 255 then return end
     local name = self:Canonical(sender)
@@ -511,8 +532,10 @@ function Presence:Receive(prefix, payload, distribution, sender, _, _, localID)
     if tag == "PING|" or tag == "PONG|" then return self:ReceivePing(payload, distribution, name) end
     local channel = distribution == "CHANNEL"
     if channel then
+        -- The local channel number identifies our channel; its name is a
+        -- second proof in case the client fills another number field.
         local id = self:ChannelID()
-        if not id or localID ~= id then return end
+        if not id or localID ~= id and not ourChannel(channelName) then return end
     elseif distribution ~= "WHISPER" then return end
     local query = tag == "FDQ2|"
     if query and channel then return end
@@ -530,6 +553,7 @@ function Presence:Receive(prefix, payload, distribution, sender, _, _, localID)
         return
     end
     local at = GetTime()
+    self:Count(channel and "channel" or query and "query" or "profile", distribution)
     if channel then
         -- Only another player's CHANNEL message proves channel delivery.
         if not self:ChannelHeard(at) then
@@ -539,12 +563,14 @@ function Presence:Receive(prefix, payload, distribution, sender, _, _, localID)
         self.lastChannelReceive = at
         if FD.Roster then FD.Roster:AddMember(name, player.guid, true) end
     end
+    -- A query is a request for mutual discovery, so its profile is accepted
+    -- like an answer; an unrequested plain profile from a stranger is not.
     local asked = self.asked[name]
-    local solicited = channel or asked ~= nil and at - asked < EXPIRY or self:Trust(name, player.guid) ~= nil
+    local solicited = channel or query or asked ~= nil and at - asked < EXPIRY or self:Trust(name, player.guid) ~= nil
     local known = self:Store(name, player, solicited)
     self.lastReceive = FD.Locale:Format(query and "Query from %s via %s" or "Profile from %s via %s", name, distribution)
     traffic("receive", query and "query" or "profile", "via " .. distribution)
-    if query then self:Answer(name, player.guid)
+    if query then self:Answer(name)
     elseif channel and not known and at - (self.lastGreet or -math.huge) >= GREET_GAP then
         -- A newcomer's broadcast is answered directly, so it learns existing
         -- members without every member rebroadcasting to the whole channel.
@@ -554,31 +580,13 @@ function Presence:Receive(prefix, payload, distribution, sender, _, _, localID)
     self:Refresh()
 end
 
-function Presence:Answer(name, guid)
+-- Every query is answered: only addon users send one. Spacing per sender
+-- and the shared background whisper budget bound the cost; MapFor decides
+-- whether the reply discloses our map.
+function Presence:Answer(name)
     local last = self.replies[name]
     if last and GetTime() - last < MIN_REPLY then return end
-    if self:Trust(name, guid) then return self:Enqueue(name, true) end
-    -- Unverified sender: wait briefly for a roster read to prove membership.
-    local count = 0
-    for _ in pairs(self.held) do count = count + 1 end
-    if count >= WORK_LIMIT or self:Quiet() then return end
-    local at = GetTime()
-    self.held[name] = self.held[name] or at
-    -- Loading the roster briefly changes the native channel selection, so a
-    -- stranger's query may trigger it only while discovery runs anyway;
-    -- otherwise join events and roster updates must prove membership.
-    if FD.Roster and self:Reason(at) then FD.Roster:Request(false) end
-end
-
-function Presence:ResolveHeld(at)
-    for name, since in pairs(self.held) do
-        local player = self:Entry(name)
-        if not player or at - since >= HOLD then self.held[name] = nil
-        elseif self:Trust(name, player.guid) then
-            self.held[name] = nil
-            self:Enqueue(name, true)
-        end
-    end
+    return self:Enqueue(name, true)
 end
 
 function Presence:Broadcast(own, reason)
@@ -587,12 +595,20 @@ function Presence:Broadcast(own, reason)
     self.lastBroadcast, self.announced = GetTime(), payload
     -- noWhisperFallback: a rejected CHANNEL route must never become a whisper
     -- to a player named like the channel number.
+    -- The channel number can change while the post waits (live 0.6.0:
+    -- "Changed Channel: [1. ForeverDuel]" followed by InvalidChannel), so it
+    -- is resolved again when the post is submitted.
+    local number = id
     return FD.Outbound:Send({ prefix = PREFIX, payload = payload, channel = "CHANNEL", target = tostring(id),
         priority = FD.Outbound.BACKGROUND, ttl = 20, key = "zone channel", owner = self, noWhisperFallback = true,
-        isCurrent = function() return self:Live() and not self:Quiet() and not self:Busy() and self:ChannelID() == id end,
+        route = function()
+            number = self:ChannelID() or number
+            return "CHANNEL", tostring(number)
+        end,
+        isCurrent = function() return self:Live() and not self:Quiet() and not self:Busy() and self:ChannelID() ~= nil end,
         onResult = function(status, code)
             local codeName = FD.Outbound:CodeName(code)
-            self.lastChannelSend = FD.Locale:Format("%s: %s (%s)", FD.L[reason], FD.L[status], codeName)
+            self.lastChannelSend = FD.Locale:Format("%s: %s (%s, /%d)", FD.L[reason], FD.L[status], codeName, number)
             -- Only a native verdict changes the route; an item dropped for a
             -- duel or expired in the queue says nothing about CHANNEL.
             if status == "sent" or status == "failed" then self.channelSend = status end
@@ -604,6 +620,17 @@ function Presence:Broadcast(own, reason)
             end
             self.channelOutcome = outcome
         end })
+end
+
+-- Our profile is posted to the channel once after joining and then every
+-- BROADCAST seconds while discovery is active (zone window open, queue
+-- searching, explicit refresh). Members already in the channel learn about a
+-- newcomer at once and greet it with a whispered reply. Success only means
+-- submitted; the route counts as working once another player's post arrives.
+function Presence:Advertise(own, at)
+    if not self:ChannelID() then return end
+    if not self.lastBroadcast then return self:Broadcast(own, "experiment") end
+    if self:Reason(at) and at - self.lastBroadcast >= BROADCAST then return self:Broadcast(own, "heartbeat") end
 end
 
 -- Profile changes (map, rating, level) are pushed at most every 30 s: over
@@ -689,14 +716,8 @@ function Presence:Tick()
     local quiet, own = self:Quiet(), self:GetOwnPlayer()
     if FD.Roster then FD.Roster:Tick(quiet) end
     if quiet or not own then return end
-    self:ResolveHeld(at)
     if not self:Busy() then
-        if not self.experimented and self:ChannelID() then
-            -- One CHANNEL attempt per session. Success only means submitted;
-            -- the route counts as working once another player's arrives.
-            self.experimented = true
-            self:Broadcast(own, "experiment")
-        end
+        self:Advertise(own, at)
         self:Announce(own, at)
         self:Discover(own, at)
     end
@@ -1018,5 +1039,9 @@ FD:RegisterStatus(30, function()
     if Presence.lastWhisper then lines[#lines + 1] = Format("Zone whisper: %s", Presence.lastWhisper) end
     if FD.Roster and FD.Roster.status then lines[#lines + 1] = Format("Zone roster: %s", FD.Roster.status) end
     if Presence.lastReceive then lines[#lines + 1] = Format("Zone receive: %s", Presence.lastReceive) end
+    local received = Presence.received
+    lines[#lines + 1] = Format("Zone received: %d profiles, %d queries, %d channel posts | own channel echo: %s | channel members known: %d",
+        received.profile or 0, received.query or 0, received.channel or 0,
+        Presence.ownEcho and L["seen"] or L["not seen"], FD.Roster and FD.Roster.memberCount or 0)
     return lines
 end)

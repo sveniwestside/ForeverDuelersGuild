@@ -131,7 +131,7 @@ return function(_, equal)
     equal(c.P:ChannelMode(), true, "another player's CHANNEL message proves the route")
     equal(traced(c, "zone receive first profile via CHANNEL"), true, "the first CHANNEL receipt is recorded")
 
-    -- CHANNEL experiment: exactly one broadcast per session after joining.
+    -- One CHANNEL post after joining; more only while discovery is active.
     c = routed({ joined = true })
     c:advance(30)
     equal(count(c, "CHANNEL"), 1, "one experimental CHANNEL broadcast after joining")
@@ -143,11 +143,20 @@ return function(_, equal)
     equal(c.P.ownEcho ~= nil, true, "the own echo is noted")
     equal(traced(c, "zone receive own echo via CHANNEL"), true, "the own echo is recorded as a diagnostic")
     c:advance(600)
-    equal(count(c, "CHANNEL"), 1, "a Success result alone never starts CHANNEL broadcasts")
+    equal(count(c, "CHANNEL"), 1, "with the zone window closed nothing more is posted")
     c:emit("PLAYER_LEAVING_WORLD")
     c:emit("PLAYER_ENTERING_WORLD")
     c:advance(60)
-    equal(count(c, "CHANNEL"), 1, "the experiment runs once per session, not per loading screen")
+    equal(count(c, "CHANNEL"), 1, "the join post runs once per session, not per loading screen")
+    -- Live 0.6.0: a single post per session reached nobody who joined later,
+    -- and both clients stayed empty. While the zone window is open the
+    -- profile is posted every minute, so a later joiner hears it.
+    c.FD.Zone.shown = true
+    c:advance(125)
+    equal(count(c, "CHANNEL"), 4, "an open zone window posts at once and then every minute")
+    c.FD.Zone.shown = false
+    c:advance(300)
+    equal(count(c, "CHANNEL"), 4, "closing the window stops the posts")
 
     -- Rejected experiment: the result is recorded and never becomes a whisper.
     c = routed({ joined = true, sendResult = function(packet) return packet.channel == "CHANNEL" and 7 or 0 end })
@@ -157,7 +166,7 @@ return function(_, equal)
     equal(traced(c, "zone send CHANNEL experiment failed InvalidChannel"), true, "the rejection code is recorded")
     equal(c.P:ChannelMode(), false, "a rejected route keeps whisper discovery")
     -- Others' broadcasts arrive, ours are rejected: whispers continue and
-    -- CHANNEL is retried only every ten minutes.
+    -- CHANNEL is retried at most once a minute while discovery is active.
     c.members = { { name = "Beta Two", guid = BETA.guid } }
     c.FD.Zone.shown = true
     for _ = 1, 12 do
@@ -166,7 +175,8 @@ return function(_, equal)
     end
     equal(c.P:ChannelMode(), false, "hearing CHANNEL never switches a client whose broadcasts fail")
     equal(count(c, "WHISPER", "FDQ2") >= 1, true, "the member is still queried by whisper")
-    equal(count(c, "CHANNEL"), 2, "one rare CHANNEL retry within ten minutes")
+    local attempts = count(c, "CHANNEL")
+    equal(attempts >= 2 and attempts <= 12, true, "a rejected CHANNEL post is retried at most once a minute")
     preserved(c, "rejected experiment")
 
     -- Working route between two real clients: broadcasts replace member
@@ -194,7 +204,9 @@ return function(_, equal)
     for _, entry in ipairs(a:trace("transport")) do
         if entry.event == "zone send" or entry.event == "zone receive" then zoneEntries = zoneEntries + 1 end
     end
-    equal(zoneEntries <= 3, true, "routine heartbeats and receipts are not persisted")
+    -- Persisted: the join post, the own echo, and the first receipt per
+    -- route and kind; routine heartbeats and receipts are not.
+    equal(zoneEntries <= 4, true, "routine heartbeats and receipts are not persisted")
     a.mapID = 38
     a:emit("ZONE_CHANGED_NEW_AREA")
     net:advance(3)
@@ -271,4 +283,38 @@ return function(_, equal)
         equal(#c.timers > 0, true, failure .. " keeps the discovery pulse alive")
         preserved(c, failure)
     end
+
+    -- Live 0.6.0 regression: both clients joined the channel, but neither
+    -- could load the member list (a loaded Channels frame without a readable
+    -- selection) and CHANNEL posts were not delivered. Queries were held for
+    -- membership proof that never came, so both zone windows stayed empty.
+    net = Harness.network({ channelDelivery = false })
+    a = net:add(routed({ joined = true }))
+    b = net:add(routed({ joined = true, guid = BETA.guid, name = "Beta", surname = "Two", classFile = "ROGUE" }))
+    a.selected, b.selected = nil, nil
+    a.members = { { name = "Beta Two", guid = BETA.guid } }
+    b.members = { { name = "Alpha One", guid = a.player.guid } }
+    net:advance(30)
+    a.FD.Zone.shown, b.FD.Zone.shown = true, true
+    net:advance(10)
+    equal(a.R.memberCount + b.R.memberCount, 0, "the member list cannot be read on either client")
+    equal(#a.P:GetPlayers() + #b.P:GetPlayers(), 0, "nothing is found before anyone targets the other")
+    a:addUnit("target", BETA)
+    a:emit("PLAYER_TARGET_CHANGED")
+    net:advance(6)
+    equal(#a.P:GetPlayers(), 1, "targeting with the zone window open finds the other addon user")
+    equal(#b.P:GetPlayers(), 1, "and the queried client lists the querier, because the query proves the addon")
+
+    -- A later joiner hears the channel post of a client whose zone window is
+    -- open, and that client learns the joiner from its greeting reply.
+    net = Harness.network({})
+    a = net:add(routed({ joined = true }))
+    a.selected = nil
+    a.FD.Zone.shown = true
+    net:advance(90)
+    b = net:add(routed({ joined = true, guid = BETA.guid, name = "Beta", surname = "Two", classFile = "ROGUE" }))
+    b.selected = nil
+    net:advance(70)
+    equal(#b.P:GetPlayers(), 1, "the later joiner hears the periodic channel post")
+    equal(#a.P:GetPlayers(), 1, "the earlier client learns the joiner")
 end

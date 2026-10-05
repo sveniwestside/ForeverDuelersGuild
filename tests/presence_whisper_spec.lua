@@ -265,54 +265,29 @@ return function(_, equal)
     c:advance(6)
     equal(c:systemMessage(line), false, "after five seconds the line is shown again")
 
-    -- Privacy: replies go only to trusted senders; the map only to those who
-    -- are visible, queue partners or channel members on the same map.
+    -- Privacy: every query is answered (only addon users send one), but the
+    -- own map is disclosed only to senders that reported the same map, are
+    -- visible or are queue partners. Live 0.6.0 showed that holding queries
+    -- until a channel member list proved the sender left both clients empty
+    -- whenever the list could not be loaded.
     local function reply(c2, name)
         local list = to(c2, name, "FDP2")
         return list[#list]
     end
     c = started({ joined = true })
     c.sendResult = function(packet) return packet.channel == "CHANNEL" and 7 or 0 end
-    c.members = { { name = "Stranger Five", guid = "Player-1-0000EEEE" } }
     c:advance(5)
-    c:receive("FDQ2|Player-1-0000EEEE|1500|37|MAGE|30|60", "Stranger Five")
-    c:advance(10)
-    equal(reply(c, "Stranger Five"), nil, "an unverified stranger gets no reply")
-    equal(#c.selections, 0, "an idle client never changes the channel selection for a stranger's query")
-    equal(#c.reads, 0, "nor reads the roster for it")
-    c:emit("CHAT_MSG_CHANNEL_JOIN", "", "Stranger Five", "", "", "", "", 0, 6, "ForeverDuel", 0, 0, "Player-1-0000EEEE")
     c:receive("FDQ2|Player-1-0000EEEE|1500|37|MAGE|30|60", "Stranger Five")
     c:advance(4)
     equal(reply(c, "Stranger Five").payload, "FDP2|Player-1-0000AAAA|1500|37|MAGE|30|60",
-        "a sender who joined the channel is answered, with the map they share")
-    -- A held query is answered when a roster update the client already has
-    -- lists the sender, without touching the selection.
-    local held = started({ joined = true })
-    held.sendResult = function(packet) return packet.channel == "CHANNEL" and 7 or 0 end
-    held.members = { { name = "Late Seven", guid = "Player-1-0000EFEF" } }
-    held:advance(5)
-    held:receive("FDQ2|Player-1-0000EFEF|1500|37|MAGE|30|60", "Late Seven")
-    equal(#to(held, "Late Seven"), 0, "an unverified query waits for proof of membership")
-    held.loaded = true
-    held:emit("CHANNEL_COUNT_UPDATE", 9, 1)
-    held:advance(6)
-    equal(#to(held, "Late Seven", "FDP2"), 1, "the held query is answered once the roster lists the sender")
-    equal(#held.selections, 0, "the client roster update needed no selection change")
-    held:receive("FDQ2|Player-1-0000ACDC|1500|37|MAGE|30|60", "Never Listed")
-    held:advance(25)
-    equal(#to(held, "Never Listed"), 0, "a sender that is never proven is dropped after the hold")
-    equal(held.P.held["Never Listed"], nil, "the hold expires")
-    -- While discovery runs anyway (zone window open), an unverified query
-    -- may load the roster once; the selection is restored.
-    held = started({ joined = true })
-    held.sendResult = function(packet) return packet.channel == "CHANNEL" and 7 or 0 end
-    held:advance(5)
-    held.FD.Zone.shown = true
-    held.members = { { name = "Late Seven", guid = "Player-1-0000EFEF" } }
-    held:receive("FDQ2|Player-1-0000EFEF|1500|37|MAGE|30|60", "Late Seven")
-    held:advance(6)
-    equal(#to(held, "Late Seven", "FDP2"), 1, "the held query is answered after the roster load")
-    equal(held.selected, 1, "the native selection is restored after the roster read")
+        "an unknown addon user on the same map is answered with the shared map")
+    equal(#c.selections, 0, "an idle client never changes the channel selection for a query")
+    equal(#c.reads, 0, "nor reads the roster for it")
+    equal(c.P:FindByName("Stranger Five") ~= nil, true, "the querying addon user is listed")
+    c:receive("FDQ2|Player-1-0000EFEF|1500|99|MAGE|30|60", "Far Seven")
+    c:advance(4)
+    equal(reply(c, "Far Seven").payload, "FDP2|Player-1-0000AAAA|1500|0|MAGE|30|60",
+        "a query from another map is answered without disclosing ours")
     c.R:AddMember("Member Six", "Player-1-0000FFFF")
     c:receive("FDQ2|Player-1-0000FFFF|1500|99|MAGE|30|60", "Member Six")
     c:advance(4)
@@ -335,8 +310,8 @@ return function(_, equal)
     c:advance(4)
     equal(reply(c, "Ticket Mate") ~= nil, true, "the ticket partner is answered while a ticket is active")
     c:receive("FDQ2|Player-1-0000AEAE|1500|37|MAGE|30|60", "Other Eight")
-    c:advance(25)
-    equal(reply(c, "Other Eight"), nil, "replies never go to unverified senders, even during a ticket")
+    c:advance(4)
+    equal(reply(c, "Other Eight") ~= nil, true, "a query is answered during a ticket as well (replies are not deferred)")
     preserved(c, "privacy rules")
 
     -- Freshness: a zone change pushes the new profile to trusted cached

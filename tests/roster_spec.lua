@@ -347,4 +347,27 @@ return function(_, equal)
     c:advance(6)
     equal(c.R.memberCount, 0, "a vanished channel forgets its members")
     equal(c.R:IsMember("Peer550 Crowd"), false, "nobody stays trusted without the channel")
+
+    -- Live 0.6.0: a client whose Channels window was never opened reports no
+    -- selection and has no ChannelFrame. Refusing then left discovery without
+    -- members; the list is now loaded and nothing is restored afterwards.
+    c = started()
+    c.env.ChannelFrame = nil
+    c.selected = nil
+    c.members = { peer() }
+    c:advance(30)
+    c.FD.Zone.shown = true
+    c:advance(8)
+    equal(ourSelections(c), 1, "the member list is requested without a known previous selection")
+    equal(c.R:IsMember("Beta Two"), true, "and its members are read")
+    equal(#c.selections, 1, "no restore is attempted when no selection was known")
+    equal(c.R.problem, nil, "no 'cannot be loaded safely' problem remains")
+    -- With the Channels frame loaded, an unknown selection is still refused.
+    c = started()
+    c.selected = nil
+    c.members = { peer() }
+    c:advance(30)
+    c.FD.Zone.shown = true
+    c:advance(8)
+    equal(#c.selections, 0, "a loaded Channels frame without a readable selection is left alone")
 end

@@ -181,10 +181,21 @@ function Roster:Request(force)
     if not index then return false end
     self.lastRequest = at
     if self:Read(index, count) then return true end
-    local previous = self:Selection()
-    if previous == nil or type(SetSelectedDisplayChannel) ~= "function" then
+    if type(SetSelectedDisplayChannel) ~= "function" then
         self.problem = FD.L["Channel member list cannot be loaded safely; target discovery remains available."]
         return false
+    end
+    local previous, unknown = self:Selection(), false
+    if previous == nil then
+        -- Live 0.6.0: a client whose Channels window was never opened reports
+        -- no selection, and refusing here left discovery without members.
+        -- With the window not loaded there is no visible selection to
+        -- disturb, so ours is selected and nothing is restored afterwards.
+        if self:Visible() or ChannelFrame then
+            self.problem = FD.L["Channel member list cannot be loaded safely; target discovery remains available."]
+            return false
+        end
+        previous, unknown = 0, true
     end
     local previousName, previousID
     if previous > 0 then
@@ -196,7 +207,7 @@ function Roster:Request(force)
         end
         previousName, previousID = name, id
     end
-    self.pending = { index = index, channelID = channelID, previous = previous,
+    self.pending = { index = index, channelID = channelID, previous = previous, noRestore = unknown,
         previousName = previousName, previousID = previousID, deadline = at + WAIT }
     self:HookFrame()
     if not pcall(SetSelectedDisplayChannel, index) then
@@ -220,7 +231,7 @@ end
 function Roster:Finish()
     local pending = self.pending
     self.pending = nil -- Restoration can synchronously dispatch channel events.
-    if not pending or self:Selection() ~= pending.index then return end
+    if not pending or pending.noRestore or self:Selection() ~= pending.index then return end
     local restore = pending.previous
     if restore > 0 then
         -- Resolve the former channel again; display indices can change on join.
@@ -232,7 +243,9 @@ end
 function Roster:Continue(at, channelID)
     local pending = self.pending
     if self:Visible() or channelID ~= pending.channelID or self:Directory(channelID) ~= pending.index then return self:Finish() end
-    if self:Selection() ~= pending.index then self.pending = nil; return end
+    -- A client that cannot report its selection still delivers the roster.
+    local selected = self:Selection()
+    if selected ~= nil and selected ~= pending.index then self.pending = nil; return end
     -- A throwing native read must still end the request and restore.
     local ok, complete = pcall(self.Read, self, pending.index, pending.count)
     if not ok or complete or at >= pending.deadline then self:Finish() end

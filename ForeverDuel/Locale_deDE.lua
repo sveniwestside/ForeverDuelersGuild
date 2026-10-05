@@ -154,7 +154,7 @@ FD.Locale:Register("deDE", {
     ["Query to %s: %s"] = "Anfrage an %s: %s",
     ["Query from %s via %s"] = "Anfrage von %s über %s",
     ["Profile from %s via %s"] = "Profil von %s über %s",
-    ["%s: %s (%s)"] = "%s: %s (%s)",
+    ["%s: %s (%s, /%d)"] = "%s: %s (%s, /%d)",
     ["No PONG from %s via %s within %d s."] = "Kein PONG von %s über %s innerhalb von %d s.",
     ["Zone discovery prefix could not be registered."] = "Das Präfix der Zonensuche konnte nicht registriert werden.",
     ["Starting zone discovery..."] = "Zonensuche startet...",
@@ -185,6 +185,10 @@ FD.Locale:Register("deDE", {
     ["Zone whisper: %s"] = "Zonen-Flüstern: %s",
     ["Zone roster: %s"] = "Zonen-Kanalliste: %s",
     ["Zone receive: %s"] = "Zone empfangen: %s",
+    ["Zone received: %d profiles, %d queries, %d channel posts | own channel echo: %s | channel members known: %d"] =
+        "Zone empfangen: %d Profile, %d Anfragen, %d Kanalbeiträge | eigenes Kanalecho: %s | bekannte Kanalmitglieder: %d",
+    ["seen"] = "gesehen",
+    ["not seen"] = "nicht gesehen",
     -- Presence.lua: broadcast reasons and FD.Outbound delivery states
     ["update"] = "Aktualisierung",
     ["heartbeat"] = "Lebenszeichen",

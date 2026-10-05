@@ -201,24 +201,45 @@ return function(_, equal)
     test.FD.Debug.Error = function() error("logger failed") end
     equal(pcall(function() test.P:Challenge("Beta Two") end), true, "logger failure stays isolated")
 
-    -- An unsolicited whisper from a sender that is neither a channel member,
-    -- a queue peer nor visible is cached but stays out of every lookup, so
-    -- the queue never sends that sender its position or queries it.
+    -- An unrequested plain profile from a sender that is neither a channel
+    -- member, a queue peer nor visible is cached but stays out of every
+    -- lookup, so the queue never sends that sender its position or queries it.
     test = client()
     p = test.P
     local MAL = { guid = "Player-1-0000EEEE", name = "Mal", surname = "Evil", realm = "Forever",
         classFile = "ROGUE", level = 30, faction = "Alliance" }
     test:inject(test:profile(MAL), "Mal Evil")
-    test:inject(test:profile(MAL, nil, "FDQ2"), "Mal Evil")
     equal(p.players["Mal Evil"] ~= nil, true, "the unsolicited claim is cached")
     equal(p:FindByName("Mal Evil"), nil, "hidden from name lookups (queue transport)")
     equal(p:GetPlayer(MAL.guid), nil, "hidden from GUID lookups")
     equal(#p:Candidates(), 0, "hidden from queue candidates")
     equal(#p:GetPlayers(), 0, "hidden from the zone browser")
     equal(p:PongAllowed("Mal Evil"), false, "earns no PONG")
+    test:advance(3)
     equal(#test:whispers(), 0, "and gets no reply")
     test.R:AddMember("Mal Evil", MAL.guid, true)
     equal(p:FindByName("Mal Evil") ~= nil, true, "a proven channel member becomes visible")
+
+    -- Live 0.6.0: without a loadable channel member list nobody was trusted,
+    -- so queries went unanswered and both clients stayed empty. A query
+    -- proves the sender runs the addon: it is answered and its sender listed.
+    -- The own map is disclosed only when the query reported the same map.
+    for _, case in ipairs({ { map = 37, disclosed = true }, { map = 1420, disclosed = false } }) do
+        test = client()
+        p = test.P
+        test:inject(test:profile(MAL, case.map, "FDQ2"), "Mal Evil")
+        test:advance(3)
+        local replies = test:whispers("FDP2|")
+        equal(#replies, 1, "a query from an unknown addon user is answered (map " .. case.map .. ")")
+        equal(replies[1].target, "Mal Evil", "the answer goes to the querying player")
+        local mapField = tonumber(replies[1].payload:match("^FDP2|[^|]+|[^|]+|(%d+)|"))
+        equal(mapField == 37, case.disclosed, "the own map is disclosed only to a sender on the same map")
+        equal(p:FindByName("Mal Evil") ~= nil, true, "the querying addon user is listed")
+        equal(#p:GetPlayers(), case.disclosed and 1 or 0, "the zone browser lists a querier on this map only")
+        test:inject(test:profile(MAL, case.map, "FDQ2"), "Mal Evil")
+        test:advance(3)
+        equal(#test:whispers("FDP2|"), 1, "repeated queries within the reply spacing get one answer")
+    end
     test = client()
     p = test.P
     test:receive(test:profile(MAL), "Mal Evil")
