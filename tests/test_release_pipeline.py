@@ -86,6 +86,42 @@ class ReleasePipelineTests(unittest.TestCase):
         self.assertIn("uncommitted", str(caught.exception))
         self.assertEqual(run.call_count, 1, "only the git status check ran; no tests, build or upload")
 
+    def git(self, head, porcelain):
+        """subprocess.run stand-in: git status/show answer from the given HEAD worksheet."""
+        import subprocess
+
+        def run(args, **kwargs):
+            if args[:2] == ["git", "status"]:
+                return subprocess.CompletedProcess(args, 0, stdout=porcelain, stderr="")
+            if args[:2] == ["git", "show"]:
+                return subprocess.CompletedProcess(args, 0, stdout=json.dumps(head), stderr="")
+            return subprocess.CompletedProcess(args, 0, stdout="Lua 5.1: compiled 33 files\nPASS 14 suites, 4551 assertions\n", stderr="")
+        return run
+
+    def test_upload_after_an_offline_run_accepts_its_recorded_results(self):
+        self.project["publication"] = {"fileId": None, "published": False}
+        head = json.loads(json.dumps(self.project))
+        self.project["status"] = "automated tests passed; upload and moderation pending"
+        self.project["validation"]["automated"] = {"status": "passed", "version": "0.4.5", "suites": 14}
+        (self.docs / "project.json").write_text(json.dumps(self.project), encoding="utf-8")
+        with patch.dict("os.environ", {"CF_API_TOKEN": "private-test-token"}), \
+                patch("release.subprocess.run", side_effect=self.git(head, " M docs/curseforge/project.json\n")) as run, \
+                patch("release.print"):
+            run_pipeline(self.root, "v0.4.5", upload=True)
+        self.assertIn("--upload", run.call_args_list[-1].args[0])
+
+    def test_upload_refuses_other_uncommitted_worksheet_changes(self):
+        self.project["publication"] = {"fileId": None, "published": False}
+        head = json.loads(json.dumps(self.project))
+        self.project["validation"]["userReportedTesting"] = {"status": "passed", "version": "0.4.5"}
+        (self.docs / "project.json").write_text(json.dumps(self.project), encoding="utf-8")
+        with patch.dict("os.environ", {"CF_API_TOKEN": "private-test-token"}), \
+                patch("release.subprocess.run", side_effect=self.git(head, " M docs/curseforge/project.json\n")) as run, \
+                self.assertRaises(ValueError) as caught:
+            run_pipeline(self.root, "v0.4.5", upload=True)
+        self.assertIn("uncommitted", str(caught.exception))
+        self.assertEqual(run.call_count, 2, "only git status and git show ran")
+
     def test_offline_checks_do_not_inherit_upload_token(self):
         import subprocess
         with patch.dict("os.environ", {"CF_API_TOKEN": "private-test-token"}), patch("release.subprocess.run") as run, patch("release.print"):

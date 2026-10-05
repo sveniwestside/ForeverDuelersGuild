@@ -71,7 +71,8 @@ class UploadTests(unittest.TestCase):
                                    "uploadFile": "ForeverDuelersGuild-0.4.6.zip", "releaseType": "Beta",
                                    "gameFlavor": "Forever", "gameVersion": "1.60.1", "interface": 16001,
                                    "changelogFile": "changelog-0.4.6.txt", "requiredDependencies": []},
-                          "publication": {"published": False}}
+                          "publication": {"published": False},
+                          "validation": {"userReportedTesting": {"status": "passed", "version": "0.4.6"}}}
         self.write_json(self.directory / "project.json", self.worksheet)
         (self.directory / "changelog-0.4.6.txt").write_text("New beta fixes.\n", encoding="utf-8")
         self.make_archive()
@@ -222,6 +223,21 @@ class UploadTests(unittest.TestCase):
                 with self.assertRaisesRegex(UPLOADER.UploadError, "already records"):
                     self.upload(opener)
                 self.assertEqual(opener.requests, [])
+
+    def test_upload_requires_a_passed_live_test_of_this_version(self):
+        for tested in ({"status": "not supplied for this version", "version": "0.4.6"},
+                       {"status": "passed", "version": "0.4.5"}, None):
+            with self.subTest(tested=tested):
+                self.worksheet["validation"] = {"userReportedTesting": tested} if tested else {}
+                self.write_json(self.directory / "project.json", self.worksheet)
+                plan = UPLOADER.plan_package(self.directory, self.config)
+                self.assertFalse(plan["uploadAllowed"])
+                self.assertFalse(plan["userTested"])
+                opener = Opener()
+                with self.assertRaisesRegex(UPLOADER.UploadError, "live test"):
+                    self.upload(opener)
+                self.assertEqual(opener.requests, [])
+                self.assertFalse((self.directory / "upload-attempt.json").exists())
 
     def test_stale_build_report_publication_also_blocks_upload(self):
         self.report["publication"] = {"fileId": 9058783}

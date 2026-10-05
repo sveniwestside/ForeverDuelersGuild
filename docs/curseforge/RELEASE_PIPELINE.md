@@ -18,13 +18,24 @@ Das Werkzeug aktualisiert die Version in `ForeverDuel/ForeverDuel.toc`, den Lua-
 
 Die Versionsänderung und den Changelog prüfen. Nötige Ingame-Regressionen für die Änderung durchführen und konkrete Ergebnisse dokumentieren; der automatische Lauf bestätigt die native Clientfunktion nicht.
 
+## Live-Test vermerken
+
+Ein Upload setzt einen bestandenen Live-Test genau dieser Version voraus. Nach den Abschnitten 1–3 von [MANUAL_TESTING.md](../../MANUAL_TESTING.md) auf zwei Clients in `docs/curseforge/project.json` eintragen und committen:
+
+```json
+"userReportedTesting": { "status": "passed", "version": "0.4.6", "reference": "kurze Angabe zu Datum, Build und Clients" }
+```
+
+Ohne `status: "passed"` mit der Version des Pakets verweigern `tools/curseforge_upload.py --upload` und damit auch der Tag-Workflow die Einreichung vor jedem Netzwerkzugriff. `prepare_release.py` setzt den Eintrag für jede neue Version zurück.
+
 ## Lokal prüfen
 
 ```powershell
+python -m pip install -r tests/requirements.txt -r tools/requirements-analysis.txt
 python tools/release.py --tag v0.4.6
 ```
 
-Ohne `--upload` arbeitet der Lauf offline: Er prüft die Versions- und Tagkonsistenz, führt die Lua-5.1- und Python-Tests aus, baut und verifiziert das Paket und erzeugt den Uploadplan. Ein API-Token ist dafür nicht nötig. `--tag` ist optional; die Angabe prüft ausdrücklich den vorgesehenen Release-Tag gegen den vorbereiteten Stand.
+Die erste Zeile installiert die Lua-5.1-Laufzeit für die Tests und die Abhängigkeiten der Analyse-Tests (numpy, scipy), die `release.py` ebenfalls ausführt. Ohne `--upload` arbeitet der Lauf offline: Er prüft die Versions- und Tagkonsistenz, führt die Lua-5.1- und Python-Tests aus, baut und verifiziert das Paket und erzeugt den Uploadplan. Ein API-Token ist dafür nicht nötig. `--tag` ist optional; die Angabe prüft ausdrücklich den vorgesehenen Release-Tag gegen den vorbereiteten Stand. Der Lauf trägt seine Testergebnisse (`status`, `validation.automated`) in `docs/curseforge/project.json` ein. Ein anschließender lokaler Upload akzeptiert genau diese Änderung; jede andere nicht committete Änderung, auch am Worksheet, verhindert den Upload.
 
 Für einen tatsächlichen lokalen Upload muss `CF_API_TOKEN` bereits privat in der Prozessumgebung gesetzt sein:
 
@@ -42,6 +53,8 @@ Im CurseForge-Autorenkonto einen API-Token für die Uploads erstellen. Ihn direk
 
 Das vom Nutzer bereits hinterlegte GitHub-Secret heißt **`FOREVERDUELERSGUILD`**. Der Workflow akzeptiert diesen Namen als Alternative und übergibt seinen Wert intern als `CF_API_TOKEN`; ein später angelegtes Secret `CF_API_TOKEN` hat Vorrang.
 
+**Vor dem ersten Push dieses Workflows die Freigabe einrichten.** Unter **Settings → Environments** die Umgebung **`curseforge`** anlegen, **Required reviewers** setzen (mindestens eine Person) und unter **Deployment branches and tags** nur Tags `v*` sowie den Branch `main` (für den lesenden Probelauf über **Run workflow**) zulassen. Den Token dort als **Environment secret** `CF_API_TOKEN` speichern und die Repository-Secrets `FOREVERDUELERSGUILD` und `CF_API_TOKEN` danach löschen. GitHub legt eine im Workflow genannte, aber nicht eingerichtete Umgebung sonst automatisch **ohne** Schutzregeln an; ein Repository-Secret stünde dem Lauf dann ohne Freigabe zur Verfügung. Liegt der Token nur als Environment-Secret vor, hat eine automatisch angelegte Umgebung keinen Token. Zusätzlich bricht der Workflow bei einem Tag-Push als ersten Schritt ab, wenn `curseforge` keine Required reviewers hat.
+
 Nach eingerichtetem Repository, Secret und bestandenem lokalem Probelauf den vorbereiteten Stand committen und pushen. Dann beispielsweise:
 
 ```powershell
@@ -49,7 +62,7 @@ git tag v0.4.6
 git push origin v0.4.6
 ```
 
-Der Push eines Tags `v*` startet `.github/workflows/curseforge-release.yml`: Prüfungen, Tests, Paketbau und automatischer CurseForge-Upload. Ein Fehler vor dem Upload beendet den Lauf ohne Einreichung. **Der Tag-Push löst eine Veröffentlichungspipeline aus**; ihn erst für den vorgesehenen Release-Stand ausführen.
+Der Push eines Tags `v*` startet `.github/workflows/curseforge-release.yml`. Der Lauf wartet auf die Freigabe der Umgebung `curseforge`; danach folgen Prüfungen, Tests, Paketbau und der automatische CurseForge-Upload, sofern ein bestandener Live-Test dieser Version vermerkt ist. Ein Fehler vor dem Upload beendet den Lauf ohne Einreichung. **Der Tag-Push löst eine Veröffentlichungspipeline aus**; ihn erst für den vorgesehenen Release-Stand ausführen.
 
 Ein manueller Start über **Actions → Run workflow** (`workflow_dispatch`) führt den Probelauf aus und prüft mit dem hinterlegten Secret lesend den API-Zugriff und die Forever-Version. Er lädt keine Datei auf CurseForge hoch. Allgemeine Grundlagen stehen in der [GitHub-Actions-Dokumentation](https://docs.github.com/en/actions).
 

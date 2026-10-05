@@ -146,11 +146,15 @@ def read_package(package_dir: Path, config_path: Path | None = None) -> dict[str
     require(isinstance(publication, dict) and isinstance(build_publication, dict), "Invalid publication metadata.")
     already_submitted = any(state.get("fileId") or state.get("published") or state.get("submitted")
                             for state in (publication, build_publication))
+    # Publication follows a recorded passed live test of exactly this version.
+    validation = worksheet.get("validation", {})
+    tested = validation.get("userReportedTesting", {}) if isinstance(validation, dict) else {}
+    user_tested = isinstance(tested, dict) and tested.get("status") == "passed" and tested.get("version") == version
     return {"directory": package_dir, "projectId": PROJECT_ID, "version": version,
             "displayName": display_name, "archive": expected_name, "archiveSha256": archive_hash,
             "archiveBytes": archive_bytes, "gameVersion": release["gameVersion"],
             "releaseType": release_type.lower(), "changelog": changelog,
-            "alreadySubmitted": bool(already_submitted)}
+            "alreadySubmitted": bool(already_submitted), "userTested": user_tested}
 
 
 def plan_package(package_dir: Path, config_path: Path | None = None) -> dict[str, Any]:
@@ -163,8 +167,9 @@ def plan_package(package_dir: Path, config_path: Path | None = None) -> dict[str
             "gameFlavor": "Forever", "gameVersionTypeId": FOREVER_VERSION_TYPE,
             "gameVersion": package["gameVersion"], "releaseType": package["releaseType"],
             "publishAutomaticallyAfterApproval": True,
-            "uploadAllowed": not package["alreadySubmitted"] and not attempt.exists() and not receipt.exists(),
-            "alreadySubmitted": package["alreadySubmitted"],
+            "uploadAllowed": package["userTested"] and not package["alreadySubmitted"]
+                and not attempt.exists() and not receipt.exists(),
+            "alreadySubmitted": package["alreadySubmitted"], "userTested": package["userTested"],
             "existingAttempt": attempt.exists(), "existingReceipt": receipt.exists()}
 
 
@@ -263,6 +268,9 @@ def upload_package(package_dir: Path, config_path: Path | None = None, token: st
             "projectId", "version", "fileId", "archiveSha256", "displayName", "gameVersions",
             "releaseType", "publishAutomaticallyAfterApproval", "submittedAt", "status"
         ) if key in receipt}  # Identical repeated commands are idempotent.
+    require(package["userTested"],
+            "No passed live test is recorded for this version (validation.userReportedTesting "
+            "with status 'passed' and this version); refusing to upload.")
     attempt_path = artifact_path(package["directory"], "upload-attempt.json")
     require(not attempt_path.exists(),
             "A prior upload attempt has no receipt. Reconcile its outcome in CurseForge before any retry.")

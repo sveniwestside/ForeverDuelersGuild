@@ -15,14 +15,45 @@ from prepare_release import VERSION_PATTERN
 ROOT = Path(__file__).resolve().parents[1]
 
 
+WORKSHEET = "docs/curseforge/project.json"
+# What an offline run records in the worksheet (see run_pipeline).
+RECORDED = (("status",), ("validation", "automated"))
+
+
+def without_recorded(worksheet: dict) -> dict:
+    result = json.loads(json.dumps(worksheet))
+    for path in RECORDED:
+        parent = result
+        for key in path[:-1]:
+            parent = parent.get(key, {}) if isinstance(parent, dict) else {}
+        if isinstance(parent, dict):
+            parent.pop(path[-1], None)
+    return result
+
+
+def only_recorded_results(root: Path) -> bool:
+    """True when the worksheet differs from HEAD only by an offline run's recorded results."""
+    try:
+        head = subprocess.run(["git", "show", f"HEAD:{WORKSHEET}"], cwd=root, check=True,
+                              capture_output=True, text=True, encoding="utf-8").stdout
+        current = (root / WORKSHEET).read_text(encoding="utf-8")
+        return without_recorded(json.loads(head)) == without_recorded(json.loads(current))
+    except (OSError, ValueError, subprocess.CalledProcessError):
+        return False
+
+
 def git_dirty(root: Path) -> list[str]:
-    """Paths with uncommitted changes, or [] when git is unavailable (e.g. a source ZIP)."""
+    """Paths with uncommitted changes, or [] when git is unavailable (e.g. a source ZIP).
+    The worksheet counts as clean while it differs only by the offline run's recorded results."""
     try:
         result = subprocess.run(["git", "status", "--porcelain"], cwd=root, check=True,
                                 capture_output=True, text=True, encoding="utf-8")
     except (OSError, subprocess.CalledProcessError):
         return []
-    return [line[3:] for line in result.stdout.splitlines() if line.strip()]
+    dirty = [line[3:] for line in result.stdout.splitlines() if line.strip()]
+    if WORKSHEET in dirty and only_recorded_results(root):
+        dirty.remove(WORKSHEET)
+    return dirty
 
 
 def validate_tag(root: Path, tag: str | None) -> str:
