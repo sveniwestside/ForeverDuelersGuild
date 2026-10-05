@@ -4,6 +4,7 @@ local _, FD = ...
 -- must never stop an unrelated rated duel or modify its evidence.
 FD.QueueWow = {}
 local Wow = FD.QueueWow
+local L = FD.L
 
 local function readable(...)
     if FD.Wow and type(FD.Wow.Readable) == "function" then return FD.Wow:Readable(...) end
@@ -63,16 +64,26 @@ end
 function Wow:Ruleset()
     local rules = Enum and Enum.GameRule
     if not C_GameRules or type(C_GameRules.IsGameRuleActive) ~= "function" or type(rules) ~= "table" then
-        return nil, "Waiting for native ruleset information."
+        return nil, L["Waiting for native ruleset information."]
     end
     for _, rule in ipairs({ { "HardcoreRuleset", "HARDCORE" }, { "RPRuleset", "RP" }, { "PvPRuleset", "PVP" } }) do
         local id = rules[rule[1]]
-        if not integer(id, 0, 1000000) then return nil, "Native ruleset identifiers are unavailable." end
+        if not integer(id, 0, 1000000) then return nil, L["Native ruleset identifiers are unavailable."] end
         local active = call(C_GameRules.IsGameRuleActive, id)
-        if type(active) ~= "boolean" then return nil, "Native ruleset information is unavailable or restricted." end
+        if type(active) ~= "boolean" then return nil, L["Native ruleset information is unavailable or restricted."] end
         if active then return rule[2] end
     end
     return "NORMAL"
+end
+
+local function blockedCopy(source)
+    local blocked = {}
+    if type(source) == "table" then
+        for guid, untilAt in pairs(source) do
+            if text(guid, 64) and integer(untilAt, epoch()) then blocked[guid] = untilAt end
+        end
+    end
+    return blocked
 end
 
 function Wow:Settings()
@@ -84,16 +95,11 @@ function Wow:Settings()
     -- Retire manual choices from earlier queue versions. A previously saved
     -- value cannot mask an unavailable or changed native ruleset.
     stored.ruleset, stored.continentVerified, stored.rulesetVerified = nil, nil, nil
-    local blocked = {}
-    if type(stored.blockedOpponents) == "table" then
-        for guid, untilAt in pairs(stored.blockedOpponents) do
-            if text(guid, 64) and integer(untilAt, epoch()) then blocked[guid] = untilAt end
-        end
-    end
     return { scope = scope, levelGap = gap, ruleset = ruleset, rulesetReason = rulesetReason,
         rulesetSource = ruleset and "C_GameRules.IsGameRuleActive" or nil,
         cooldownUntil = integer(stored.cooldownUntil, 0) and stored.cooldownUntil or 0,
-        blockedOpponents = blocked }
+        autoAcceptQueueInvite = stored.autoAcceptQueueInvite == true,
+        blockedOpponents = blockedCopy(stored.blockedOpponents) }
 end
 
 function Wow:Save(settings)
@@ -104,12 +110,8 @@ function Wow:Save(settings)
     if integer(settings.levelGap, 0, 5) then stored.levelGap = settings.levelGap end
     stored.ruleset, stored.continentVerified, stored.rulesetVerified = nil, nil, nil
     if integer(settings.cooldownUntil, 0) then stored.cooldownUntil = settings.cooldownUntil end
-    if type(settings.blockedOpponents) == "table" then
-        stored.blockedOpponents = {}
-        for guid, untilAt in pairs(settings.blockedOpponents) do
-            if text(guid, 64) and integer(untilAt, epoch()) then stored.blockedOpponents[guid] = untilAt end
-        end
-    end
+    if type(settings.autoAcceptQueueInvite) == "boolean" then stored.autoAcceptQueueInvite = settings.autoAcceptQueueInvite end
+    if type(settings.blockedOpponents) == "table" then stored.blockedOpponents = blockedCopy(settings.blockedOpponents) end
     if type(settings.venues) == "table" then
         local copied = FD.Database:Copy(settings.venues)
         if copied then stored.venues = copied end
@@ -129,15 +131,15 @@ function Wow:World(mapID, mapX, mapY)
 end
 
 function Wow:Position()
-    if not C_Map then return nil, "Player map APIs are unavailable." end
+    if not C_Map then return nil, L["Player map APIs are unavailable."] end
     local mapID = call(C_Map.GetBestMapForUnit, "player")
-    if not integer(mapID, 1, 10000000) then return nil, "Current zone is unavailable." end
+    if not integer(mapID, 1, 10000000) then return nil, L["Current zone is unavailable."] end
     -- Each participant supplies their own position. Party APIs never substitute
     -- coordinates or remote observation timestamps for the peer's report.
     local mapX, mapY = vectorXY(call(C_Map.GetPlayerMapPosition, mapID, "player"))
-    if not finite(mapX, 0, 1) or not finite(mapY, 0, 1) then return nil, "Player position is unavailable." end
+    if not finite(mapX, 0, 1) or not finite(mapY, 0, 1) then return nil, L["Player position is unavailable."] end
     local continentID, x, y = self:World(mapID, mapX, mapY)
-    if not continentID then return nil, "World position conversion is unavailable." end
+    if not continentID then return nil, L["World position conversion is unavailable."] end
     return { mapID = mapID, mapX = mapX, mapY = mapY, continentID = continentID,
         x = x, y = y, positionAt = epoch() }
 end
@@ -175,124 +177,197 @@ function Wow:Combat()
 end
 
 function Wow:Available()
-    if not FD.QueueTransport or not FD.QueueTransport.available then return false, "Queue addon transport is unavailable." end
+    if not FD.QueueTransport or not FD.QueueTransport.available then return false, L["Queue addon transport is unavailable."] end
     local blockedUntil = FD.Wow and FD.Wow.outgoingBlockedUntil
     local nativeBlocked = finite(blockedUntil) and now() < blockedUntil
     if (FD.duel and FD.duel.active) or (FD.Wow and (FD.Wow.outgoing or FD.Wow.pendingIncoming)) or nativeBlocked then
-        return false, "Finish the current native duel request before joining the queue."
+        return false, L["Finish the current native duel request before joining the queue."]
     end
-    if not self:Solo() then return false, "Queue requires a confirmed solo character." end
+    if not self:Solo() then return false, L["Queue requires a confirmed solo character."] end
     local dead = call(UnitIsDeadOrGhost, "player")
-    if type(dead) ~= "boolean" or dead then return false, "Queue requires a living character." end
+    if type(dead) ~= "boolean" or dead then return false, L["Queue requires a living character."] end
     local instance = call(IsInInstance)
-    if type(instance) ~= "boolean" or instance then return false, "Queue requires the open world." end
+    if type(instance) ~= "boolean" or instance then return false, L["Queue requires the open world."] end
     local outdoors = call(IsOutdoors)
-    if type(outdoors) ~= "boolean" or not outdoors then return false, "Queue requires an outdoor location." end
-    if not self:Own() then return false, "Queue requires readable identity, faction, rating and position." end
+    if type(outdoors) ~= "boolean" or not outdoors then return false, L["Queue requires an outdoor location."] end
+    if not self:Own() then return false, L["Queue requires readable identity, faction, rating and position."] end
     local settings = self:Settings()
     if not settings.ruleset then return false, settings.rulesetReason end
     return true
 end
 
-function Wow:PartyUnit(peer)
-    if type(peer) ~= "table" or not text(peer.guid, 64) or not text(peer.fullName) then return nil end
-    if call(IsInRaid) ~= false or call(IsInGroup) ~= true or call(GetNumGroupMembers) ~= 2 then return nil end
-    if not FD.Wow or type(FD.Wow.Identity) ~= "function" then return nil end
-    local ok, identity = pcall(FD.Wow.Identity, FD.Wow, "party1")
-    if ok and type(identity) == "table" and readable(identity.guid, identity.fullName)
-        and identity.guid == peer.guid and identity.fullName == peer.fullName then return "party1" end
-end
-
-function Wow:Party(peer)
-    if self:PartyUnit(peer) then return true end
-    return false, "Waiting for the exact two-player queue group."
-end
-
--- Group membership and party unit data need not become readable together.
--- Missing data is a pending verification, never proof of a different group.
--- Only PartyUnit's exact identity check authorizes planning or group cleanup.
-function Wow:GroupState(peer)
-    if type(peer) ~= "table" or not text(peer.guid, 64) or not text(peer.fullName) then return "PENDING" end
-    local raid, grouped = call(IsInRaid), call(IsInGroup)
-    if raid == true then return "CHANGED" end
-    if raid ~= false or type(grouped) ~= "boolean" then return "PENDING" end
-    if grouped == false then return "SOLO" end
-    local members = call(GetNumGroupMembers)
-    if not integer(members, 0, 40) then return "PENDING" end
-    if members > 2 then return "CHANGED" end
-    if members ~= 2 then return "PENDING" end
-    if self:PartyUnit(peer) then return "EXACT" end
-    -- A readable native GUID can establish a wrong opponent even while its
-    -- name/class are loading. Restricted/absent GUIDs cannot establish that.
+-- Native readings for FD.Queue.ClassifyGroup; nil means unreadable. The
+-- membership proof is GUID based: names are only whisper addresses.
+function Wow:GroupSample(peer)
+    local sample = {}
+    local raid, grouped, members = call(IsInRaid), call(IsInGroup), call(GetNumGroupMembers)
+    if type(raid) == "boolean" then sample.raid = raid end
+    if type(grouped) == "boolean" then sample.grouped = grouped end
+    if integer(members, 0, 40) then sample.members = members end
     local guid = call(UnitGUID, "party1")
-    if FD.QueueProtocol:ValidGUID(guid) and guid ~= peer.guid then return "CHANGED" end
-    if FD.Wow and type(FD.Wow.Identity) == "function" then
-        local ok, identity = pcall(FD.Wow.Identity, FD.Wow, "party1")
-        if ok and type(identity) == "table" and readable(identity.guid, identity.fullName)
-            and FD.QueueProtocol:ValidGUID(identity.guid) then
-            if identity.guid ~= peer.guid or text(identity.fullName) and identity.fullName ~= peer.fullName then
-                return "CHANGED"
-            end
-        end
+    if FD.QueueProtocol:ValidGUID(guid) then sample.partyGUID = guid end
+    if type(peer) == "table" and text(peer.guid, 64) and C_PartyInfo and type(C_PartyInfo.IsGUIDInGroup) == "function" then
+        local inGroup = call(C_PartyInfo.IsGUIDInGroup, peer.guid)
+        if type(inGroup) == "boolean" then sample.peerInGroup = inGroup end
     end
-    return "PENDING"
+    return sample
+end
+
+function Wow:GroupState(peer)
+    if type(peer) ~= "table" or not text(peer.guid, 64) then return "PENDING" end
+    local sample = self:GroupSample(peer)
+    return FD.Queue.ClassifyGroup(sample, peer.guid), sample.members
 end
 
 function Wow:Invite(peer)
-    if type(peer) ~= "table" or not text(peer.fullName) then return false, "Opponent identity is unavailable." end
-    if not self:Solo() then return false, "Cannot invite while grouped." end
-    if self:Combat() then return false, "Use Invite opponent after leaving combat." end
+    if type(peer) ~= "table" or not text(peer.fullName) then return false, L["Opponent identity is unavailable."] end
+    if not self:Solo() then return false, L["Cannot invite while grouped."] end
     local invite = C_PartyInfo and C_PartyInfo.InviteUnit or InviteUnit
-    if type(invite) ~= "function" then return false, "Native invitation API is unavailable; invite the opponent manually." end
+    if type(invite) ~= "function" then return false, L["The native invitation API is unavailable."] end
     if C_PartyInfo and type(C_PartyInfo.CanInvite) == "function" and call(C_PartyInfo.CanInvite) ~= true then
-        return false, "Native invitation permission is unavailable; invite the opponent manually."
+        return false, L["Native invitation permission is unavailable."]
     end
-    local ok, result = pcall(invite, peer.fullName)
-    if not ok or not readable(result) or result == false then return false, "Automatic invitation was blocked; use Invite opponent." end
-    -- A nil return indicates an attempt, not confirmation. Only Party(peer)
-    -- confirms acceptance; the recipient always uses Blizzard's native dialog.
+    if not pcall(invite, peer.fullName) then return false, L["The native invitation was blocked."] end
+    -- InviteUnit returns nothing: only the group roster confirms acceptance.
+    self.invitedPeer = { guid = peer.guid, at = now() }
     return true
 end
 
-function Wow:Leave(peer, owned)
-    if owned ~= true or not self:PartyUnit(peer) then return false end
+-- PARTY_INVITE_REQUEST bookkeeping (the 7th payload field is inviterGUID).
+function Wow:InviteRequested(guid)
+    if not readable(guid) or not FD.QueueProtocol:ValidGUID(guid) then return nil end
+    self.pendingInviter = { guid = guid, at = now() }
+    return guid
+end
+
+-- Opt-in auto-accept for exactly the matched inviter. It runs on the next
+-- frame so Blizzard's dialog exists; marking it accepted first keeps its
+-- OnHide handler from declining. REQUIRES LIVE VERIFICATION: AcceptGroup is
+-- not in the generated API documentation and is feature-detected.
+function Wow:AcceptInvite(peer)
+    local function accept()
+        local pending = self.pendingInviter
+        if type(peer) ~= "table" or not pending or pending.guid ~= peer.guid or now() - pending.at > 60
+            or type(AcceptGroup) ~= "function" or not self:Solo() then return false end
+        if not pcall(AcceptGroup) then return false end
+        self.pendingInviter = nil
+        local dialog = type(StaticPopup_FindVisible) == "function" and call(StaticPopup_FindVisible, "PARTY_INVITE")
+        if type(dialog) == "table" then
+            dialog.inviteAccepted = 1
+            if type(StaticPopup_Hide) == "function" then pcall(StaticPopup_Hide, "PARTY_INVITE") end
+        end
+        return true
+    end
+    if C_Timer and type(C_Timer.After) == "function" then
+        C_Timer.After(0, function() if FD.queue then FD.queue:Run(accept) end end)
+        return true
+    end
+    return accept()
+end
+
+-- A void queue invitation is declined so it cannot be accepted by mistake;
+-- hiding Blizzard's dialog declines through its own OnHide handler.
+function Wow:DeclineInvite(peer)
+    local pending = self.pendingInviter
+    if type(peer) ~= "table" or not pending or pending.guid ~= peer.guid then return false end
+    self.pendingInviter = nil
+    if self:GroupState(peer) == "EXACT" or type(StaticPopup_Hide) ~= "function" then return false end
+    return pcall(StaticPopup_Hide, "PARTY_INVITE")
+end
+
+-- Leaves the exact queue pair, or rescinds our own still-pending invitation
+-- (inviter grouped alone while the invitation is open).
+function Wow:Leave(peer)
+    local state, members = self:GroupState(peer)
+    local invited = self.invitedPeer
+    local rescind = state == "PENDING" and members == 1 and invited and type(peer) == "table" and invited.guid == peer.guid
+    if state ~= "EXACT" and not rescind then return false end
+    return self:LeaveGroup()
+end
+
+-- LeaveParty carries no HasRestrictions flag; it is also the UI button.
+function Wow:LeaveGroup()
     local leave = C_PartyInfo and C_PartyInfo.LeaveParty or LeaveParty
-    if type(leave) ~= "function" or self:Combat() then return false end
-    local ok, result = pcall(leave)
-    return ok and readable(result) and result ~= false
+    if type(leave) ~= "function" then return false, L["The native leave-group API is unavailable."] end
+    if not pcall(leave) then return false, L["Leaving the group was blocked; use the normal group menu."] end
+    return true
+end
+
+local function positions()
+    local x, y, z, instance = call(UnitPosition, "player")
+    local px, py, pz, pinstance = call(UnitPosition, "party1")
+    if not finite(x) or not finite(y) or not finite(z) or not integer(instance, 0)
+        or not finite(px) or not finite(py) or not finite(pz) or not integer(pinstance, 0) then return nil end
+    return x, y, z, instance, px, py, pz, pinstance
+end
+
+-- Native liveness of the matched peer: true/false when readable, else nil.
+function Wow:PeerPresent(peer)
+    if self:GroupState(peer) ~= "EXACT" then return nil end
+    local connected = call(UnitIsConnected, "party1")
+    if type(connected) == "boolean" then return connected end
+end
+
+function Wow:PeerNear(peer, yards)
+    if self:GroupState(peer) ~= "EXACT" then return nil end
+    local x, y, _, instance, px, py, _, pinstance = positions()
+    if not x then return nil end
+    return instance == pinstance and (x - px) ^ 2 + (y - py) ^ 2 <= yards ^ 2
 end
 
 function Wow:CoLocated(peer)
-    local unit = self:PartyUnit(peer)
-    if not unit then return false, "Opponent group identity is unavailable." end
-    if call(UnitIsVisible, unit) ~= true then return false, "Opponent is not visible in this phase." end
-    if type(UnitPhaseReason) == "function" then
-        local ok, phaseReason = pcall(UnitPhaseReason, unit)
-        if not ok or not readable(phaseReason) or phaseReason ~= nil then return false, "Opponent phase is incompatible or unavailable." end
-    elseif type(UnitInPhase) == "function" then
-        if call(UnitInPhase, unit) ~= true then return false, "Opponent is in another phase." end
-    else return false, "Native phase verification is unavailable." end
-    local x, y, z, instanceID = call(UnitPosition, "player")
-    local peerX, peerY, peerZ, peerInstanceID = call(UnitPosition, unit)
-    if not finite(x) or not finite(y) or not finite(z) or not integer(instanceID, 0)
-        or not finite(peerX) or not finite(peerY) or not finite(peerZ) or not integer(peerInstanceID, 0) then
-        return false, "Native distance data is unavailable."
-    end
-    if instanceID ~= peerInstanceID then return false, "Opponent is in another world instance." end
-    if (x - peerX) ^ 2 + (y - peerY) ^ 2 > 100 or math.abs(z - peerZ) > 5 then
-        return false, "Move within 10 yards of the opponent on the same level."
+    if self:GroupState(peer) ~= "EXACT" then return false, L["Your opponent is not in your queue group yet."] end
+    if call(UnitIsVisible, "party1") ~= true then return false, L["Your opponent is not visible in this phase."] end
+    if type(UnitPhaseReason) ~= "function" then return false, L["Native phase verification is unavailable."] end
+    local ok, phaseReason = pcall(UnitPhaseReason, "party1")
+    if not ok or not readable(phaseReason) or phaseReason ~= nil then return false, L["Your opponent is in another phase."] end
+    local x, y, z, instance, px, py, pz, pinstance = positions()
+    if not x then return false, L["Native distance data is unavailable."] end
+    if instance ~= pinstance then return false, L["Your opponent is in another world instance."] end
+    if (x - px) ^ 2 + (y - py) ^ 2 > 100 or math.abs(z - pz) > 5 then
+        return false, FD.Locale:Format("Move within 10 yards of %s on the same level.", peer.fullName)
     end
     return true
 end
 
+-- The designated requester's button; FD.Wow:RequestDuel is the single entry
+-- for addon-initiated native requests and reports a visible reason.
 function Wow:Challenge(peer)
     local located, reason = self:CoLocated(peer)
     if not located then return false, reason end
-    if self:Combat() then return false, "Leave combat before requesting the duel." end
-    if type(StartDuel) ~= "function" then return false, "Native duel API is unavailable; request the duel manually." end
-    local ok, result = pcall(StartDuel, "party1")
-    if not ok or not readable(result) or result == false then return false, "Native duel request was blocked; request the duel manually." end
-    return true
+    if not FD.Wow or type(FD.Wow.RequestDuel) ~= "function" then return false, L["Request the duel manually."] end
+    return FD.Wow:RequestDuel("party1")
+end
+
+-- System messages about our own invitation. The global format strings are
+-- client-supplied (not in the generated docs) and feature-detected.
+local NOTICES = { ERR_DECLINE_GROUP_S = "DECLINED", ERR_ALREADY_IN_GROUP_S = "INVITE_FAILED",
+    ERR_BAD_PLAYER_NAME_S = "INVITE_FAILED" }
+
+function Wow:InviteNotice(message, peer)
+    if not readable(message) or type(message) ~= "string" or type(peer) ~= "table" or not text(peer.fullName) then return nil end
+    local names = { peer.fullName, peer.fullName:match("^([^%-]+)%-"), peer.fullName:match("^(%S+)%s") }
+    for global, kind in pairs(NOTICES) do
+        local pattern = _G[global]
+        if type(pattern) == "string" then
+            for _, name in pairs(names) do
+                local ok, expected = pcall(string.format, pattern, name)
+                if ok and expected == message then return kind end
+            end
+        end
+    end
+end
+
+-- Chat line, sound and the queue window for each queue milestone. Sound kit
+-- IDs are feature-detected because Forever's SOUNDKIT table may differ.
+local SOUNDS = { match = "PVP_THROUGH_QUEUE", invited = "PVP_THROUGH_QUEUE", travel = "MAP_PING",
+    ready = "READY_CHECK", cancel = "IG_QUEST_CANCEL" }
+
+function Wow:Announce(event, message)
+    if FD.Debug and type(message) == "string" then FD.Debug:Print(message) end
+    local id = SOUNDS[event] and type(SOUNDKIT) == "table" and SOUNDKIT[SOUNDS[event]]
+    if integer(id, 1) and type(PlaySound) == "function" then pcall(PlaySound, id) end
+    if SOUNDS[event] and FD.QueueUI and not self:Combat() then FD.QueueUI:Show() end
 end
 
 function Wow:Candidates()
@@ -412,23 +487,23 @@ function Wow:FriendlyTerritory()
     end
     diagnostics.territoryResult, diagnostics.territorySource = territory or (state == "available" and "neutral" or state), "NATIVE"
     if state ~= "available" and state ~= "missing" then
-        return false, "Native territory information is " .. state .. "; this place cannot be saved."
+        return false, FD.Locale:Format("Native territory information is %s; this place cannot be saved.", state)
     end
     local metadata = self:ClassicZoneMetadata(mapID)
     if metadata and metadata.faction ~= faction then
         diagnostics.territorySource = "CLASSIC"
-        return false, "This territory is hostile to your faction; choose a friendly or contested outdoor place."
+        return false, L["This territory is hostile to your faction; choose a friendly or contested outdoor place."]
     end
     if state == "available" and (territory == "friendly" or territory == "contested" or territory == nil) then return true end
-    if territory == "hostile" then return false, "This territory is hostile to your faction; choose a friendly or contested outdoor place." end
+    if territory == "hostile" then return false, L["This territory is hostile to your faction; choose a friendly or contested outdoor place."] end
     if territory == "sanctuary" or territory == "arena" or territory == "combat" then
-        return false, "This territory cannot be approved as an outdoor duel place."
+        return false, L["This territory cannot be approved as an outdoor duel place."]
     end
     if state == "missing" and metadata and metadata.faction == faction then
         diagnostics.territorySource = "CLASSIC"
         return true
     end
-    return false, "Territory information is unavailable for this map; only known Classic starting zones have a metadata fallback."
+    return false, L["Territory information is unavailable for this map; only known Classic starting zones have a metadata fallback."]
 end
 
 local function nativeLevels(mapID)
@@ -452,7 +527,7 @@ function Wow:ZoneLevels(mapID)
     end
     if state ~= "missing" then
         diagnostics.zoneLevelsSource = state
-        return nil, nil, "Native zone level range is " .. state .. "; this place cannot be saved."
+        return nil, nil, FD.Locale:Format("Native zone level range is %s; this place cannot be saved.", state)
     end
     local metadata = self:ClassicZoneMetadata(mapID)
     if metadata then
@@ -463,14 +538,14 @@ function Wow:ZoneLevels(mapID)
                 return low, high, "NATIVE_PARENT"
             elseif state ~= "missing" then
                 diagnostics.zoneLevelsSource = state
-                return nil, nil, "Native parent zone level range is " .. state .. "; this place cannot be saved."
+                return nil, nil, FD.Locale:Format("Native parent zone level range is %s; this place cannot be saved.", state)
             end
         end
         diagnostics.zoneLevelsSource = "CLASSIC"
         return metadata.low, metadata.high, "CLASSIC"
     end
     diagnostics.zoneLevelsSource = "unavailable"
-    return nil, nil, "Zone level range is unavailable for this map; only known Classic starting zones have a metadata fallback."
+    return nil, nil, L["Zone level range is unavailable for this map; only known Classic starting zones have a metadata fallback."]
 end
 
 function Wow:FinishVenueTest()
@@ -525,28 +600,34 @@ function Wow:ObserveDuel(kind, value)
     self:FinishVenueTest()
 end
 
+-- Returns allowed, reason and a VENUE_REJECT code.
 function Wow:CaptureStatus(allowSearching)
     if FD.queue and FD.queue.state ~= "IDLE" then
         local searching = allowSearching == true and not FD.queue.ticket
             and (FD.queue.state == "SEARCHING" or FD.queue.state == "PAUSED")
-        if not searching then return false, "Leave the queue before saving a tested place." end
+        if not searching then return false, L["Leave the queue before saving a tested place."], "BUSY" end
     end
     local friendly, territoryReason = self:FriendlyTerritory()
-    if not friendly then return false, territoryReason end
+    if not friendly then return false, territoryReason, "TERRITORY" end
     local proof = self.venueTest
     if not proof or now() - proof.provedTick > 300 then
-        return false, self.venueTestReason or "Complete an ordinary test duel here first (within five minutes)."
+        return false, self.venueTestReason or L["Complete an ordinary test duel here first (within five minutes)."], "NO_TEST"
     end
-    if not self:Solo() then return false, "Leave the test party before saving this place." end
+    if not self:Solo() then return false, L["Leave the test party before saving this place."], "NO_TEST" end
     if self:Combat() or call(IsInInstance) ~= false or call(IsOutdoors) ~= true then
-        return false, "Save the tested place outdoors, outside instances and combat."
+        return false, L["Save the tested place outdoors, outside instances and combat."], "NO_TEST"
     end
     local position, own = self:Position(), self:Own()
     if not samePlace(position, proof.position, 40) or not own or own.guid ~= proof.player.guid
         or own.level ~= proof.player.level or own.faction ~= proof.faction then
-        return false, "Return within 40 yards of the place where your test duel finished."
+        return false, L["Return within 40 yards of the place where your test duel finished."], "NO_TEST"
     end
-    return true, "Recent ordinary duel test confirmed; this place can be saved."
+    return true, L["Recent ordinary duel test confirmed; this place can be saved."]
+end
+
+local function placeName(mapID)
+    local info = C_Map and call(C_Map.GetMapInfo, mapID)
+    return type(info) == "table" and text(info.name, 128) and info.name or L["Tested duel place"]
 end
 
 function Wow:CaptureVenue()
@@ -558,68 +639,103 @@ function Wow:CaptureVenue()
     if not zoneMin then return nil, levelSource end
     local scale = FD.QueueProtocol and FD.QueueProtocol.MAP_SCALE or 100000000
     local mapX, mapY = math.floor(position.mapX * scale + 0.5), math.floor(position.mapY * scale + 0.5)
-    local continentID, x, y = self:World(position.mapID, mapX / scale, mapY / scale)
-    if continentID ~= position.continentID or not x then return nil, "Tested-place coordinates are unavailable." end
-    local info = C_Map and call(C_Map.GetMapInfo, position.mapID)
-    local name = type(info) == "table" and text(info.name, 128) and info.name or "Tested duel place"
+    local continentID, x = self:World(position.mapID, mapX / scale, mapY / scale)
+    if continentID ~= position.continentID or not x then return nil, L["Tested-place coordinates are unavailable."] end
     local factionCode = proof.faction == "Alliance" and "a" or "h"
     return { id = string.format("test-%d-%d-%d-%s", position.mapID, mapX, mapY, factionCode),
-        name = name, mapID = position.mapID, continentID = continentID,
+        name = placeName(position.mapID), mapID = position.mapID, continentID = continentID,
         mapX = mapX / scale, mapY = mapY / scale, factions = { [proof.faction] = true },
         minPlayerLevel = math.min(proof.player.level, proof.peer.level), zoneMinLevel = zoneMin, zoneMaxLevel = zoneMax,
         verified = true, duelAllowed = true, testedAt = proof.provedAt, metadataSource = levelSource }, FD.Copy(proof.peer)
 end
 
-function Wow:StoreVenue(venue)
-    if type(venue) ~= "table" or not FD.Venues then return false, "Invalid tested place." end
-    local valid = FD.Venues:Resolve(venue.id, { catalog = { venue }, world = function(...) return self:World(...) end })
-    if not valid or venue.verified ~= true or venue.duelAllowed ~= true then return false, "Invalid tested-place record." end
-    local stored = settingsRoot()
-    if not stored then return false, "Saved data is unavailable." end
-    local venues = FD.Copy(type(stored.venues) == "table" and stored.venues or {})
-    for index = #venues, 1, -1 do if venues[index].id == venue.id then table.remove(venues, index) end end
-    if #venues >= 100 then return false, "Local tested-place catalog is full." end
-    venues[#venues + 1] = FD.Copy(venue)
-    return self:Save({ venues = venues })
+function Wow:VenueEnvironment(catalog)
+    return { catalog = catalog, world = function(...) return self:World(...) end }
 end
 
+-- Stores a tested place. Two records of one spot (both partners saved) are
+-- merged to the lexically smaller ID on every client so catalogs converge.
+-- Returns ok, the kept ID (or a reason) and a VENUE_REJECT code.
+function Wow:StoreVenue(venue)
+    if type(venue) ~= "table" or not FD.Venues then return false, L["Invalid tested place."], "INVALID" end
+    local valid = FD.Venues:Resolve(venue.id, self:VenueEnvironment({ venue }))
+    if not valid or venue.verified ~= true or venue.duelAllowed ~= true then return false, L["Invalid tested-place record."], "INVALID" end
+    local stored = settingsRoot()
+    if not stored then return false, L["Saved data is unavailable."], "INVALID" end
+    local venues = FD.Copy(type(stored.venues) == "table" and stored.venues or {})
+    local environment = self:VenueEnvironment(venues)
+    local keep = venue
+    for _, existing in ipairs(venues) do
+        if existing.id ~= venue.id and existing.id < keep.id and FD.Venues:SameSpot(existing, venue, environment) then keep = existing end
+    end
+    for index = #venues, 1, -1 do
+        local existing = venues[index]
+        if existing.id ~= keep.id and (existing.id == venue.id or FD.Venues:SameSpot(existing, venue, environment)) then
+            table.remove(venues, index)
+        end
+    end
+    if keep == venue then
+        if #venues >= 100 then return false, L["Local tested-place catalog is full."], "FULL" end
+        venues[#venues + 1] = FD.Copy(venue)
+    end
+    if not self:Save({ venues = venues }) then return false, L["Saved data is unavailable."], "INVALID" end
+    return true, keep.id
+end
+
+function Wow:FindVenue(id)
+    for _, venue in ipairs(self:Catalog()) do if venue.id == id then return venue end end
+end
+
+-- The wire record for a stored place, sent to the native test partner.
+function Wow:VenuePacket(venue, peer)
+    local proof = self.venueTest
+    if type(venue) ~= "table" or type(peer) ~= "table" or not proof then return nil end
+    local scale = FD.QueueProtocol.MAP_SCALE
+    return { kind = "VENUE", venueID = venue.id, testPairGUID = peer.guid,
+        mapID = venue.mapID, continentID = venue.continentID,
+        mapX = math.floor(venue.mapX * scale + 0.5), mapY = math.floor(venue.mapY * scale + 0.5),
+        minPlayerLevel = venue.minPlayerLevel, zoneMinLevel = venue.zoneMinLevel, zoneMaxLevel = venue.zoneMaxLevel,
+        faction = venue.factions.Alliance and "Alliance" or "Horde", hubFaction = venue.hubFaction or "NONE",
+        testedAt = proof.provedAt }
+end
+
+-- Returns accepted, reason, VENUE_REJECT code, kept ID.
 function Wow:AcceptVenue(packet, sender)
-    local allowed, reason = self:CaptureStatus(true)
-    if not allowed then return false, reason end
-    if type(packet) ~= "table" or not readable(sender) or not FD.QueueProtocol then return false, "Invalid tested-place message." end
-    for key, value in pairs(packet) do if not readable(key, value) then return false, "Restricted tested-place message." end end
+    local allowed, reason, code = self:CaptureStatus(true)
+    if not allowed then return false, reason, code end
+    if type(packet) ~= "table" or not readable(sender) or not FD.QueueProtocol then return false, L["Invalid tested-place message."], "INVALID" end
+    for key, value in pairs(packet) do if not readable(key, value) then return false, L["Restricted tested-place message."], "INVALID" end end
     local wire = FD.QueueProtocol:Encode(packet)
-    if not wire or packet.kind ~= "VENUE" then return false, "Invalid tested-place message." end
+    if not wire or packet.kind ~= "VENUE" then return false, L["Invalid tested-place message."], "INVALID" end
     local proof = self.venueTest
     if sender ~= proof.peer.fullName or packet.testPairGUID ~= proof.player.guid
         or packet.testedAt < epoch() - 300 or packet.testedAt > epoch() + 2
         or packet.faction ~= proof.faction or packet.minPlayerLevel ~= math.min(proof.player.level, proof.peer.level) then
-        return false, "Tested place does not match your recent native duel partner."
+        return false, L["Tested place does not match your recent native duel partner."], "MISMATCH"
     end
-    if packet.hubFaction ~= "NONE" then return false, "Automatic sharing cannot certify a capital exterior hub." end
+    if packet.hubFaction ~= "NONE" then return false, L["Automatic sharing cannot certify a capital exterior hub."], "HUB" end
     local scale = FD.QueueProtocol.MAP_SCALE
     local mapX, mapY = packet.mapX / scale, packet.mapY / scale
     local continentID, x, y = self:World(packet.mapID, mapX, mapY)
     local position = { mapID = packet.mapID, continentID = continentID, x = x, y = y }
     if continentID ~= packet.continentID or not samePlace(position, proof.position, 40) then
-        return false, "The peer's place is outside your locally tested spot."
+        return false, L["The partner's place is outside your locally tested spot."], "MISMATCH"
     end
     local zoneMin, zoneMax, levelSource = self:ZoneLevels(packet.mapID)
-    if not zoneMin then return false, levelSource end
+    if not zoneMin then return false, levelSource, "METADATA" end
     if zoneMin ~= packet.zoneMinLevel or zoneMax ~= packet.zoneMaxLevel then
-        return false, "Zone level metadata does not match the peer's place."
+        return false, L["Zone level metadata does not match the partner's place."], "METADATA"
     end
     local factionCode = proof.faction == "Alliance" and "a" or "h"
     local expectedID = string.format("test-%d-%d-%d-%s", packet.mapID, packet.mapX, packet.mapY, factionCode)
-    if packet.venueID ~= expectedID then return false, "The peer's place identifier does not match its coordinates." end
-    local info = C_Map and call(C_Map.GetMapInfo, packet.mapID)
-    local name = type(info) == "table" and text(info.name, 128) and info.name or "Tested duel place"
-    local venue = { id = packet.venueID, name = name, mapID = packet.mapID, continentID = continentID,
+    if packet.venueID ~= expectedID then return false, L["The partner's place identifier does not match its coordinates."], "MISMATCH" end
+    local venue = { id = packet.venueID, name = placeName(packet.mapID), mapID = packet.mapID, continentID = continentID,
         mapX = mapX, mapY = mapY, factions = { [proof.faction] = true }, minPlayerLevel = packet.minPlayerLevel,
         zoneMinLevel = packet.zoneMinLevel, zoneMaxLevel = packet.zoneMaxLevel,
-        hubFaction = packet.hubFaction ~= "NONE" and packet.hubFaction or nil,
         verified = true, duelAllowed = true, testedAt = packet.testedAt, metadataSource = levelSource }
-    return self:StoreVenue(venue)
+    local stored, kept, storeCode = self:StoreVenue(venue)
+    if not stored then return false, kept, storeCode end
+    return true, nil, nil, kept
 end
 
 local function pointCoordinates(point)
@@ -693,16 +809,27 @@ function Wow:Environment()
         own = function() return self:Own() end,
         available = function() return self:Available() end,
         combat = function() return self:Combat() end,
-        solo = function() return self:Solo() end,
-        party = function(peer) return self:Party(peer) end,
         groupState = function(peer) return self:GroupState(peer) end,
         invite = function(peer) return self:Invite(peer) end,
-        leave = function(peer, owned) return self:Leave(peer, owned) end,
+        acceptInvite = function(peer) return self:AcceptInvite(peer) end,
+        declineInvite = function(peer) return self:DeclineInvite(peer) end,
+        inviteNotice = function(message, peer) return self:InviteNotice(message, peer) end,
+        leave = function(peer) return self:Leave(peer) end,
+        leaveGroup = function() return self:LeaveGroup() end,
+        peerPresent = function(peer) return self:PeerPresent(peer) end,
+        peerNear = function(peer, yards) return self:PeerNear(peer, yards) end,
         coLocated = function(peer) return self:CoLocated(peer) end,
         challenge = function(peer) return self:Challenge(peer) end,
         world = function(mapID, x, y) return self:World(mapID, x, y) end,
         send = function(packet, target, owner) return FD.QueueTransport:Send(packet, target, owner) end,
+        sendNow = function(packet, target, owner) return FD.QueueTransport:SendNow(packet, target, owner) end,
+        after = function(seconds, callback)
+            if C_Timer and type(C_Timer.After) == "function" then
+                C_Timer.After(seconds, function() if FD.queue then FD.queue:Run(callback) end end)
+            end
+        end,
         render = function() if FD.QueueUI then FD.QueueUI:RefreshIfShown() end end,
+        notify = function(event, message) self:Announce(event, message) end,
         save = function(settings) return self:Save(settings) end,
         settings = function() return self:Settings() end,
         candidates = function() return self:Candidates() end,
@@ -710,7 +837,7 @@ function Wow:Environment()
         catalog = function() return self:Catalog() end,
         waypoint = function(venue) return self:Waypoint(venue) end,
         clearWaypoint = function() return self:ClearWaypoint() end,
-        print = function(message) if FD.Debug then FD.Debug:Print(message) end end,
         log = function(...) if FD.Debug then FD.Debug:Log(...) end end,
+        error = function(context, message) if FD.Debug and FD.Debug.Error then FD.Debug:Error(context, message) end end,
     }
 end

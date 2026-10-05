@@ -1,6 +1,6 @@
 local _, FD = ...
 
-local Venues = { Catalog = {} }
+local Venues = { Catalog = {}, RADIUS = 40, DIGEST_SIZE = 8 }
 FD.Venues = Venues
 
 -- No outdoor place has been live-tested for this release. Candidates must not
@@ -50,6 +50,15 @@ local function resolveRecord(value, env)
     return result
 end
 
+-- Short stable hash of a venue ID for the PROFILE digest (five hex digits).
+-- A collision can only make the coordinator propose a place the peer then
+-- rejects with PLAN_REJECT; it never selects an unapproved place.
+function Venues:Hash(id)
+    local h = 5381
+    for i = 1, #id do h = (h * 33 + id:byte(i)) % 1048576 end
+    return string.format("%05x", h)
+end
+
 function Venues:Resolve(id, env)
     if type(id) ~= "string" then return nil, "INVALID_VENUE" end
     local found
@@ -70,15 +79,16 @@ local function scopeAllows(venue, player)
     return player.scope == "RULESET"
 end
 
+-- One player's own requirements: approval, faction, tested level, own scope.
+local function usableBy(venue, player)
+    return validRecord(venue) and venue.verified == true and venue.duelAllowed == true
+        and type(player) == "table" and (player.faction == "Alliance" or player.faction == "Horde")
+        and venue.factions[player.faction] == true and integer(player.level, venue.minPlayerLevel, 255)
+        and scopeAllows(venue, player)
+end
+
 function Venues:Eligible(venue, a, b)
-    if not validRecord(venue) or venue.verified ~= true or venue.duelAllowed ~= true
-        or type(a) ~= "table" or type(b) ~= "table" or a.faction ~= b.faction
-        or (a.faction ~= "Alliance" and a.faction ~= "Horde")
-        or venue.factions[a.faction] ~= true or venue.factions[b.faction] ~= true
-        or not integer(a.level, venue.minPlayerLevel, 255) or not integer(b.level, venue.minPlayerLevel, 255) then
-        return false
-    end
-    return scopeAllows(venue, a) and scopeAllows(venue, b)
+    return usableBy(venue, a) and usableBy(venue, b) and a.faction == b.faction
 end
 
 local function position(player)
@@ -91,7 +101,36 @@ local function distanceSquared(a, b)
     return (a.x - b.x) ^ 2 + (a.y - b.y) ^ 2
 end
 
-function Venues:Select(a, b, env)
+-- Hashes of the places this player could use, nearest first, for PROFILE.
+-- Pairing requires a non-empty intersection of both players' digests.
+function Venues:Digest(player, env)
+    local list = {}
+    if not position(player) then return list end
+    for _, record in pairs(records(self, env)) do
+        if usableBy(record, player) then
+            local venue = resolveRecord(record, env)
+            if venue then
+                local same = venue.continentID == player.continentID
+                list[#list + 1] = { id = venue.id, same = same, distance = same and distanceSquared(venue, player) or 0 }
+            end
+        end
+    end
+    table.sort(list, function(a, b)
+        if a.same ~= b.same then return a.same end
+        if a.distance ~= b.distance then return a.distance < b.distance end
+        return a.id < b.id
+    end)
+    local result, seen = {}, {}
+    for _, entry in ipairs(list) do
+        local hash = self:Hash(entry.id)
+        if not seen[hash] and #result < self.DIGEST_SIZE then seen[hash] = true; result[#result + 1] = hash end
+    end
+    return result
+end
+
+-- allow(record) optionally restricts the candidates, e.g. to the venue
+-- intersection of both digests minus places the peer already rejected.
+function Venues:Select(a, b, env, allow)
     if not position(a) or not position(b) then return nil, nil, "NO_POSITION" end
     local crossContinent = a.continentID ~= b.continentID
     if crossContinent and (a.scope ~= "RULESET" or b.scope ~= "RULESET") then
@@ -99,15 +138,13 @@ function Venues:Select(a, b, env)
     end
     local midpoint = { x = (a.x + b.x) / 2, y = (a.y + b.y) / 2 }
     local best, bestDistance, bestDuration
-    local duplicates, counts = {}, {}
+    local counts = {}
     for _, venue in pairs(records(self, env)) do
-        if type(venue) == "table" and type(venue.id) == "string" then
-            counts[venue.id] = (counts[venue.id] or 0) + 1
-            if counts[venue.id] > 1 then duplicates[venue.id] = true end
-        end
+        if type(venue) == "table" and type(venue.id) == "string" then counts[venue.id] = (counts[venue.id] or 0) + 1 end
     end
     for _, record in pairs(records(self, env)) do
-        if type(record) == "table" and not duplicates[record.id] and self:Eligible(record, a, b)
+        if type(record) == "table" and counts[record.id] == 1 and self:Eligible(record, a, b)
+            and (not allow or allow(record))
             and (crossContinent and record.hubFaction == a.faction
                 or not crossContinent and record.continentID == a.continentID) then
             local venue = resolveRecord(record, env)
@@ -130,4 +167,17 @@ function Venues:Select(a, b, env)
     end
     if not best then return nil, nil, "NO_VENUE" end
     return best, bestDuration
+end
+
+-- Two records for one tested spot (both duel partners pressed Save) are the
+-- same meeting place: anything within the arrival radius on the same map and
+-- for the same faction. Merging keeps the lexically smaller ID on every
+-- client, so both catalogs converge on one ID.
+function Venues:SameSpot(a, b, env)
+    if not validRecord(a) or not validRecord(b) or a.mapID ~= b.mapID or a.continentID ~= b.continentID then return false end
+    for faction in pairs(a.factions) do
+        if a.factions[faction] == true and b.factions[faction] ~= true then return false end
+    end
+    local ra, rb = resolveRecord(a, env), resolveRecord(b, env)
+    return ra ~= nil and rb ~= nil and distanceSquared(ra, rb) <= self.RADIUS ^ 2
 end
