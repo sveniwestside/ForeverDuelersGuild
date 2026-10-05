@@ -217,4 +217,38 @@ return function(FD, equal)
     equal(handlers[1][2](), true, "Esc consumed while the panel is shown")
     equal(FD.duel:State(), "UNRATED", "Esc keeps the duel unrated")
     equal(handlers[1][2](), false, "Esc passes through when the panel is hidden")
+
+    -- Pinned Blizzard_StaticPopup_Game/GameDialog.lua registers
+    -- StaticPopup_EscapePressed at Dialog priority: with DUEL_REQUESTED shown
+    -- (hideOnEscape, OnCancel = CancelDuel) Esc declines the request before
+    -- any AddOn handler runs. The CancelDuel hook then reaches Cancelled().
+    local declines = 0
+    handlers[#handlers + 1] = { env.GameMenuEscPriority.Dialog, function()
+        if not popupName then return false end
+        popupName, declines = nil, declines + 1
+        FD.duel:Cancelled()
+        return true
+    end }
+    local function esc()
+        table.sort(handlers, function(x, y) return x[1] < y[1] end)
+        for _, handler in ipairs(handlers) do if handler[2]() then return true end end
+        return false
+    end
+    popupName = "StaticPopup1"
+    assert(FD.duel:Begin("INCOMING", player, opponent))
+    acknowledge(FD.duel.active)
+    equal(ui.frame:IsShown(), true, "companion beside the native popup")
+    equal(ui.body.text:find("Decline or Esc refuses the duel request.", 1, true) ~= nil, true,
+        "the companion warns that Esc declines")
+    equal(esc(), true, "Esc consumed")
+    equal(declines, 1, "Blizzard's popup handler ran first and declined")
+    equal(FD.duel.active, nil, "declined request ends")
+    equal(sent[#sent].kind, "CANCEL", "peer notified")
+    equal(sent[#sent].reason, "cancelled", "as a declined request, not as an unrated choice")
+    equal(ui.frame:IsShown(), false, "companion closes with the request")
+    assert(FD.duel:Begin("OUTGOING", player, opponent))
+    acknowledge(FD.duel.active)
+    equal(esc(), true, "without a native popup the panel's handler gets Esc")
+    equal(FD.duel:State(), "UNRATED", "challenger's Esc keeps the duel unrated")
+    equal(sent[#sent].reason, "choice", "as an unrated choice")
 end

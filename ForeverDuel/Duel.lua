@@ -42,7 +42,7 @@ local reasons = {
     outdated = { "Your opponent uses an older ForeverDuel version", "Your opponent uses an older ForeverDuel version" },
     error = { "Addon error", "Addon error" },
     accept = { "The duel could not be accepted automatically", "Your opponent's client could not accept the duel" },
-    timeout = { "The native duel start was not observed", "Your opponent's client did not observe the duel start" },
+    timeout = { "The duel did not start after your acceptance", "Your opponent's client did not observe the duel start" },
     transport = { "Addon messages could not be sent", "Your opponent's addon messages could not be sent" },
     disagree = { "The clients disagree on the winner", "The clients disagree on the winner" },
     cancelled = { "The duel request was cancelled", "The duel request was cancelled" },
@@ -53,7 +53,7 @@ local reasons = {
     different_rating_bracket = { "Rated unavailable: Leveling and Max level use separate ratings" },
     level_difference_too_large = { "Rated unavailable: players must be within 5 levels of each other" },
 }
-local aliases = { ["addon error"] = "error", ["world transition or logout"] = "world" }
+local aliases = { ["addon error"] = "error" }
 local evidenceStates = { LOCAL_ACCEPTED = true, RATED_CONFIRMED = true, COUNTDOWN = true, IN_PROGRESS = true, FINISHING = true }
 
 local function closed(m)
@@ -197,11 +197,15 @@ function Duel:Supersede(reason)
     self:Abort(reason, true)
 end
 
+-- Returns false and an English reason when rated tracking cannot start. The
+-- previous request is superseded either way: the native acknowledgment or
+-- DUEL_REQUESTED that led here already replaced it in the game.
 function Duel:Begin(role, player, opponent, requestedAt)
     self:Supersede("replaced")
-    if not player or not opponent or player.guid == opponent.guid then return false end
+    if not player then return false, "your character could not be identified" end
+    if not opponent or player.guid == opponent.guid then return false, "the requested player could not be identified" end
     local counter = self.db:NextCounter()
-    if not counter then return false end
+    if not counter then return false, "the duel history is unavailable" end
     local bracket, levelReason = FD.Rating:Eligible(player, opponent)
     self.db:SetBracket(player)
     local stats = self.db:GetStats(bracket)
@@ -261,18 +265,40 @@ function Duel:Release()
     if m and m.held and m.state == "CHECKING_ADDON" and self:Pending(m) then self:Discover(m) end
 end
 
+-- A native accept settles its own window (NativeAccept, ObservedAccept).
 function Duel:Expire(m)
     if self.active ~= m or m.countdownAt or m.nativeAccepted or m.startedAt then return end
     -- The INCOMING window starts later than ours; with both consents the
-    -- peer can still accept natively at the very end of its window.
+    -- peer can still accept natively at the very end of its window. The grace
+    -- keeps the match, never the deadline: the panel still closes on time.
     if m.role == "OUTGOING" and m.localConsent and not m.graced and not closed(m) then
-        m.graced, m.deadline = true, m.deadline + FD.C.START_TIMEOUT
+        m.graced = true
         return self:Later(FD.C.START_TIMEOUT, m, function() self:Expire(m) end)
     end
-    if not closed(m) and self:Engaged(m) then
+    local open = not closed(m)
+    if open and self:Engaged(m) then
         self.env.print(FD.Locale:Format("This duel will be UNRATED: %s.", FD.L[reasons.expired[1]]))
     end
-    self:Abort("expired", true)
+    -- A closed match already told its peer why.
+    self:Abort("expired", open)
+end
+
+-- No countdown START_TIMEOUT after a native accept: the accept had no effect
+-- (or its countdown went unseen), so nothing is left to observe. Release the
+-- match so a new request and the queue are not blocked. Never a CANCEL once a
+-- countdown was observed.
+function Duel:AcceptTimeout(m)
+    self:Later(FD.C.START_TIMEOUT, m, function()
+        if m.countdownAt or self.active ~= m then return end
+        if not closed(m) then
+            self:Unrate("timeout", true, nil, m)
+            if m.acceptedBy == "addon" then
+                -- The addon hid Blizzard's popup after its own AcceptDuel.
+                self.env.print(FD.Locale:Format("If no duel started, ask %s to challenge you again.", m.opponent.fullName))
+            end
+        end
+        self:Drop(m, "timeout")
+    end)
 end
 
 -- Own-player checks are strict. The opponent was bound at Begin: a unit that
@@ -328,15 +354,14 @@ function Duel:NativeAccept(m)
     if m.role ~= "INCOMING" or m.state ~= "RATED_CONFIRMED" or m.nativeAccepted or not self:Pending(m) then return end
     local fresh, code, detail = self:Fresh(m)
     if not fresh then return self:Unrate(code, true, detail, m) end
-    m.nativeAccepted = true
+    -- Set first: the AcceptDuel hook must recognize the addon's own accept.
+    m.nativeAccepted, m.acceptedBy = true, "addon"
     if not self.env.accept() then
-        m.nativeAccepted = nil
+        m.nativeAccepted, m.acceptedBy = nil, nil
         return self:Unrate("accept", true, nil, m)
     end
     self.env.render(m)
-    self:Later(FD.C.START_TIMEOUT, m, function()
-        if not m.countdownAt and m.state == "RATED_CONFIRMED" then self:Unrate("timeout", true, nil, m) end
-    end)
+    self:AcceptTimeout(m)
 end
 
 function Duel:KeepUnrated()
@@ -486,6 +511,8 @@ function Duel:Receive(payload, sender)
         elseif m.state == "LOCAL_ACCEPTED" and self:Pending(m) then
             self:Transition("RATED_CONFIRMED", m)
             self:NativeAccept(m)
+        elseif m.countdownAt then
+            self:Announce(m)
         end
     elseif p.kind == "START" or p.kind == "RESULT" then
         self:Evidence(m, p)
@@ -522,6 +549,8 @@ function Duel:Evidence(m, p)
         m.peerWinner, m.peerStart, m.peerConsent = p.verdict, true, true
         self:StartFinishing(m)
     end
+    -- A tentative countdown is now confirmed (in FINISHING the result line follows).
+    if m.countdownAt and self.active == m then self:Announce(m) end
     self:FinalizeMatch(m)
 end
 
@@ -532,12 +561,25 @@ function Duel:SameProfile(m, p)
         and p.level == peer.level and p.maxLevel == peer.maxLevel
 end
 
+-- Outcome line at the native countdown. The RATED line needs the peer's
+-- consent: OUTGOING's countdown can precede INCOMING's ACCEPT (see Countdown)
+-- and a receiver who pressed Blizzard's Accept makes it unrated, so until the
+-- peer's ACCEPT, START or RESULT arrives the line only says it is pending.
 function Duel:Announce(m)
-    if m.state == "COUNTDOWN" then
+    if m.state == "COUNTDOWN" or m.state == "IN_PROGRESS" then
+        if m.announced then return end
+        if not m.peerConsent then
+            if not m.tentative then
+                m.tentative = true
+                self.env.print(FD.Locale:Format("Waiting for %s to confirm the RATED duel.", m.opponent.fullName))
+            end
+            return
+        end
+        m.announced = true
         local _, gain = FD.Rating:Calculate(m.ratingBefore, m.opponentRatingBefore, true, m.player.level, m.opponent.level)
         local _, loss = FD.Rating:Calculate(m.ratingBefore, m.opponentRatingBefore, false, m.player.level, m.opponent.level)
         self.env.print(FD.Locale:Format("RATED duel vs %s (win %+d / loss %+d).", m.opponent.fullName, gain or 0, loss or 0))
-    elseif self:Engaged(m) then
+    elseif m.state == "UNRATED_ACTIVE" and self:Engaged(m) then
         self.env.print(FD.Locale:Format("This duel is UNRATED: %s.", self:ReasonText(m)))
     end
 end
@@ -569,6 +611,8 @@ function Duel:Countdown(seconds)
         if m.state == "UNRATED" then self:Transition("UNRATED_ACTIVE", m) end
         self:Announce(m)
         self.env.hide()
+        -- DUEL_FINISHED normally ends it; never keep a missed one forever.
+        self:Later(FD.C.MATCH_TIMEOUT, m, function() self:Drop(m, "expired") end)
         return
     end
     self:Transition("COUNTDOWN", m)
@@ -693,8 +737,10 @@ function Duel:Unrate(code, notify, detail, m, quiet)
     self:Transition("UNRATED", m)
     self.env.log("unrated", code, detail)
     if not quiet and self:Engaged(m) then
-        self.env.print(FD.Locale:Format(m.countdownAt and "This duel is no longer rated: %s." or "This duel will be UNRATED: %s.",
-            self:ReasonText(m)))
+        -- "No longer" only after the RATED line; a tentative countdown was never called rated.
+        local text = m.announced and "This duel is no longer rated: %s."
+            or m.countdownAt and "This duel is UNRATED: %s." or "This duel will be UNRATED: %s."
+        self.env.print(FD.Locale:Format(text, self:ReasonText(m)))
     end
     self:Notify("unrated", m)
     -- After the native duel ended (or for a parked match) nothing is left to observe.
@@ -708,8 +754,9 @@ function Duel:ObservedAccept()
     if not m or m.countdownAt then return end
     if m.role == "INCOMING" and m.nativeAccepted then return end
     self:Unrate("choice", true, "native accept", nil, true)
-    m.nativeAccepted = true
+    m.nativeAccepted, m.acceptedBy = true, "native"
     self.env.hide()
+    self:AcceptTimeout(m)
 end
 
 function Duel:Cancelled()

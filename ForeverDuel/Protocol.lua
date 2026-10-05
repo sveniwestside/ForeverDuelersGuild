@@ -1,8 +1,12 @@
 local _, FD = ...
 
 -- FD3|kind|nonce|echo|guid|peerGUID|role|rating|specId|classFile|wins|losses|verdict|level|maxLevel[|key=value...]
--- Fifteen fixed fields, then optional key=value extensions. Decoders ignore
--- unknown keys, so a later version can add data without breaking this one.
+-- Fifteen strict fixed fields, then optional key=value extensions (the whole
+-- payload stays printable ASCII and <= 255 bytes). Extensions only carry
+-- informational data, so decoders read a known key when its value and kind
+-- match and ignore every other trailing field (unknown key, malformed field,
+-- value outside today's grammar, duplicate): a later version can add or
+-- widen data without its packets being dropped here.
 -- Known keys: v = sender addon version, r = short CANCEL reason code.
 -- The lifecycle binds the envelope to the actual duel opponent and freezes
 -- the reported profile; parsing alone does not establish consent.
@@ -25,8 +29,8 @@ local classes = {
     DRUID = true, DEMONHUNTER = true, EVOKER = true,
 }
 local extensions = {
-    v = { field = "version", pattern = "^%d+%.%d+%.%d+[%w%.%-]*$", limit = 16 },
-    r = { field = "reason", pattern = "^%l[%l_]*$", limit = 16, kind = "CANCEL" },
+    v = { field = "version", pattern = "^%d[%w%.%-%+_]*$", limit = 24 },
+    r = { field = "reason", pattern = "^%l[%l%d_]*$", limit = 16, kind = "CANCEL" },
 }
 local extensionOrder = { "v", "r" }
 
@@ -152,15 +156,13 @@ function Protocol:Decode(payload)
         losses = parseInteger(fields[12]), verdict = fields[13],
         level = parseInteger(fields[14]), maxLevel = parseInteger(fields[15]),
     }
-    local seen = {}
     for index = self.FIELDS + 1, #fields do
-        local key, value = fields[index]:match("^(%l[%l%d]*)=([^=]+)$")
-        if not key or seen[key] then return nil, "invalid extension field" end
-        seen[key] = true
-        local spec = extensions[key]
-        -- Unknown keys belong to a newer version and are ignored. A known key
-        -- outside its kind (a reason on HELLO) is ignored the same way.
-        if spec and (not spec.kind or spec.kind == message.kind) then message[spec.field] = value end
+        local key, value = fields[index]:match("^([^=]+)=(.*)$")
+        local spec = key and extensions[key]
+        -- First valid occurrence wins; anything else is ignored (see header).
+        if spec and message[spec.field] == nil and validExtension(key, value, message.kind) then
+            message[spec.field] = value
+        end
     end
     local valid, reason = validate(message)
     if not valid then return nil, reason end

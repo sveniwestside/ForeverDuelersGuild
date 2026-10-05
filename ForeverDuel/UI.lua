@@ -5,7 +5,8 @@ local UI = FD.UI
 -- The addon never hides or replaces Blizzard's DUEL_REQUESTED popup before
 -- its own AcceptDuel. The panel appears only once the peer is proven: for
 -- INCOMING a compact companion under the native popup, for OUTGOING a
--- standalone proposal panel. Closing it (button or Esc) keeps the duel unrated.
+-- standalone proposal panel. Closing it (close button, or Esc on the
+-- OUTGOING panel) keeps the duel unrated.
 local VISIBLE = { READY = true, LOCAL_ACCEPTED = true, REMOTE_ACCEPTED = true, RATED_CONFIRMED = true }
 
 local function readable(...)
@@ -55,6 +56,9 @@ function UI:Create()
     -- ClearTarget (pinned Blizzard_GameMenuEsc and Game.lua). An AddOn-priority
     -- handler runs only for a real Esc; UISpecialFrames, the fallback where
     -- that API is missing, is also closed by loss of control or panel changes.
+    -- Beside Blizzard's DUEL_REQUESTED popup (INCOMING) Esc never gets here:
+    -- the popup's Dialog-priority handler runs first and declines the request
+    -- (hideOnEscape, OnCancel = CancelDuel), so the companion says so.
     local function escape()
         if not frame:IsShown() then return false end
         FD:Safe(function() self:Closed() end)
@@ -119,7 +123,10 @@ function UI:Text(m)
     elseif state == "REMOTE_ACCEPTED" then lines[#lines + 1] = FD.Locale:Format("%s proposes a RATED duel.", name)
     elseif state == "RATED_CONFIRMED" then lines[#lines + 1] = FD.Locale:Format("Rated duel agreed. Waiting for %s to accept the duel.", name)
     elseif m.role == "OUTGOING" then lines[#lines + 1] = L["Your opponent also uses ForeverDuelersGuild."] end
-    if m.role == "INCOMING" then lines[#lines + 1] = L["Blizzard's Accept starts an UNRATED duel."] end
+    if m.role == "INCOMING" then
+        lines[#lines + 1] = L["Blizzard's Accept starts an UNRATED duel."]
+        lines[#lines + 1] = L["Decline or Esc refuses the duel request."]
+    end
     if (state == "READY" or state == "REMOTE_ACCEPTED") and inCombat() then
         lines[#lines + 1] = L["Leave combat to choose a rated duel."]
     end
@@ -133,7 +140,7 @@ function UI:Layout(m)
     self.rated:ClearAllPoints()
     self.normal:ClearAllPoints()
     if m.role == "INCOMING" then
-        frame:SetSize(340, 150)
+        frame:SetSize(340, 166)
         local popup = nativePopup()
         if popup then frame:SetPoint("TOP", popup, "BOTTOM", 0, -4)
         else frame:SetPoint("TOP", UIParent, "TOP", 0, -260) end

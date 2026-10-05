@@ -103,6 +103,60 @@ return function(_, equal)
     ratedPair(net)
     eq(net.b.FD.Database:GetStats().rating, 1516, "receiver won")
 
+    label = "AcceptDuel without native effect"
+    net = Client.pair({ latency = 0.5, tokens = true })
+    -- No onAccept: the addon's AcceptDuel returns but no countdown follows.
+    net:challenge(net.a)
+    human(net, net.a, 0); human(net, net.b, 1)
+    net:advance(5)
+    eq(net.b.accepts, 1, "receiver's addon called AcceptDuel")
+    eq(net.b.nativeVisible, false, "the addon hid Blizzard's popup after its own accept")
+    net:advance(net.b.FD.C.START_TIMEOUT)
+    eq(net.b.FD.duel.active, nil, "receiver released the match instead of keeping it forever")
+    eq(net.b:printed("The duel did not start after your acceptance"), true, "receiver told why")
+    eq(net.b:printed("ask Alpha-Forever to challenge you again"), true, "receiver told how to recover")
+    eq(net.a.FD.duel:State(), "UNRATED", "challenger received the timeout cancel")
+    eq(net.a:printed("Your opponent's client did not observe the duel start"), true, "challenger told why")
+    local requested, why = net.b.FD.Wow:RequestDuel("target")
+    eq(requested, true, "the receiver can request a duel again: " .. tostring(why))
+    net:advance(60)
+    eq(net.a.FD.duel.active, nil, "challenger released after its window")
+    local recordsA, recordsB = records(net)
+    eq(recordsA + recordsB, 0, "nothing rated")
+
+    label = "Blizzard accept against a rated proposal"
+    for _, lost in ipairs({ false, true }) do
+        net = Client.pair({ latency = 0.5, tokens = true })
+        net:nativeCountdown()
+        if lost then net.delay = function(entry) if entry.kind == "CANCEL" then return false end return 0.5 end end
+        net:challenge(net.a)
+        human(net, net.a, 0)
+        net:advance(5)
+        eq(net.a.FD.duel:State(), "LOCAL_ACCEPTED", "challenger proposed rated play")
+        net.b.env.AcceptDuel() -- Blizzard's popup button
+        net:advance(4)
+        eq(net.a:printed("RATED duel vs"), false, "challenger is never told an unconfirmed duel is rated")
+        eq(net.a:printed(lost and "Waiting for Beta-Forever to confirm the RATED duel." or "Your opponent chose an unrated duel"),
+            true, lost and "challenger told it is still pending" or "challenger told why it is unrated")
+        net:advance(10)
+        net:finish(net.a, net.b)
+        net:advance(60)
+        local recordsA, recordsB = records(net)
+        eq(recordsA + recordsB, 0, "an unrated receiver never yields a rated record")
+        eq(net.a.FD.duel.active, nil, "challenger released")
+    end
+
+    label = "own identity unavailable at the acknowledgment"
+    net = Client.pair({ latency = 0.5, tokens = true })
+    net.a.env.StartDuel("target")
+    local own = net.a.units.player
+    net.a.units.player = nil
+    net.a:emit("CHAT_MSG_SYSTEM", net.a.env.ERR_DUEL_REQUESTED)
+    net.a.units.player = own
+    eq(net.a.FD.duel.active, nil, "no rated flow without the own identity")
+    eq(net.a:printed("Rated tracking could not attach to your duel request: your character could not be identified."),
+        true, "the challenger is told once")
+
     label = "opponent not targeted and nameplates off"
     net = Client.pair({ latency = 1, tokens = true })
     local alpha = net.b.units.target

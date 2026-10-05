@@ -15,6 +15,7 @@ FD.C = {
     RESULT_SCHEDULE = { 2, 5, 10, 20 }, RECENT_MATCHES = 5, RECENT_TTL = 300,
     FAILURE_WINDOW = 2, RECENT_COUNT = 5,
 }
+-- The four-second presence indicator is not the native request lifetime.
 FD.C.OUTGOING_TIMEOUT = FD.C.PENDING_TIMEOUT
 
 function FD.Copy(value)

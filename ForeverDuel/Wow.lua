@@ -71,20 +71,17 @@ function Wow:Identity(unit, own)
     return identity
 end
 
-local function scanUnits()
-    local units = { "target", "mouseover", "focus" }
-    for i = 1, 4 do units[#units + 1] = "party" .. i end
-    for i = 1, 40 do
-        units[#units + 1] = "raid" .. i
-        units[#units + 1] = "nameplate" .. i
-    end
-    return units
+local scanUnits = { "target", "mouseover", "focus" }
+for i = 1, 4 do scanUnits[#scanUnits + 1] = "party" .. i end
+for i = 1, 40 do
+    scanUnits[#scanUnits + 1] = "raid" .. i
+    scanUnits[#scanUnits + 1] = "nameplate" .. i
 end
 
 function Wow:ResolveIncoming(requestName)
     if not self:Readable(requestName) or type(requestName) ~= "string" then return nil end
     local found
-    for _, unit in ipairs(scanUnits()) do
+    for _, unit in ipairs(scanUnits) do
         local candidate = self:Identity(unit)
         if candidate and (requestName == candidate.fullName or requestName == candidate.name
             or requestName == candidate.requestName or requestName == candidate.requestFullName) then
@@ -316,9 +313,12 @@ function Wow:DeathRequest(name)
     end
 end
 
--- Native failures of the Duel request (the request is a spell cast). The
--- error names are confirmed as LE_GAME_ERR_* in the pinned UIErrorsFrame;
--- the SPELL_FAILED_* texts are compared only when the client defines them.
+-- Native failures of the Duel request (the request is a spell cast).
+-- ERR_OUT_OF_RANGE, ERR_SPELL_OUT_OF_RANGE and ERR_GENERIC_NO_VALID_TARGETS
+-- are LE_GAME_ERR_* names in the pinned UIErrorsFrame; ERR_GENERIC_NO_TARGET
+-- and the SPELL_FAILED_* texts (target busy/dueling) are NOT verified there.
+-- All are plain comparisons that only match when the client reports them;
+-- the real UI_ERROR_MESSAGE of a failed StartDuel needs a live check.
 local failureIds = { ERR_OUT_OF_RANGE = true, ERR_SPELL_OUT_OF_RANGE = true,
     ERR_GENERIC_NO_TARGET = true, ERR_GENERIC_NO_VALID_TARGETS = true }
 local failureTexts = { "ERR_OUT_OF_RANGE", "ERR_SPELL_OUT_OF_RANGE", "ERR_GENERIC_NO_TARGET",
@@ -364,7 +364,11 @@ function Wow:DuelNotice(message, source, errorType)
         self.outgoing, self.failedOutgoing = nil, nil
         if pending then
             self:OutgoingStatus(pending.opponent.fullName .. " | native acknowledgment via " .. source)
-            FD.duel:Begin("OUTGOING", self:Identity("player", true), pending.opponent, pending.at)
+            local begun, reason = FD.duel:Begin("OUTGOING", self:Identity("player", true), pending.opponent, pending.at)
+            if not begun then
+                self:Untracked(reason or "rated tracking could not start")
+                self:ReportUntracked()
+            end
         else
             self:ReportUntracked()
         end
@@ -419,8 +423,11 @@ function Wow:SystemMessage(message)
     end
 end
 
--- After the addon's own AcceptDuel the native popup's Decline would cancel
--- the countdown; hide it out of combat (StaticPopup_Hide never calls OnCancel).
+-- After the addon's own AcceptDuel the still-open native popup would cancel
+-- the duel: its Decline, and its own timeout (pinned StaticPopup.lua
+-- CancelAndHideDialog), call OnCancel = CancelDuel. Hide it out of combat;
+-- StaticPopup_Hide never calls OnCancel. pcall cannot tell whether the accept
+-- took effect, so Duel:AcceptTimeout releases the match if no countdown follows.
 function Wow:Accept()
     if type(AcceptDuel) ~= "function" then return false end
     local ok = pcall(AcceptDuel)

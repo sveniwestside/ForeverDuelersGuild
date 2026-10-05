@@ -50,16 +50,32 @@ return function(FD, equal)
         equal(protocol:Encode(message({ kind = "CANCEL", echo = "66ec1-2-1234", reason = value })), nil,
             "invalid reason code rejected: " .. value)
     end
-    for _, value in ipairs({ "six", "0.6", "0.6.0 beta", string.rep("1", 17) }) do
+    for _, value in ipairs({ "six", "", "0.6.0 beta", string.rep("1", 25) }) do
         equal(protocol:Encode(message({ version = value })), nil, "invalid version rejected: " .. value)
+    end
+    for _, value in ipairs({ "0.7", "1.0.0+build", "0.6.1-beta2" }) do
+        equal(protocol:Decode(protocol:Encode(message({ version = value }))).version, value, "wider version accepted: " .. value)
     end
     local tolerant = protocol:Decode(encoded .. "|v=0.7.2|zz=new_data|q9=1.5:x")
     equal(type(tolerant), "table", "unknown extension keys are ignored")
     equal(tolerant.version, "0.7.2", "known key still read beside unknown keys")
     equal(tolerant.zz, nil, "unknown keys never enter the message")
-    for _, payload in ipairs({ encoded .. "|v=0.6.0|v=0.6.1", encoded .. "|novalue", encoded .. "|=x",
-        encoded .. "|Key=x", encoded .. "|k=a=b", encoded .. "|k=", encoded .. "|", encoded .. "|v=bad" }) do
-        equal(protocol:Decode(payload), nil, "malformed extension rejected: " .. payload)
+    -- Trailing fields are informational: a field a later version formats
+    -- differently is skipped, never the whole packet.
+    local cancelPayload = protocol:Encode(message({ kind = "CANCEL", echo = "66ec1-2-1234" }))
+    for _, case in ipairs({
+        { "|v=0.6.0|v=0.6.1", "version", "0.6.0" }, { "|novalue" }, { "|=x" }, { "|Key=x" }, { "|z_z=1" },
+        { "|zz=a=b" }, { "|k=" }, { "|" }, { "|v=bad" }, { "|r=timeout2", "reason", "timeout2" },
+        { "|r=Bad|r=combat", "reason", "combat" }, { "|r=" .. string.rep("a", 17) }, { "|extra|v=0.7", "version", "0.7" },
+    }) do
+        local received = protocol:Decode(cancelPayload .. case[1])
+        equal(type(received), "table", "trailing field never drops the packet: " .. case[1])
+        equal(received.kind, "CANCEL", "fixed fields still decoded beside: " .. case[1])
+        if case[2] then
+            equal(received[case[2]], case[3], "valid known value still read: " .. case[1])
+        else
+            equal(received.version == nil and received.reason == nil, true, "malformed field ignored: " .. case[1])
+        end
     end
     local long = message({ nonce = string.rep("a", 48), echo = string.rep("f", 48), kind = "CANCEL",
         guid = "Player-" .. string.rep("1", 20) .. "-" .. string.rep("a", 20),
@@ -120,7 +136,7 @@ return function(FD, equal)
         "reject oversized otherwise-valid message")
 
     for _, payload in ipairs({
-        "", string.rep("a", 256), encoded .. "|extra", "|" .. encoded, encoded .. "|",
+        "", string.rep("a", 256), "|" .. encoded,
         encoded:sub(1, #encoded - 3), encoded:gsub("FD3", "FD1", 1), encoded:gsub("FD3", "FD4", 1),
         encoded .. "|v=0.6.0\n",
         encoded:gsub("HELLO", "UNKNOWN", 1), encoded:gsub("1500", "1e3", 1),
