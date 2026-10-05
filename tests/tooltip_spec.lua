@@ -7,7 +7,8 @@ return function(FD, equal)
         state.secret = setmetatable({}, { __tostring = function() error("secret formatted") end,
             __index = function() error("secret indexed") end })
         local active = { state = "IN_PROGRESS" }
-        local FD = { Rating = FD.Rating, Wow = {}, Protocol = {}, Presence = {}, Debug = {}, duel = { active = active } }
+        local FD = { Rating = FD.Rating, L = FD.L, Locale = FD.Locale, Wow = {}, Protocol = {}, Presence = {},
+            Debug = {}, duel = { active = active } }
         function FD.Wow:Readable(...)
             for i = 1, select("#", ...) do
                 if rawequal(select(i, ...), state.secret) then return false end
@@ -24,9 +25,11 @@ return function(FD, equal)
             if state.identity ~= nil then return state.identity end
             return unit == "player" and state.own or state.observed
         end
-        function FD.Presence:GetPlayer(guid)
+        -- Presence:Observe corroborates the claim with the visible unit (and
+        -- may ask the player on demand); it returns only corroborated entries.
+        function FD.Presence:Observe(unit)
             state.reads = state.reads + 1
-            state.lastGUID = guid
+            state.lastUnit = unit
             if state.failRead then error("cache failed") end
             return state.peer
         end
@@ -93,7 +96,7 @@ return function(FD, equal)
     equal(#c.tooltip.lines, 1, "known player receives one rating line")
     equal(c.tooltip.lines[1].left, "Duel Rating (Leveling, Lv 30)", "rating label includes mode and level")
     equal(c.tooltip.lines[1].right, "1625", "fresh cache rating displayed")
-    equal(c.lastGUID, "Player-1-ABCDE", "lookup uses observed GUID")
+    equal(c.lastUnit, "mouseover", "the shown unit is passed to Presence for corroboration")
     c:fire()
     equal(#c.tooltip.lines, 1, "duplicate callback does not append twice")
     equal(c.tooltip.hookCount, 1, "one cleared hook per tooltip")
@@ -110,7 +113,7 @@ return function(FD, equal)
     c.tooltip:ClearLines()
     c.peer = nil
     c:fire()
-    equal(#c.tooltip.lines, 0, "unknown or expired cache entry has no rating")
+    equal(#c.tooltip.lines, 0, "an uncorroborated, unknown or expired entry has no rating")
     c.peer = { guid = c.observed.guid, fullName = "Another Sender", rating = 1800, level = 30, maxLevel = 60, bracket = "LEVELING" }
     c:fire()
     equal(#c.tooltip.lines, 0, "reported GUID cannot impersonate another transport name")
@@ -127,8 +130,10 @@ return function(FD, equal)
     equal(#c.tooltip.lines, 0, "tooltip GUID must match resolved unit")
     c:fire({ type = 1, guid = c.observed.guid })
     equal(#c.tooltip.lines, 0, "nonunit tooltip ignored")
+    local reads = c.reads
     c:fire({ type = 2, guid = c.own.guid })
     equal(c.tooltip.lines[1].right, "1516", "own current rating displayed without peer record")
+    equal(c.reads, reads, "the own tooltip never asks Presence")
     equal(c.tooltip.lines[1].left, "Duel Rating (Max level, Lv 60)", "own tooltip identifies max-level pool")
     local other = c:newTooltip()
     c:fire(nil, other)
@@ -208,4 +213,38 @@ return function(FD, equal)
     logFailure.failRead = true
     logFailure.FD.Debug.Log = function() error("logging failed") end
     equal(pcall(function() logFailure:fire() end), true, "logger failure is isolated")
+
+    -- Integration with the real Presence: a player tooltip asks once (paced)
+    -- and shows a rating only after the claimed GUID is corroborated.
+    local Harness = assert(loadfile("tests/presence_harness.lua"))()
+    local h = Harness.client({ channel = false, tooltip = true })
+    h.env.Enum.TooltipDataType = { Unit = 2 }
+    local post
+    h.env.TooltipDataProcessor = { AddTooltipPostCall = function(_, callback) post = callback end }
+    h:start()
+    equal(h.FD.Tooltip:Initialize(), true, "the tooltip hook installs next to real discovery")
+    local BETA = { guid = "Player-1-0000BBBB", name = "Beta", surname = "Two", realm = "Forever",
+        classFile = "ROGUE", level = 30, faction = "Alliance" }
+    h:addUnit("mouseover", BETA)
+    local tip = { lines = {} }
+    function tip:HookScript(_, callback) self.cleared = callback end
+    function tip:IsForbidden() return false end
+    function tip:AddDoubleLine(left, right) self.lines[#self.lines + 1] = { left = left, right = right } end
+    function tip:ClearLines() self.lines = {}; if self.cleared then self.cleared(self) end end
+    local data = { type = 2, guid = BETA.guid }
+    post(tip, data)
+    equal(#tip.lines, 0, "an unknown player shows no rating")
+    h:advance(1)
+    equal(#h:whispers("FDQ2"), 1, "showing the tooltip asks the player once")
+    for _ = 1, 5 do tip:ClearLines(); post(tip, data) end
+    h:advance(5)
+    equal(#h:whispers("FDQ2"), 1, "tooltip refreshes do not ask again")
+    h:receive(h:profile({ guid = BETA.guid, rating = 2400, classFile = "ROGUE", level = 30 }), "Mallory Evil")
+    tip:ClearLines(); post(tip, data)
+    equal(#tip.lines, 0, "another sender's claim to this GUID is never shown")
+    h:receive(h:profile({ guid = BETA.guid, rating = 1642, classFile = "ROGUE", level = 30 }), "Beta Two")
+    tip:ClearLines(); post(tip, data)
+    equal(tip.lines[1].left, "Duel Rating (Leveling, Lv 30)", "a corroborated profile shows its mode and level")
+    equal(tip.lines[1].right, "1642", "the corroborated rating is shown")
+    equal(h.P:FindByName("Beta Two").verified, true, "showing the unit verifies the claim")
 end

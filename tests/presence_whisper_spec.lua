@@ -1,324 +1,367 @@
 return function(_, equal)
-    -- Real discovery and identity adapters, with two independent native clients.
-    local function client(options)
-        options = options or {}
-        local env = setmetatable({}, { __index = _G })
-        env._G = env
-        local state = { now = 100, mapID = 37, frames = {}, timers = {}, sent = {}, logs = {},
-            units = {}, plates = {}, prefixes = {}, joins = 0, sendResult = 0 }
-        state.identity = { guid = options.guid or "Player-1-AAAA", name = options.name or "Alpha",
-            surname = options.surname or "One", realm = "Forever", classFile = options.classFile or "MAGE",
-            level = 30, isPlayer = true }
-        state.units.player = state.identity
-        state.secret = setmetatable({}, { __tostring = function() error("secret formatted") end,
-            __index = function() error("secret indexed") end, __concat = function() error("secret joined") end })
-        local FD = { Debug = {}, Zone = {}, duel = { active = { state = "READY" } } }
-        function FD.Debug:Log(...) state.logs[#state.logs + 1] = { ... } end
-        function FD.Zone:RefreshIfShown() end
-        function FD:Safe() error("Advisory discovery must not enter rated recovery") end
-        env.GetTime = function() return state.now end
-        env.issecretvalue = function(value) return rawequal(value, state.secret) end
-        env.InCombatLockdown = function() return false end
-        env.C_Map = { GetBestMapForUnit = function() return state.mapID end }
-        env.UnitGUID = function(unit) local v = state.units[unit]; return v and v.guid end
-        env.UnitFullName = function(unit)
-            local v = state.units[unit]
-            if v then return v.name, v.realm end
-        end
-        env.UnitNameUnmodified = function(unit)
-            local v = state.units[unit]
-            if v then return v.name, v.surname end
-        end
-        env.NameUtil = { GetUnmodifiedUnitFullName = function(unit)
-            local v = state.units[unit]
-            return v and (v.name .. " " .. v.surname)
-        end }
-        env.UnitClass = function(unit)
-            local v = state.units[unit]
-            if v then return v.classFile, v.classFile end
-        end
-        env.UnitLevel = function(unit) local v = state.units[unit]; return v and v.level end
-        env.UnitIsPlayer = function(unit) local v = state.units[unit]; return v and v.isPlayer or false end
-        env.UnitExists = function(unit) return state.units[unit] ~= nil end
-        env.GetMaxPlayerLevel = function() return 60 end
-        env.GetNormalizedRealmName = function() return "Forever" end
-        env.RegionalUniqueNamesEnabled = function() return options.regionalNames ~= false end
-        env.C_NamePlate = { GetNamePlates = function() return state.plates end }
-        env.Enum = { RegisterAddonMessagePrefixResult = { Success = 0, DuplicatePrefix = 1 },
-            SendAddonMessageResult = { Success = 0, InvalidPrefix = 2, AddonMessageThrottle = 3 } }
-        env.C_ChatInfo = {
-            RegisterAddonMessagePrefix = function(prefix)
-                state.prefixes[#state.prefixes + 1] = prefix
-                return 0
-            end,
-            SendAddonMessage = function(prefix, payload, distribution, target)
-                state.sent[#state.sent + 1] = { prefix = prefix, payload = payload,
-                    distribution = distribution, target = target, at = state.now,
-                    accepted = not state.failSend and state.sendResult == 0 }
-                if state.failSend then error("native send unavailable") end
-                return state.sendResult
-            end,
-        }
-        -- No channel API is deliberately the default. The fallback must start.
-        if options.channel == "unusable" then
-            env.GetChannelName = function() return 0 end
-            env.JoinTemporaryChannel = function()
-                state.joins = state.joins + 1
-                if state.failJoin then error("channel join unavailable") end
-            end
-        end
-        env.C_Timer = { After = function(delay, callback)
-            state.timers[#state.timers + 1] = { at = state.now + delay, callback = callback }
-        end }
-        env.CreateFrame = function()
-            local frame = { events = {}, scripts = {} }
-            function frame:RegisterEvent(event) self.events[event] = true end
-            function frame:SetScript(event, callback) self.scripts[event] = callback end
-            state.frames[#state.frames + 1] = frame
-            return frame
-        end
-        for _, name in ipairs({ "Constants", "Protocol", "Rating", "Database", "Wow", "Presence" }) do
-            local chunk = assert(loadfile("ForeverDuel/" .. name .. ".lua"))
-            setfenv(chunk, env)
-            chunk("ForeverDuel", FD)
-        end
-        FD.Database:Initialize(nil, FD.Wow:Identity("player"))
-        state.FD, state.env, state.active = FD, env, FD.duel.active
-        function state:emit(event, ...)
-            for _, frame in ipairs(self.frames) do
-                if frame.events[event] and frame.scripts.OnEvent then frame.scripts.OnEvent(frame, event, ...) end
-            end
-        end
-        function state:advance(seconds)
-            local stop, steps = self.now + seconds, 0
-            while true do
-                local at, index
-                for i, timer in ipairs(self.timers) do
-                    if timer.at <= stop and (not at or timer.at < at) then at, index = timer.at, i end
-                end
-                if not index then break end
-                self.now = at
-                local timer = table.remove(self.timers, index)
-                timer.callback()
-                steps = steps + 1
-                assert(steps < 2000, "whisper timer advances time")
-            end
-            self.now = stop
-        end
-        function state:name()
-            return options.regionalNames == false and (self.identity.name .. "-Forever")
-                or (self.identity.name .. " " .. self.identity.surname)
-        end
-        function state:receive(payload, sender, distribution, prefix)
-            self:emit("CHAT_MSG_ADDON", prefix or "ForeverDuelZone2", payload,
-                distribution or "WHISPER", sender or "Beta Two", nil, 0, 0)
-        end
-        function state:preserved(label)
-            equal(self.FD.duel.active, self.active, label .. " preserves active duel")
-            equal(self.active.state, "READY", label .. " preserves consent")
-            equal(self.FD.Database.data.player.ratings.LEVELING.rating, 1500, label .. " preserves rating")
-            equal(#self.FD.Database.data.matches, 0, label .. " preserves match history")
-        end
-        return state
+    local Harness = assert(loadfile("tests/presence_harness.lua"))()
+    local BETA = { guid = "Player-1-0000BBBB", name = "Beta", surname = "Two", realm = "Forever",
+        classFile = "ROGUE", level = 30, faction = "Alliance" }
+    local function started(options)
+        local c = Harness.client(options)
+        equal(c:start(), true, "discovery initializes")
+        return c
     end
-    local function peer(index)
-        return { guid = string.format("Player-2-%X", index or 1), name = "Peer" .. (index or 1),
-            surname = "Nearby", realm = "Forever", classFile = "ROGUE", level = 30, isPlayer = true }
+    local function preserved(c, label)
+        equal(c.FD.Database.data.player.ratings.LEVELING.rating, 1500, label .. " preserves rating")
+        equal(#c.FD.Database.data.matches, 0, label .. " preserves match history")
     end
-    local function sent(c, tag)
+    local function to(c, name, tag)
         local result = {}
-        for _, packet in ipairs(c.sent) do
-            if packet.distribution == "WHISPER" and (not tag or packet.payload:sub(1, 4) == tag) then
-                result[#result + 1] = packet
-            end
-        end
+        for _, packet in ipairs(c:whispers(tag)) do if packet.target == name then result[#result + 1] = packet end end
         return result
     end
-    local REQUEST = "FDQ2|Player-1-BBBB|1642|37|ROGUE|30|60"
-    local PROFILE = "FDP2|Player-1-BBBB|1642|37|ROGUE|30|60"
-
-    -- One side observes a nearby target; a request carries the requester's
-    -- validated profile so discovery works in both directions in one exchange.
-    for _, channel in ipairs({ "absent", "unusable" }) do
-        local a = client({ channel = channel })
-        local b = client({ channel = channel, guid = "Player-1-BBBB", name = "Beta", surname = "Two", classFile = "ROGUE" })
-        a.units.target = b.identity
-        equal(a.FD.Presence:Initialize(), true, channel .. " channel supports nearby discovery")
-        equal(b.FD.Presence:Initialize(), true, channel .. " channel supports reciprocal discovery")
-        equal(#a.FD.Presence:GetPlayers(), 0, "native unit alone is not an addon player")
-        local cursorA, cursorB = 0, 0
-        local function exchange()
-            while cursorA < #a.sent do
-                cursorA = cursorA + 1
-                local packet = a.sent[cursorA]
-                if packet.accepted and packet.distribution == "WHISPER" and packet.target == b:name() then
-                    b:receive(packet.payload, a:name(), packet.distribution, packet.prefix)
-                end
-            end
-            while cursorB < #b.sent do
-                cursorB = cursorB + 1
-                local packet = b.sent[cursorB]
-                if packet.accepted and packet.distribution == "WHISPER" and packet.target == a:name() then
-                    a:receive(packet.payload, b:name(), packet.distribution, packet.prefix)
-                end
-            end
+    local function members(c, n, offset)
+        for i = 1, n do
+            local identity = Harness.identity((offset or 0) + i)
+            c.members[#c.members + 1] = { name = Harness.fullName(identity, true), guid = identity.guid }
         end
-        for _ = 1, 12 do a:advance(1); b:advance(1); exchange() end
-        equal(#sent(a, "FDQ2"), 1, "one nearby target sends one paced query")
-        equal(sent(a, "FDQ2")[1].target, "Beta Two", "query uses native surname recipient")
-        equal(sent(a, "FDQ2")[1].payload, "FDQ2|Player-1-AAAA|1500|37|MAGE|30|60", "query advertises public profile")
-        equal(sent(a, "FDQ2")[1].prefix, "ForeverDuelZone2", "query uses discovery prefix")
-        equal(#sent(b, "FDP2"), 1, "request produces one deferred profile reply")
-        equal(#a.FD.Presence:GetPlayers(), 1, "requester discovers responding addon")
-        equal(#b.FD.Presence:GetPlayers(), 1, "responder discovers requester without target")
-        equal(a.FD.Presence:GetPlayers()[1].fullName, "Beta Two", "response preserves canonical surname")
-        equal(b.FD.Presence:GetPlayers()[1].fullName, "Alpha One", "request preserves canonical surname")
-        equal(#sent(a, "FDP2"), 0, "reply never triggers another reply")
-        for _ = 1, 20 do a:advance(1); b:advance(1); exchange() end
-        equal(#sent(a), 1, "stable target does not flood queries")
-        equal(#sent(b), 1, "reply cannot cause ping pong")
-        for _ = 1, 75 do a:advance(1); b:advance(1); exchange() end
-        equal(#sent(a, "FDQ2") >= 2, true, "nearby peer is refreshed automatically")
-        local queries = sent(a, "FDQ2")
-        for i = 2, #queries do equal(queries[i].at - queries[i - 1].at >= 45, true, "per-peer queries wait 45 seconds") end
-        equal(#a.FD.Presence:GetPlayers(), 1, "repeated discovery preserves fresh peer")
-        a.units.target = nil
-        a:advance(125)
-        equal(a.FD.Presence:GetPlayer(b.identity.guid), nil, "silent peer expires after native unit disappears")
-        a:preserved("nearby discovery and expiry")
-        b:preserved("nearby reply")
     end
 
-    -- Every automatic source is independent of the custom channel; mouseover
-    -- remains passive, as inspecting a tooltip must not initiate discovery.
-    for _, unit in ipairs({ "target", "focus", "party1", "raid40", "nameplate1" }) do
-        local c = client()
-        c.FD.Presence:Initialize()
-        c:advance(6)
-        c.units[unit] = peer()
-        if unit == "target" then c:emit("PLAYER_TARGET_CHANGED") end
-        if unit == "nameplate1" then
-            c.plates = { { namePlateUnitToken = unit } }
-            c:emit("NAME_PLATE_UNIT_ADDED", unit)
-        end
-        equal(#sent(c), 0, unit .. " event queues rather than sending synchronously")
-        c:advance(12)
-        equal(#sent(c, "FDQ2"), 1, unit .. " discovers native nearby player")
-        equal(#c.FD.Presence:GetPlayers(), 0, unit .. " does not assume a nonresponding unit has addon")
+    -- (a) Target and mouseover are asked only while the zone window is open
+    -- or a tooltip shows them, and only same-faction readable players.
+    local c = started({ channel = false })
+    c:addUnit("target", BETA)
+    c:emit("PLAYER_TARGET_CHANGED")
+    c:advance(60)
+    equal(#c:whispers(), 0, "a target is not queried while the zone window is closed")
+    c.FD.Zone.shown = true
+    c:emit("PLAYER_TARGET_CHANGED")
+    equal(#c:whispers(), 0, "events only schedule; nothing is sent synchronously")
+    c:advance(3)
+    equal(#to(c, "Beta Two", "FDQ2"), 1, "the target is queried while the zone window is open")
+    equal(to(c, "Beta Two")[1].payload, "FDQ2|Player-1-0000AAAA|1500|37|MAGE|30|60", "query carries the own profile")
+    c:advance(300)
+    equal(#to(c, "Beta Two"), 1, "an unanswered player is not asked again for ten minutes")
+    c:advance(310)
+    equal(#to(c, "Beta Two"), 2, "an unanswered player may be asked again after ten minutes")
+    for _, case in ipairs({
+        { "hostile faction", function(t) t.units.target.faction = "Horde" end },
+        { "non-player", function(t) t.units.target.isPlayer = false end },
+        { "restricted GUID", function(t) t.units.target.guid = t.secret end },
+        { "restricted faction", function(t) t.units.target.faction = t.secret end },
+        { "missing faction API", function(t) t.env.UnitFactionGroup = nil end },
+    }) do
+        local t = started({ channel = false })
+        t:addUnit("target", BETA)
+        case[2](t)
+        t.FD.Zone.shown = true
+        t:advance(30)
+        equal(#t:whispers(), 0, case[1] .. " target is never queried")
     end
-    local c = client()
-    c.units.mouseover = peer()
-    c.FD.Presence:Initialize()
+    c = started({ channel = false })
+    c.FD.Zone.shown = true
+    for i = 1, 40 do c:addUnit("nameplate" .. i, Harness.identity(i)) end
+    for i = 1, 40 do c:addUnit("raid" .. i, Harness.identity(100 + i)) end
+    for i = 1, 4 do c:addUnit("party" .. i, Harness.identity(200 + i)) end
+    c:addUnit("focus", Harness.identity(300))
+    c:advance(120)
+    equal(#c:whispers(), 0, "nameplate, raid, party and focus units are never fanned out to")
+    c:addUnit("mouseover", Harness.identity(400))
     c:emit("UPDATE_MOUSEOVER_UNIT")
-    c:advance(55)
-    equal(#sent(c), 0, "mouseover and tooltip observation sends nothing")
-    c.units.target = peer()
-    c.units.target.isPlayer = false
-    c:advance(6)
-    equal(#sent(c), 0, "non-player target cannot be queried")
+    c:advance(3)
+    equal(#c:whispers("FDQ2"), 1, "the mouseover player is queried while the zone window is open")
 
-    c = client({ regionalNames = false })
-    c.units.target = peer()
-    c.FD.Presence:Initialize()
-    c:advance(6)
-    equal(sent(c, "FDQ2")[1].target, "Peer1-Forever", "ordinary realm clients use canonical realm name")
+    -- Tooltip-driven queries are paced and only corroborated entries show.
+    c = started({ channel = false })
+    c:addUnit("mouseover", BETA)
+    equal(c.P:Observe("mouseover"), nil, "an unknown player has no corroborated entry")
+    c:advance(1)
+    equal(#to(c, "Beta Two", "FDQ2"), 1, "showing a player tooltip asks that player once")
+    c:addUnit("mouseover", Harness.identity(1))
+    c.P:Observe("mouseover")
+    c:advance(1)
+    equal(#c:whispers("FDQ2"), 1, "tooltip queries are spaced globally")
+    c:advance(3)
+    c.P:Observe("mouseover")
+    c:advance(1)
+    equal(#c:whispers("FDQ2"), 2, "a later tooltip may ask the next player")
+    c:receive(c:profile({ guid = "Player-1-0000CCCC", classFile = "ROGUE", level = 30 }), "Beta Two")
+    c:addUnit("mouseover", BETA)
+    equal(c.P:Observe("mouseover"), nil, "a profile whose GUID the unit contradicts is not shown")
+    c:receive(c:profile(BETA), "Beta Two")
+    local shown = c.P:Observe("mouseover")
+    equal(shown.fullName, "Beta Two", "a corroborated profile is returned")
+    equal(shown.verified, true, "the visible unit marks the claim verified")
+    c.FD.duel.active = { state = "READY" }
+    c:addUnit("mouseover", Harness.identity(2))
+    c:advance(5)
+    c.P:Observe("mouseover")
+    c:advance(2)
+    equal(#c:whispers("FDQ2"), 2, "tooltips send nothing while a duel is active")
+    c.FD.duel.active = nil
 
-    -- Validate the complete profile before accepting a request or replying.
-    c = client()
-    c.FD.Presence:Initialize()
-    local invalid = { "", "FDQ2", REQUEST .. "|extra", "FDQ2|bad-guid|1642|37|ROGUE|30|60",
-        "FDQ2|Player-1-BBBB|nan|37|ROGUE|30|60", "FDQ2|Player-1-BBBB|1642|0|ROGUE|30|60",
-        "FDQ2|Player-1-BBBB|1642|37|ROGUE|61|60", "FDQ2|Player-1-BBBB|1642|37|ROGUE|030|60",
-        "FDQ2|Player-1-BBBB|1642|37|DEATHKNIGHT|30|60", "FDQ2|Player-1-BBBB|1642|37|MONK|30|60",
-        "FDQ2|Player-1-BBBB|1642|37|DEMONHUNTER|30|60", "FDQ2|Player-1-BBBB|1642|37|EVOKER|30|60",
-        string.rep("x", 256), c.secret }
-    for _, payload in ipairs(invalid) do c:receive(payload) end
-    for _, sender in ipairs({ "", "Bad|Name", "Bad\nName", c.secret }) do c:receive(REQUEST, sender) end
-    c:receive(REQUEST, nil, "CHANNEL")
-    c:receive(REQUEST, nil, "PARTY")
-    c:receive(REQUEST, nil, "RAID")
-    c:receive(REQUEST, nil, "WHISPER", "ForeverDuel1")
-    c:advance(12)
-    equal(#c.FD.Presence:GetPlayers(), 0, "invalid or misrouted requests never populate cache")
-    equal(#sent(c), 0, "invalid or misrouted requests never get replies")
-    c:receive(PROFILE)
-    equal(c.FD.Presence:GetPlayer("Player-1-BBBB").rating, 1642, "valid whispered profile is advisory evidence")
-    c:advance(12)
-    equal(#sent(c), 0, "profile-only whisper does not elicit a reply")
-    c:receive(REQUEST)
-    equal(#sent(c), 0, "valid request queues reply outside receive callback")
-    c:advance(6)
-    equal(#sent(c, "FDP2"), 1, "validated request is answered")
-    local firstReply = sent(c, "FDP2")[1].at
-    for _ = 1, 20 do c:receive(REQUEST) end
-    c:advance(12)
-    local replies = sent(c, "FDP2")
-    for i = 2, #replies do equal(replies[i].at - replies[i - 1].at >= 5, true, "same-peer replies are paced") end
-    equal(#replies <= 3, true, "duplicate requests cannot grow unbounded reply work")
-    equal(firstReply <= c.now, true, "reply uses native timer clock")
-    c:preserved("malformed and repeated requests")
-
-    -- Global whisper pacing applies across different observed units.
-    c = client()
-    c.units.target, c.units.focus, c.units.party1 = peer(1), peer(2), peer(3)
-    c.FD.Presence:Initialize()
-    c:advance(20)
-    equal(#sent(c, "FDQ2"), 3, "three visible peers are all queried")
-    local packets = sent(c)
-    for i = 2, #packets do equal(packets[i].at - packets[i - 1].at >= 1, true, "global whisper attempts are paced") end
-    c:preserved("multi-peer queue")
-
-    c = client()
-    c.FD.Presence:Initialize()
-    for index = 1, 350 do
-        c:receive(string.format("FDQ2|Player-2-%X|1500|37|ROGUE|30|60", index), "Peer" .. index .. " Nearby")
+    -- (b) Channel members are queried only while the zone window is open or
+    -- the queue is searching, never while a duel or a ticket is active.
+    local function roster(options)
+        local t = started({ joined = true, queue = options and options.queue })
+        members(t, 5)
+        t.sendResult = function(packet) return packet.channel == "CHANNEL" and 7 or 0 end
+        return t
     end
-    equal(#c.FD.Presence.whispers, 300, "request flood cannot exceed bounded reply queue")
-    equal(#sent(c), 0, "request flood does not send synchronously")
-    equal(#c.FD.Presence:GetPlayers(), 300, "request flood keeps profile cache bounded")
+    c = roster()
+    c:advance(300)
+    equal(#c:whispers(), 0, "members are not queried while nothing needs them")
+    equal(#c.selections, 0, "no roster request without a reason")
+    for _, state in ipairs({ "SEARCHING", "PAUSED" }) do
+        c = roster({ queue = { state = state, peers = {} } })
+        c:advance(20)
+        equal(#c:whispers("FDQ2"), 5, state .. " queue state asks every member")
+    end
+    c = roster({ queue = { state = "SEARCHING", peers = {}, ticket = { id = "t" } } })
+    c:advance(30)
+    equal(#c:whispers(), 0, "a queue ticket stops discovery queries")
+    c = roster()
+    c.FD.duel.active = { state = "READY" }
+    c.FD.Zone.shown = true
+    c:advance(30)
+    equal(#c:whispers(), 0, "an active duel stops discovery queries")
+    c.FD.duel.active = nil
+    c:advance(20)
+    equal(#c:whispers("FDQ2"), 5, "queries resume after the duel")
+    local first = {}
+    for _, packet in ipairs(c:whispers("FDQ2")) do first[packet.target] = packet.at end
+    c:advance(30)
+    equal(#c:whispers("FDQ2"), 5, "members are not asked again within 45 seconds")
+    c:advance(60)
+    for _, packet in ipairs(c:whispers("FDQ2")) do
+        if packet.at > first[packet.target] then
+            equal(packet.at - first[packet.target] >= 45, true, "per-member query interval is 45 seconds")
+        end
+    end
+    -- A query that started while idle is dropped, not sent, when a duel begins.
+    c = roster({ queue = { state = "SEARCHING", peers = {} } })
+    members(c, 30, 10)
+    c:advance(1.5)
+    local before = #c:whispers()
+    c.FD.duel.active = { state = "READY" }
+    c:advance(30)
+    equal(#c:whispers(), before, "queued queries are dropped once a duel starts")
+    equal(c.P.workCount <= 30, true, "pending work stays bounded")
+    preserved(c, "duel pause")
+
+    -- Whisper queue: a short member-query backlog, at most 30 recipients in
+    -- all, replies before queries, hash dedupe.
+    c = roster({ queue = { state = "SEARCHING", peers = {} } })
+    for i = 1, 200 do
+        local identity = Harness.identity(10 + i)
+        c.R:AddMember(Harness.fullName(identity, true), identity.guid)
+    end
+    c.sendResult = function(packet) return packet.channel == "CHANNEL" and 7 or 3 end
+    c:advance(1)
+    equal(c.P.workCount, 6, "member queries keep a short backlog instead of flooding the queue")
+    c.P:Enqueue("Peer11 Crowd", false)
+    c.P:Enqueue("Peer11 Crowd", false)
+    equal(c.P.workCount <= 7, true, "duplicate recipients are deduplicated")
+    for i = 1, 40 do
+        local name, guid = "Asker" .. i .. " One", string.format("Player-1-0000%04X", 0xC000 + i)
+        c.R:AddMember(name, guid)
+        c:receive(string.format("FDQ2|%s|1500|37|MAGE|30|60", guid), name)
+    end
+    equal(c.P.workCount, 30, "discovery work is capped at 30 recipients")
+    local replies, queries = 0, 0
+    for _, entry in pairs(c.P.work) do if entry.reply then replies = replies + 1 else queries = queries + 1 end end
+    equal(queries, 1, "replies displaced every waiting query except the one already handed to Outbound")
+    equal(replies, 29, "the remaining capacity holds replies")
+    c.sendResult = function(packet) return packet.channel == "CHANNEL" and 7 or 0 end
+    c:advance(12)
+    local order = {}
+    for _, packet in ipairs(c.sent) do
+        if packet.result == 0 and packet.channel == "WHISPER" then order[#order + 1] = packet.payload:sub(1, 4) end
+    end
+    equal(order[1], "FDQ2", "the in-flight query goes first")
+    for index = 2, math.min(#order, 8) do equal(order[index], "FDP2", "replies are sent before further queries") end
+    -- A reply to a recipient whose query is queued coalesces into one whisper.
+    c = started({ joined = true, queue = { state = "SEARCHING", peers = {} } })
+    c.sendResult = function(packet) return packet.channel == "CHANNEL" and 7 or 3 end
+    c.members = { { name = "Beta Two", guid = BETA.guid } }
+    c:advance(4)
+    equal(#to(c, "Beta Two", "FDQ2") >= 1, true, "the query was attempted and throttled")
+    c:receive(c:profile(BETA, 37, "FDQ2"), "Beta Two")
+    c.sendResult = function(packet) return packet.channel == "CHANNEL" and 7 or 0 end
     c:advance(10)
-    equal(#sent(c) <= 10, true, "request flood respects global send pacing")
-    c:advance(420)
-    equal(#c.FD.Presence.whispers, 0, "old queued replies eventually expire")
-    equal(#sent(c) < 300, true, "expired queued replies are discarded without sending")
-    equal(#c.FD.Presence:GetPlayers(), 0, "request flood profiles expire normally")
-    c:preserved("request flood")
+    local accepted = 0
+    for _, packet in ipairs(to(c, "Beta Two")) do if packet.result == 0 then accepted = accepted + 1 end end
+    equal(accepted, 1, "a queued query and a reply to the same player coalesce")
+    equal(to(c, "Beta Two")[#to(c, "Beta Two")].payload:sub(1, 4), "FDP2", "the coalesced whisper is the reply")
+    -- An expired query is marked as asked, so it is not re-added at once.
+    c = started({ joined = true, queue = { state = "SEARCHING", peers = {} } })
+    c.R:AddMember("Beta Two", BETA.guid)
+    c.sendResult = function(packet) return packet.channel == "CHANNEL" and 7 or 3 end
+    c:advance(2)
+    equal(c.P.work["Beta Two"] ~= nil, true, "the query is pending while throttled")
+    c:advance(35)
+    equal(c.P.work["Beta Two"], nil, "the throttled query expired")
+    local expiredAt = c.P.queries["Beta Two"]
+    equal(expiredAt ~= nil and c.now - expiredAt < 8, true, "expiry records the attempt time")
+    local attempts = #to(c, "Beta Two")
+    c:advance(30)
+    equal(#to(c, "Beta Two"), attempts, "an expired query is not re-queued immediately")
+    c:advance(25)
+    equal(#to(c, "Beta Two") > attempts, true, "it is asked again after the normal interval")
+    equal(c.P.workCount <= 1, true, "expired queries leave the queue")
 
-    for _, failure in ipairs({ "throttled", "exception", "join exception" }) do
-        c = client({ channel = "unusable" })
-        c.units.target = peer()
-        c.sendResult = failure == "throttled" and 3 or 0
-        c.failSend, c.failJoin = failure == "exception", failure == "join exception"
-        equal(c.FD.Presence:Initialize(), true, failure .. " keeps fallback initialized")
-        c:advance(6)
-        c.sendResult, c.failSend, c.failJoin = 0, false, false
-        c:advance(50)
-        local accepted = false
-        for _, packet in ipairs(sent(c, "FDQ2")) do if packet.accepted then accepted = true end end
-        equal(accepted, true, failure .. " recovers automatically")
-        c:preserved(failure .. " recovery")
+    -- TargetOffline removes the name and is never retried.
+    c = started({ joined = true, queue = { state = "SEARCHING", peers = {} } })
+    c.members = { { name = "Beta Two", guid = BETA.guid } }
+    c:receive(c:profile(BETA), "Beta Two")
+    c.P.players["Beta Two"].lastSeen = c.now - 50
+    c.sendResult = function(packet)
+        if packet.channel == "CHANNEL" then return 7 end
+        return packet.target == "Beta Two" and 12 or 0
     end
+    c:advance(5)
+    equal(#to(c, "Beta Two"), 1, "the offline recipient was attempted once")
+    equal(c.P.players["Beta Two"], nil, "TargetOffline removes the cached profile")
+    equal(c.R:IsMember("Beta Two"), false, "TargetOffline removes the channel member")
+    c.members = {} -- The server roster no longer lists the offline player.
+    c:advance(120)
+    equal(#to(c, "Beta Two"), 1, "TargetOffline is not retried")
 
-    -- A world transition must discard queued recipients and ignore packets.
-    c = client()
-    c.FD.Presence:Initialize()
-    c:receive(REQUEST)
-    c:emit("PLAYER_LEAVING_WORLD")
-    c:receive(REQUEST)
+    -- "No player named ..." is hidden only for names discovery whispered
+    -- within the last five seconds.
+    local net = Harness.network({ latency = 0.3 })
+    c = net:add(started({ channel = false }))
+    net.offline = { ["Beta Two"] = true }
+    c.FD.Zone.shown = true
+    c:addUnit("target", BETA)
+    c:receive(c:profile(BETA), "Beta Two")
+    c.P.players["Beta Two"].lastSeen = c.now - 50
+    local hidden
+    local filter = c.filters[1].callback
+    c.filters[1].callback = function(...)
+        local result = filter(...)
+        hidden = result
+        return result
+    end
+    net:advance(3)
+    equal(#to(c, "Beta Two", "FDQ2"), 1, "the target was queried")
+    equal(hidden, true, "the addon-caused not-found message is hidden")
+    equal(c.P.players["Beta Two"], nil, "the unknown name is forgotten")
+    equal(c:systemMessage("No player named 'Gamma Three' is currently playing."), false, "other not-found messages stay visible")
+    c.P.whispered["Delta Four"] = c.now - 6
+    equal(c:systemMessage("No player named 'Delta Four' is currently playing."), false, "only whispers of the last five seconds are hidden")
+    equal(c:systemMessage("Something else entirely."), false, "unrelated system messages pass")
+
+    -- Privacy: replies go only to trusted senders; the map only to those who
+    -- are visible, queue partners or channel members on the same map.
+    local function reply(c2, name)
+        local list = to(c2, name, "FDP2")
+        return list[#list]
+    end
+    c = started({ joined = true })
+    c.sendResult = function(packet) return packet.channel == "CHANNEL" and 7 or 0 end
+    c:advance(5)
+    c:receive("FDQ2|Player-1-0000EEEE|1500|37|MAGE|30|60", "Stranger Five")
+    c:advance(10)
+    equal(reply(c, "Stranger Five"), nil, "an unverified stranger gets no reply")
+    equal(c.selections[1].index, 9, "an unverified query requests one roster refresh")
+    equal(c.selections[2].index, 1, "and the previous channel selection is restored")
+    equal(#c.selections, 2, "exactly one selection round trip")
+    c:emit("CHAT_MSG_CHANNEL_JOIN", "", "Stranger Five", "", "", "", "", 0, 6, "ForeverDuel", 0, 0, "Player-1-0000EEEE")
+    c:receive("FDQ2|Player-1-0000EEEE|1500|37|MAGE|30|60", "Stranger Five")
+    c:advance(4)
+    equal(reply(c, "Stranger Five").payload, "FDP2|Player-1-0000AAAA|1500|37|MAGE|30|60",
+        "a sender who joined the channel is answered, with the map they share")
+    local held = started({ joined = true })
+    held.sendResult = function(packet) return packet.channel == "CHANNEL" and 7 or 0 end
+    held.members = { { name = "Late Seven", guid = "Player-1-0000EFEF" } }
+    held:advance(5)
+    held:receive("FDQ2|Player-1-0000EFEF|1500|37|MAGE|30|60", "Late Seven")
+    equal(#to(held, "Late Seven"), 0, "an unverified query waits for the roster")
+    held:advance(6)
+    equal(#to(held, "Late Seven", "FDP2"), 1, "the held query is answered once the roster lists the sender")
+    equal(held.selected, 1, "the native selection is restored after the roster read")
+    c.R:AddMember("Member Six", "Player-1-0000FFFF")
+    c:receive("FDQ2|Player-1-0000FFFF|1500|99|MAGE|30|60", "Member Six")
+    c:advance(4)
+    equal(reply(c, "Member Six").payload, "FDP2|Player-1-0000AAAA|1500|0|MAGE|30|60",
+        "a member on another map gets map 0")
+    c:receive("FDQ2|Player-1-0000FFFF|1500|99|MAGE|30|60", "Member Six")
+    c:advance(2)
+    equal(#to(c, "Member Six", "FDP2"), 1, "replies to one sender are rate limited")
+    c:addUnit("target", { guid = "Player-1-0000ABAB", name = "Near", surname = "By", realm = "Forever",
+        classFile = "MAGE", level = 30, faction = "Alliance" })
+    c:receive("FDQ2|Player-1-0000ABAB|1500|99|MAGE|30|60", "Near By")
+    c:advance(4)
+    equal(reply(c, "Near By").payload:find("|37|", 1, true) ~= nil, true, "a visible native unit gets the real map")
+    c.FD.queue = { state = "SEARCHING", peers = { ["Player-1-0000ACAC"] = { fullName = "Queue Peer" } } }
+    c:receive("FDQ2|Player-1-0000ACAC|1500|99|MAGE|30|60", "Queue Peer")
+    c:advance(4)
+    equal(reply(c, "Queue Peer").payload:find("|37|", 1, true) ~= nil, true, "a queue peer gets the real map")
+    c.FD.queue = { state = "TRAVEL", peers = {}, ticket = { peer = { fullName = "Ticket Mate" } } }
+    c:receive("FDQ2|Player-1-0000ADAD|1500|99|MAGE|30|60", "Ticket Mate")
+    c:advance(4)
+    equal(reply(c, "Ticket Mate") ~= nil, true, "the ticket partner is answered while a ticket is active")
+    c:receive("FDQ2|Player-1-0000AEAE|1500|37|MAGE|30|60", "Other Eight")
+    c:advance(25)
+    equal(reply(c, "Other Eight"), nil, "replies never go to unverified senders, even during a ticket")
+    preserved(c, "privacy rules")
+
+    -- Freshness: a zone change pushes the new profile to trusted cached
+    -- peers (rate limited) and lets them be asked again.
+    c = started({ joined = true })
+    c.sendResult = function(packet) return packet.channel == "CHANNEL" and 7 or 0 end
+    for i = 1, 3 do
+        local identity = Harness.identity(i)
+        c.R:AddMember(Harness.fullName(identity, true), identity.guid)
+        c:receive(c:profile(identity), Harness.fullName(identity, true))
+    end
+    c:receive(c:profile({ guid = "Player-1-0000E0E0", classFile = "MAGE", level = 30 }), "Unknown Nine")
+    c:advance(40)
+    local pushes = #c:whispers("FDP2")
+    c.mapID = 38
+    c:emit("ZONE_CHANGED_NEW_AREA")
+    c:advance(8)
+    equal(#c:whispers("FDP2") - pushes, 3, "the new profile goes to every trusted cached peer once")
+    equal(#to(c, "Unknown Nine", "FDP2"), 0, "untrusted cached senders get no push")
+    c.mapID = 39
+    c:emit("ZONE_CHANGED_NEW_AREA")
+    c:advance(8)
+    equal(#c:whispers("FDP2") - pushes, 3, "pushes are rate limited to one per 30 seconds")
+    c:advance(30)
+    equal(#c:whispers("FDP2") - pushes, 6, "the latest map is pushed after the rate limit")
+
+    -- CPU: events only schedule; one Tick at most every two seconds; one
+    -- own-profile computation per Tick; no periodic roster polling.
+    c = started({ joined = true })
+    members(c, 300)
+    c.FD.Zone.shown = true
+    local ticks, owns = 0, 0
+    local tick, getOwn = c.P.Tick, c.P.GetOwnPlayer
+    c.P.Tick = function(self) ticks = ticks + 1; return tick(self) end
+    c.P.GetOwnPlayer = function(self) owns = owns + 1; return getOwn(self) end
     c:advance(20)
-    equal(#sent(c), 0, "world transition suppresses pending replies")
-    equal(#c.FD.Presence:GetPlayers(), 0, "world transition clears advisory cache")
-    c:emit("PLAYER_ENTERING_WORLD")
-    c:advance(12)
-    equal(#sent(c), 0, "old queued reply is not resurrected after world transition")
-    c:receive(REQUEST)
-    c:advance(6)
-    equal(#sent(c, "FDP2"), 1, "new request works after world transition")
-    c:emit("PLAYER_LOGOUT")
-    local count = #sent(c)
-    c:receive(REQUEST)
-    c:advance(55)
-    equal(#sent(c), count, "logout suppresses discovery messages")
-    equal(#c.timers, 0, "logout eventually retires all timers")
-    c:preserved("world transition")
+    ticks, owns = 0, 0
+    for _ = 1, 200 do
+        c:emit("PLAYER_TARGET_CHANGED")
+        c:emit("CHANNEL_COUNT_UPDATE", 3, 20)
+        c:emit("UPDATE_MOUSEOVER_UNIT")
+    end
+    c:advance(1)
+    equal(ticks <= 1, true, "a burst of 600 events runs at most one Tick")
+    c:advance(9)
+    equal(ticks <= 5, true, "Ticks are at least two seconds apart")
+    equal(owns <= ticks + 10, true, "the own profile is computed once per Tick plus once per sent whisper")
+    equal(c.FD.eventHandlers.NAME_PLATE_UNIT_ADDED, nil, "nameplate events are not handled at all")
+    c = started({ joined = true })
+    members(c, 50)
+    c:advance(600)
+    equal(#c.reads, 0, "an idle client never polls the channel roster")
+    equal(#c.selections, 0, "an idle client never changes the channel selection")
+    c.loaded = true
+    c:emit("CHANNEL_COUNT_UPDATE", 9, 50)
+    c:advance(3)
+    equal(#c.reads > 0, true, "a count update for our channel reads the roster")
+    equal(#c.selections, 0, "reading an available roster needs no selection change")
+    equal(c.R:IsMember("Peer1 Crowd"), true, "members are learned from the read")
+    local reads = #c.reads
+    c:emit("CHANNEL_COUNT_UPDATE", 3, 20)
+    c:advance(3)
+    equal(#c.reads, reads, "another channel's count update is ignored")
 end
