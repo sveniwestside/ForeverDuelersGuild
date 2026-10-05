@@ -6,7 +6,66 @@ Only **0.4.5** has been published on CurseForge (the public Beta). Every other v
 
 ## [0.6.0] - unreleased
 
-- Work in progress: review-driven rework (details added when complete).
+_Review-driven rework. Simulated in the test suites; the live two-client run ([MANUAL_TESTING.md](MANUAL_TESTING.md)) is still outstanding._
+
+### Breaking
+
+- Rated duels use **protocol 3**. A 0.6 client cannot rate duels against 0.5.x or the published 0.4.5. It recognizes such an opponent, says so in chat and keeps the duel ordinary, so both players must update.
+- The queue uses **queue protocol 2** and does not see 0.5.x queue players.
+- 0.6 adds new addon files: restart the game completely after updating. Saved ratings and history load unchanged.
+
+### Rated duels
+
+- No separate negotiation timer: both players can use the whole native request window (50 s) to choose Rated.
+- Once both players have chosen Rated, the receiver's addon accepts the duel itself. The challenger needs no further confirmation round trip before the countdown.
+- Discovery messages back off (0, 1, 3, 7, 15, 31 s) and acknowledgments are rate-limited. A rated choice is re-sent until the duel starts. START and RESULT are repeated, and a client that has already finished answers late results.
+- A new challenge made while the previous duel's result is still being exchanged waits for that result, so it uses the updated rating.
+- Challenging the same player again replaces the pending request, and an out-of-range failure allows an immediate retry. A Hardcore duel to the death is never rated. One chat line explains when rated tracking could not attach to a challenge.
+- Both players are told why a duel is unrated, including the reason from the opponent's side.
+
+### Duel popup
+
+- Blizzard's duel popup is never hidden or replaced before the addon accepts. The addon panel appears only after the opponent's addon has answered: below the popup for the receiver, and as a separate window for the challenger. It shows how many seconds the request has left.
+- Blizzard's **Accept** starts an unrated duel. **Decline** or Esc on the popup refuses the request. Closing the addon panel keeps the duel unrated.
+- The rated button is disabled in combat and enabled again afterwards.
+- At the countdown the chat says `RATED duel vs <name> (win +x / loss -y)` or `This duel is UNRATED: <reason>`.
+
+### Queue
+
+- Invite-first pairing: the player with the lower character GUID sends the group invitation at once, and Blizzard's invitation is the pairing step. Optional auto-accept for the matched opponent (`/duelrating queue autoaccept on`). Declined, busy and expired invitations are recognized.
+- Matches use only tested places that both players have. The meeting place is confirmed, or rejected and re-planned. Travel status is exchanged every 3 s over the group, both clients become ready together, and only the inviter requests the duel.
+- Every cancellation names its reason, also when it came from the opponent's client. Technical problems requeue you with your waiting time kept. A decision pauses only that pairing for 2 minutes. A missed arrival is judged from your own position.
+- Leaving the queue, logging out or reloading tells the opponent at once. A **Leave group** button handles a leftover queue group.
+- A shared tested place counts as saved on both clients only after the partner's client confirms it. Duplicate records of one spot are merged.
+
+### Discovery
+
+- Discovery runs on demand. Your target and mouseover are asked while the zone window is open or their tooltip shows. Channel members are asked while the zone window is open, the queue is searching, or after **Refresh**. There is no nameplate or raid scanning, and no asking during a duel request or a queue match. Replies go only to channel members, visible players and queue partners, and strangers do not learn your map.
+- Once per session one profile is posted to the `ForeverDuel` channel to test whether channel messages work. If they do, periodic posts replace per-member whispers. The YELL/SAY beacon and the logged-message route of 0.5.6 are gone.
+- The channel is joined after the default chat channels. A password, a ban or a manual leave is detected and shown. Profiles stay valid for 3 minutes, and the browser marks older entries as "last seen".
+- New `/duelrating quiet` stops all discovery traffic. New `/duelrating ping` measures the round trip of an addon message over WHISPER, and over PARTY in a two-player group.
+- All addon messages now go through one paced sender with priorities and a shared whisper budget, so discovery can never delay duel or queue messages.
+
+### Diagnostics
+
+- New `/duelrating errors` shows saved Lua errors with their stack. The chat mentions the first new error once.
+- `/duelrating diagnose lifecycle` and `diagnose transport` show separate saved logs, so message traffic can no longer push out duel evidence. Status and diagnose show traffic counters per addon prefix and route.
+- `/duelrating status` shows the installed build, the discovery round trip and the opponent's addon version.
+
+### Saved data
+
+- History stays loadable when rating constants change: each record stores the rules it was calculated with, and loading checks the rating ledger instead of recomputing old matches.
+- Saved data of an earlier character with the same name (for example after a Hardcore death) is archived instead of blocking the addon. The overview shows a notice.
+- New `/duelrating repair` starts fresh when saved data cannot be read, and keeps the old data under `quarantine`. Reset keeps archives, quarantine and settings.
+
+### Language
+
+- All user-facing text is translatable. German clients get German texts, and anything untranslated falls back to English.
+
+### Development
+
+- Tests run on every push. CurseForge uploads need an approval in the release workflow, and the release script refuses to upload from uncommitted changes.
+- `tools/install-addon.ps1` installs a committed build for testers, writes the commit into the installed TOC, backs up the previous copy and verifies the files.
 
 ## [0.5.7] - 2026-10-05
 
