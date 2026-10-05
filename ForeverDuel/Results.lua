@@ -7,8 +7,19 @@ local function literal(character)
     return (character:gsub("([%^%$%(%)%%%.%[%]%*%+%-%?])", "%%%1"))
 end
 
+-- Some locales use inline grammar codes (|1..;..; and similar). Whether the
+-- system message carries them raw or resolved is unverified, so parsing is
+-- unchanged; debug chat names such a format once to make a failure visible.
+local reported = {}
+local function reportGrammar(format)
+    if reported[format] or not format:find("|", 1, true) then return end
+    reported[format] = true
+    if FD.Debug and FD.Debug.Log then pcall(FD.Debug.Log, FD.Debug, "duel format contains grammar codes", format) end
+end
+
 local function compile(format, conversion, count)
     if type(format) ~= "string" or #format == 0 or #format > 1024 then return nil end
+    reportGrammar(format)
     local pattern, order, seen = { "^" }, {}, {}
     local index, sequential, mode = 1, 0, nil
     while index <= #format do

@@ -15,20 +15,89 @@ return function(FD, equal)
     local encoded = protocol:Encode(base)
     equal(type(encoded), "string", "HELLO encoded")
     equal(#encoded <= 255, true, "wire limit")
+    equal(encoded:sub(1, 4), "FD3|", "protocol 3 wire tag")
     local _, separatorCount = encoded:gsub("|", "")
-    equal(separatorCount, 14, "exactly fifteen fields")
+    equal(separatorCount, 14, "exactly fifteen fixed fields without extensions")
     local decoded = protocol:Decode(encoded)
     for key, value in pairs(base) do equal(decoded[key], value, "round trip " .. key) end
-    equal(decoded.protocolVersion, 2, "decoded protocol version")
+    equal(decoded.protocolVersion, 3, "decoded protocol version")
     equal(protocol:Encode(decoded), encoded, "canonical re-encoding")
 
-    for _, kind in ipairs({ "HELLO_ACK", "ACCEPT", "COMMIT", "CONFIRM", "START_OK", "START", "RESULT", "CANCEL" }) do
+    for _, kind in ipairs({ "HELLO_ACK", "ACCEPT", "START", "RESULT", "CANCEL" }) do
         local value = message({ kind = kind, echo = "66ec1-2-1234", verdict = kind == "RESULT" and base.peerGUID or "-" })
         local payload = protocol:Encode(value)
         equal(type(payload), "string", kind .. " encoded")
         local received = protocol:Decode(payload)
         equal(received.kind, kind, kind .. " decoded")
         equal(received.verdict, value.verdict, kind .. " verdict")
+    end
+    local accept = protocol:Encode(message({ kind = "ACCEPT", echo = "66ec1-2-1234" }))
+    for _, removed in ipairs({ "COMMIT", "CONFIRM", "START_OK" }) do
+        equal(protocol:Encode(message({ kind = removed, echo = "66ec1-2-1234" })), nil, removed .. " no longer exists")
+        equal(protocol:Decode((accept:gsub("|ACCEPT|", "|" .. removed .. "|", 1))), nil, removed .. " is rejected on the wire")
+    end
+
+    -- Extension point: optional key=value fields after the fixed fields.
+    local hello = protocol:Encode(message({ version = "0.6.0" }))
+    equal(hello:sub(-8), "|v=0.6.0", "version travels as a trailing extension")
+    equal(protocol:Decode(hello).version, "0.6.0", "known version extension decoded")
+    local cancel = protocol:Encode(message({ kind = "CANCEL", echo = "66ec1-2-1234", reason = "combat" }))
+    equal(cancel:sub(-9), "|r=combat", "reason code travels as a trailing extension")
+    equal(protocol:Decode(cancel).reason, "combat", "CANCEL reason code decoded")
+    equal(protocol:Encode(message({ reason = "combat" })), nil, "reason code belongs to CANCEL only")
+    equal(protocol:Decode(encoded .. "|r=combat").reason, nil, "reason outside CANCEL is ignored")
+    for _, value in ipairs({ "Combat", "co-mbat", "", string.rep("a", 17), "1abc" }) do
+        equal(protocol:Encode(message({ kind = "CANCEL", echo = "66ec1-2-1234", reason = value })), nil,
+            "invalid reason code rejected: " .. value)
+    end
+    for _, value in ipairs({ "six", "", "0.6.0 beta", string.rep("1", 25) }) do
+        equal(protocol:Encode(message({ version = value })), nil, "invalid version rejected: " .. value)
+    end
+    for _, value in ipairs({ "0.7", "1.0.0+build", "0.6.1-beta2" }) do
+        equal(protocol:Decode(protocol:Encode(message({ version = value }))).version, value, "wider version accepted: " .. value)
+    end
+    local tolerant = protocol:Decode(encoded .. "|v=0.7.2|zz=new_data|q9=1.5:x")
+    equal(type(tolerant), "table", "unknown extension keys are ignored")
+    equal(tolerant.version, "0.7.2", "known key still read beside unknown keys")
+    equal(tolerant.zz, nil, "unknown keys never enter the message")
+    -- Trailing fields are informational: a field a later version formats
+    -- differently is skipped, never the whole packet.
+    local cancelPayload = protocol:Encode(message({ kind = "CANCEL", echo = "66ec1-2-1234" }))
+    for _, case in ipairs({
+        { "|v=0.6.0|v=0.6.1", "version", "0.6.0" }, { "|novalue" }, { "|=x" }, { "|Key=x" }, { "|z_z=1" },
+        { "|zz=a=b" }, { "|k=" }, { "|" }, { "|v=bad" }, { "|r=timeout2", "reason", "timeout2" },
+        { "|r=Bad|r=combat", "reason", "combat" }, { "|r=" .. string.rep("a", 17) }, { "|extra|v=0.7", "version", "0.7" },
+    }) do
+        local received = protocol:Decode(cancelPayload .. case[1])
+        equal(type(received), "table", "trailing field never drops the packet: " .. case[1])
+        equal(received.kind, "CANCEL", "fixed fields still decoded beside: " .. case[1])
+        if case[2] then
+            equal(received[case[2]], case[3], "valid known value still read: " .. case[1])
+        else
+            equal(received.version == nil and received.reason == nil, true, "malformed field ignored: " .. case[1])
+        end
+    end
+    local long = message({ nonce = string.rep("a", 48), echo = string.rep("f", 48), kind = "CANCEL",
+        guid = "Player-" .. string.rep("1", 20) .. "-" .. string.rep("a", 20),
+        peerGUID = "Player-" .. string.rep("2", 20) .. "-" .. string.rep("b", 20) })
+    local fixed = protocol:Encode(long)
+    equal(type(fixed), "string", "long fixed fields still fit")
+    long.reason, long.version = "transport", "0.6.0"
+    local extended = protocol:Encode(long)
+    equal(extended == nil or #extended <= 255, true, "extensions never exceed the byte limit")
+    equal(protocol:Decode(fixed .. "|" .. string.rep("x", 256 - #fixed)), nil, "oversized trailing data rejected")
+
+    -- FD2 from a 0.5.x peer is recognized but never processed.
+    local fd2 = encoded:gsub("^FD3", "FD2", 1)
+    equal(protocol:Decode(fd2), nil, "FD2 envelope is not processed")
+    local legacy = protocol:Legacy(fd2)
+    equal(legacy.guid, base.guid, "FD2 sender GUID identified")
+    equal(legacy.peerGUID, base.peerGUID, "FD2 addressee GUID identified")
+    equal(protocol:Legacy((accept:gsub("^FD3", "FD2", 1):gsub("|ACCEPT|", "|COMMIT|", 1))).kind,
+        "COMMIT", "old FD2 kinds still identify an outdated peer")
+    for _, payload in ipairs({ encoded, fd2 .. "|v=0.6.0", (fd2:gsub("Player%-1234%-0000ABCD", "Creature-1", 1)),
+        "FD2|HELLO", "FD1" .. encoded:sub(4), "garbage" }) do
+        equal(protocol:Legacy(payload), nil, "only a well-formed FD2 envelope counts as outdated: " .. payload)
     end
 
     local limits = message({ rating = -100000, specId = 0, wins = 1000000000, losses = 0 })
@@ -38,7 +107,7 @@ return function(FD, equal)
     limits.rating = -1 / math.huge
     equal(protocol:Decode(protocol:Encode(limits)).rating, 0, "negative-zero number encodes canonically")
     for key, values in pairs({
-        kind = { "RATED_ACCEPT", "", "hello" },
+        kind = { "RATED_ACCEPT", "", "hello", "COMMIT" },
         nonce = { "-", "", "abcdef|1", "ABCD", string.rep("a", 49) },
         echo = { "abcdef", "", "?|" },
         guid = { "Creature-1234-ABCD", "Player--ABCD", "Player-12-GHI", base.peerGUID, string.rep("a", 65) },
@@ -50,7 +119,7 @@ return function(FD, equal)
         wins = { -1, 1000000001, 0.5, "12" },
         losses = { -1, 1000000001, 0.5, "8" },
         verdict = { base.guid, "", "OTHER" },
-        protocolVersion = { 1, 3, "2" },
+        protocolVersion = { 1, 2, "3" },
         level = { 0, -1, 61, 30.5, "30", math.huge },
         maxLevel = { 0, 29, 256, "60", 60.5 },
     }) do
@@ -67,8 +136,9 @@ return function(FD, equal)
         "reject oversized otherwise-valid message")
 
     for _, payload in ipairs({
-        "", string.rep("a", 256), encoded .. "|extra", "|" .. encoded, encoded .. "|",
-        encoded:sub(1, #encoded - 3), encoded:gsub("FD2", "FD1", 1),
+        "", string.rep("a", 256), "|" .. encoded,
+        encoded:sub(1, #encoded - 3), encoded:gsub("FD3", "FD1", 1), encoded:gsub("FD3", "FD4", 1),
+        encoded .. "|v=0.6.0\n",
         encoded:gsub("HELLO", "UNKNOWN", 1), encoded:gsub("1500", "1e3", 1),
         encoded:gsub("1500", "01500", 1), encoded:gsub("1500", "1500.0", 1),
         encoded:gsub("1500", "+1500", 1), encoded:gsub("1500", "-0", 1),
@@ -88,8 +158,11 @@ return function(FD, equal)
     equal(protocol:Nonce(1, 0.5, 1), nil, "fractional nonce input")
     equal(protocol:Nonce(1, 1, math.huge), nil, "infinite nonce input")
     equal(protocol:Nonce(1, 1, "5"), nil, "string nonce input")
+    equal(protocol:NonceEpoch(protocol:Nonce(1700000000, 7, 99)), 1700000000, "nonce epoch is recoverable")
+    equal(protocol:NonceEpoch("abc-feed"), nil, "other nonce shapes carry no epoch")
+    equal(protocol:NonceEpoch("not a nonce"), nil, "invalid nonce carries no epoch")
     local id = protocol:MatchID(base.guid, nonce, base.peerGUID, "ff-2-1000")
-    equal(id, "FD2:" .. base.guid .. ":ff-1-1000:" .. base.peerGUID .. ":ff-2-1000", "canonical match ID")
+    equal(id, "FD3:" .. base.guid .. ":ff-1-1000:" .. base.peerGUID .. ":ff-2-1000", "canonical match ID")
     equal(protocol:MatchID(base.peerGUID, "ff-2-1000", base.guid, nonce), id, "GUID sorting preserves nonce association")
     equal(protocol:MatchID(base.guid, "ff-3-1000", base.peerGUID, "ff-4-1000") ~= id, true, "rematch identity differs")
     equal(protocol:MatchID(base.guid, nonce, base.guid, nonce), nil, "same participant cannot match")
@@ -150,4 +223,20 @@ return function(FD, equal)
     end
     equal(FD.Results:Countdown("Duel starting: 3", nil), nil, "missing countdown global")
     equal(FD.Results:Countdown("Duel starting: 3", "Duel starting: %s"), nil, "unsupported countdown format")
+
+    -- Grammar codes are only reported (once per format) through debug chat;
+    -- parsing itself is unchanged.
+    local notes = {}
+    FD.Debug = { Log = function(_, topic, format) notes[#notes + 1] = topic .. " " .. format end }
+    local grammar = "%1$s|1a;b; has defeated %2$s in a duel."
+    equal(FD.Results:Parse("Alpha|1a;b; has defeated Beta in a duel.", grammar, nil, player, opponent), nil,
+        "raw grammar code still requires the literal pipe text and an unambiguous name")
+    equal(FD.Results:Parse("Alpha-Forever|1a;b; has defeated Beta-Elsewhere in a duel.", grammar, nil, player,
+        { guid = opponent.guid, name = "Beta", realm = "Elsewhere", fullName = "Beta-Elsewhere" }), player.guid,
+        "literal parsing of a grammar format is unchanged")
+    equal(#notes, 1, "a grammar-code format is reported once")
+    equal(notes[1]:find("grammar codes", 1, true) ~= nil, true, "report names the reason")
+    FD.Results:Countdown("Duel starting: 3", "Duel starting: %d")
+    equal(#notes, 1, "plain formats are never reported")
+    FD.Debug = nil
 end

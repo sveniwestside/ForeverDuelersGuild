@@ -1,24 +1,38 @@
 local _, FD = ...
 
--- FD2|kind|nonce|echo|guid|peerGUID|role|rating|specId|classFile|wins|losses|verdict|level|maxLevel
--- The lifecycle binds this fifteen-field envelope to the actual duel opponent
--- and freezes the reported profile; parsing alone does not establish consent.
+-- FD3|kind|nonce|echo|guid|peerGUID|role|rating|specId|classFile|wins|losses|verdict|level|maxLevel[|key=value...]
+-- Fifteen strict fixed fields, then optional key=value extensions (the whole
+-- payload stays printable ASCII and <= 255 bytes). Extensions only carry
+-- informational data, so decoders read a known key when its value and kind
+-- match and ignore every other trailing field (unknown key, malformed field,
+-- value outside today's grammar, duplicate): a later version can add or
+-- widen data without its packets being dropped here.
+-- Known keys: v = sender addon version, r = short CANCEL reason code.
+-- The lifecycle binds the envelope to the actual duel opponent and freezes
+-- the reported profile; parsing alone does not establish consent.
 local Protocol = {
     VERSION = FD.C.PROTOCOL_VERSION,
     WIRE_VERSION = "FD" .. FD.C.PROTOCOL_VERSION,
+    LEGACY_WIRE = "FD2",
     MAX_BYTES = 255,
+    FIELDS = 15,
 }
 FD.Protocol = Protocol
 
-local kinds = {
-    HELLO = true, HELLO_ACK = true, ACCEPT = true, COMMIT = true,
-    CONFIRM = true, START_OK = true, START = true, RESULT = true, CANCEL = true,
-}
+local kinds = { HELLO = true, HELLO_ACK = true, ACCEPT = true, START = true, RESULT = true, CANCEL = true }
+-- Only used to recognize an outdated 0.5.x peer; FD2 is never processed.
+local legacyKinds = { HELLO = true, HELLO_ACK = true, ACCEPT = true, COMMIT = true, CONFIRM = true,
+    START_OK = true, START = true, RESULT = true, CANCEL = true }
 local classes = {
     WARRIOR = true, PALADIN = true, HUNTER = true, ROGUE = true, PRIEST = true,
     DEATHKNIGHT = true, SHAMAN = true, MAGE = true, WARLOCK = true, MONK = true,
     DRUID = true, DEMONHUNTER = true, EVOKER = true,
 }
+local extensions = {
+    v = { field = "version", pattern = "^%d[%w%.%-%+_]*$", limit = 24 },
+    r = { field = "reason", pattern = "^%l[%l%d_]*$", limit = 16, kind = "CANCEL" },
+}
+local extensionOrder = { "v", "r" }
 
 local function integer(value, minimum, maximum)
     return type(value) == "number" and value >= minimum and value <= maximum
@@ -33,6 +47,12 @@ end
 function Protocol:ValidNonce(value)
     return type(value) == "string" and #value > 0 and #value <= 48
         and value:match("^[a-f0-9%.%-]+$") ~= nil and value:find("[a-f0-9]") ~= nil
+end
+
+local function validExtension(key, value, kind)
+    local spec = extensions[key]
+    return type(value) == "string" and #value <= spec.limit and value:match(spec.pattern) ~= nil
+        and (not spec.kind or spec.kind == kind)
 end
 
 local function validate(message)
@@ -70,21 +90,31 @@ local function validate(message)
     elseif message.verdict ~= "-" then
         return nil, "unexpected result verdict"
     end
+    for key, spec in pairs(extensions) do
+        local value = message[spec.field]
+        if value ~= nil and not validExtension(key, value, message.kind) then return nil, "invalid " .. spec.field end
+    end
     return true
+end
+
+local function number(value)
+    return value == 0 and "0" or string.format("%.0f", value)
 end
 
 function Protocol:Encode(message)
     local valid, reason = validate(message)
     if not valid then return nil, reason end
-    local payload = table.concat({
+    local fields = {
         self.WIRE_VERSION, message.kind, message.nonce, message.echo,
-        message.guid, message.peerGUID, message.role,
-        message.rating == 0 and "0" or string.format("%.0f", message.rating),
-        message.specId == 0 and "0" or string.format("%.0f", message.specId),
-        message.classFile, message.wins == 0 and "0" or string.format("%.0f", message.wins),
-        message.losses == 0 and "0" or string.format("%.0f", message.losses), message.verdict,
-        string.format("%.0f", message.level), string.format("%.0f", message.maxLevel),
-    }, "|")
+        message.guid, message.peerGUID, message.role, number(message.rating), number(message.specId),
+        message.classFile, number(message.wins), number(message.losses), message.verdict,
+        number(message.level), number(message.maxLevel),
+    }
+    for _, key in ipairs(extensionOrder) do
+        local value = message[extensions[key].field]
+        if value ~= nil then fields[#fields + 1] = key .. "=" .. value end
+    end
+    local payload = table.concat(fields, "|")
     if #payload > self.MAX_BYTES then return nil, "message exceeds byte limit" end
     return payload
 end
@@ -98,17 +128,25 @@ local function parseInteger(value)
     return number
 end
 
-function Protocol:Decode(payload)
-    if type(payload) ~= "string" or #payload == 0 or #payload > self.MAX_BYTES then
+local function split(payload)
+    local fields = {}
+    for value in (payload .. "|"):gmatch("([^|]*)|") do fields[#fields + 1] = value end
+    return fields
+end
+
+local function envelope(payload)
+    if type(payload) ~= "string" or #payload == 0 or #payload > Protocol.MAX_BYTES then
         return nil, "invalid message length"
     end
     if payload:find("[^ -~]") then return nil, "message is not printable ASCII" end
-    local fields = {}
-    for value in (payload .. "|"):gmatch("([^|]*)|") do
-        fields[#fields + 1] = value
-    end
-    if #fields ~= 15 then return nil, "invalid field count" end
+    return split(payload)
+end
+
+function Protocol:Decode(payload)
+    local fields, err = envelope(payload)
+    if not fields then return nil, err end
     if fields[1] ~= self.WIRE_VERSION then return nil, "incompatible protocol version" end
+    if #fields < self.FIELDS then return nil, "invalid field count" end
     local message = {
         protocolVersion = self.VERSION,
         kind = fields[2], nonce = fields[3], echo = fields[4],
@@ -118,9 +156,27 @@ function Protocol:Decode(payload)
         losses = parseInteger(fields[12]), verdict = fields[13],
         level = parseInteger(fields[14]), maxLevel = parseInteger(fields[15]),
     }
+    for index = self.FIELDS + 1, #fields do
+        local key, value = fields[index]:match("^([^=]+)=(.*)$")
+        local spec = key and extensions[key]
+        -- First valid occurrence wins; anything else is ignored (see header).
+        if spec and message[spec.field] == nil and validExtension(key, value, message.kind) then
+            message[spec.field] = value
+        end
+    end
     local valid, reason = validate(message)
     if not valid then return nil, reason end
     return message
+end
+
+-- A well-formed envelope of the previous wire version. Only identity fields
+-- are returned: the caller may show "outdated peer" but never act on it.
+function Protocol:Legacy(payload)
+    local fields = envelope(payload)
+    if not fields or #fields ~= self.FIELDS or fields[1] ~= self.LEGACY_WIRE or not legacyKinds[fields[2]]
+        or not self:ValidNonce(fields[3]) or not self:ValidGUID(fields[5]) or not self:ValidGUID(fields[6])
+        or (fields[7] ~= "INCOMING" and fields[7] ~= "OUTGOING") then return nil end
+    return { kind = fields[2], guid = fields[5], peerGUID = fields[6] }
 end
 
 function Protocol:MatchID(guidA, nonceA, guidB, nonceB)
@@ -150,4 +206,11 @@ function Protocol:Nonce(epoch, counter, random)
     if not integer(epoch, 0, maximum) or not integer(counter, 0, maximum)
         or not integer(random, 0, maximum) then return nil, "invalid nonce inputs" end
     return hex(epoch) .. "-" .. hex(counter) .. "-" .. hex(random)
+end
+
+-- Server time embedded by Nonce, or nil for any other nonce shape.
+function Protocol:NonceEpoch(nonce)
+    if not self:ValidNonce(nonce) then return nil end
+    local epoch = nonce:match("^(%x+)%-%x+%-%x+$")
+    return epoch and #epoch <= 13 and tonumber(epoch, 16) or nil
 end
