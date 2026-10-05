@@ -68,7 +68,8 @@ function Rating:Calculate(localRating, opponentRating, didLocalPlayerWin, localL
         or type(didLocalPlayerWin) ~= "boolean" then
         return nil, "invalid_rating_input"
     end
-    -- Omitting both levels gives the unweighted formula (same as equal levels).
+    -- The addon always passes both levels. Only specs omit both, which gives
+    -- the unweighted formula, the same as equal levels.
     if (localLevel ~= nil or opponentLevel ~= nil)
         and (not isLevel(localLevel) or not isLevel(opponentLevel)) then
         return nil, "invalid_level"

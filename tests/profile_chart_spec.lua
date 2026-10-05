@@ -152,6 +152,8 @@ return function(FD, equal, newNamespace)
     equal(window.pageLabel.text, "Page 1 / 1", "page label")
     equal(window.detailResult.text, "VICTORY", "detail result")
     equal(window.details.text:find("Rated duel  /  Duration: 0:45", 1, true) ~= nil, true, "detail summary")
+    equal(window.rows[1].cells[1].text, os.date("%d.%m.%y\n%H:%M", 1700000045), "row date")
+    equal(window.details.text:find(os.date("%d.%m.%Y %H:%M", 1700000045), 1, true) ~= nil, true, "detail date")
     equal(window.opponentCard.rating.text:find("1500  ->  ", 1, true) ~= nil, true, "opponent projection shown")
 
     -- Storage notices: what happened this session is highlighted.
@@ -183,6 +185,7 @@ return function(FD, equal, newNamespace)
         ["Saved data that could not be loaded is kept under 'quarantine' in the saved file."] = "Quarantaene.",
         ["Last %d / %d duels  /  %d -> %d (%+d)"] = "Letzte %d / %d  /  %d -> %d (%+d)",
         ["Before duel %d: %d"] = "Vor Duell %s %s %s",
+        ["%d.%m.%y\n%H:%M"] = "%y-%m-%d\n%H:%M", ["%d.%m.%Y %H:%M"] = "%Y-%m-%d %H:%M",
     })
     ns.Locale.current = "xxXX"
     window:Refresh()
@@ -194,6 +197,8 @@ return function(FD, equal, newNamespace)
     equal(window.notice.text, "2 Archive.  /  Quarantaene.", "notices localized")
     equal(window.chartSummary.text:find("Letzte 3 / 3", 1, true) ~= nil, true, "chart summary localized")
     equal(window.chartFirst.text, "Before duel 1: 1500", "broken translation falls back to English")
+    equal(window.rows[1].cells[1].text, os.date("%y-%m-%d\n%H:%M", 1700000045), "row date pattern localized")
+    equal(window.details.text:find(os.date("%Y-%m-%d %H:%M", 1700000045), 1, true) ~= nil, true, "detail date pattern localized")
     ns.Locale.current = "enUS"
 
     -- A presentation failure closes only the window and is persisted.

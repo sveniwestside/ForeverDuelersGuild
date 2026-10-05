@@ -35,6 +35,13 @@ return function(FD, equal)
         for _ in pairs(map) do total = total + 1 end
         return total
     end
+    local function entries(value)
+        local total = 0
+        for _, child in pairs(value) do
+            total = total + 1 + (type(child) == "table" and entries(child) or 0)
+        end
+        return total
+    end
 
     -- A re-rolled character with the same name inherits the old file.
     clock = 1000
@@ -77,6 +84,20 @@ return function(FD, equal)
     equal(reloaded.archived[a.guid].data.matches[1].matchId, "old-1", "archive survives reload")
     equal(FD.Database:Kept().archivedNow, false, "reloaded archive is no longer new")
     equal(FD.Database:Kept().archives, 1, "reloaded archive still counted")
+
+    -- A long history is archived completely, however large it is.
+    local long = FD.Database:Copy(saved)
+    for index = 1, 3000 do
+        local match = FD.Database:Copy(saved.matches[1])
+        match.matchId = "long-" .. index
+        long.matches[index], long.finalized[match.matchId] = match, true
+    end
+    equal(entries(long) > 100000, true, "fixture holds more than 100000 entries")
+    local fromLong = FD.Database:Initialize(FD.Database:Copy(long), reroll)
+    equal(fromLong.archived[a.guid].truncated, nil, "long history archived without cuts")
+    equal(#fromLong.archived[a.guid].data.matches, 3000, "every archived match kept")
+    equal(count(fromLong.archived[a.guid].data.finalized), count(long.finalized), "every finalization entry kept")
+    reloads(fromLong, reroll, "database with a long archive")
 
     -- At most three archives; the oldest is dropped and archives never nest.
     local current, previous = reloaded, reroll
@@ -124,6 +145,18 @@ return function(FD, equal)
     equal(rescued.settings.minimapAngle, nil, "unreadable settings are not carried over")
     equal(rescued.settings.debug, false, "unreadable settings replaced by defaults")
     reloads(rescued, reroll, "salvaged archive")
+    -- An archive edited beyond the depth limit is cut when lifted on the next
+    -- re-roll, and the cut is flagged; intact archives stay unflagged.
+    local edited = FD.Database:Copy(fromLegacy)
+    node = edited.archived["Player-1-OLD"].data
+    for _ = 1, 20 do node.deep = {}; node = node.deep end
+    local relifted = FD.Database:Initialize(edited, reroll)
+    equal(relifted.archived["Player-1-OLD"].truncated, true, "cut archive flagged when lifted")
+    equal(relifted.archived["Player-1-OLD"].data.schemaVersion, 1, "rest of the cut archive kept")
+    equal(relifted.archived[a.guid].truncated, nil, "newly archived data is not flagged")
+    local intact = FD.Database:Initialize(FD.Database:Copy(fromLong), character("Player-1-HHH"))
+    equal(intact.archived[a.guid].truncated, nil, "lifting an intact archive cuts nothing")
+    equal(#intact.archived[a.guid].data.matches, 3000, "lifted long archive keeps every match")
     local futureForeign = { schemaVersion = FD.C.SCHEMA_VERSION + 1, player = { guid = "Player-1-NEW" }, sentinel = true }
     local refused, refusal = FD.Database:Initialize(futureForeign, a)
     equal(refused, nil, "future data of another character is left alone")
@@ -208,11 +241,16 @@ return function(FD, equal)
     equal(depth, 14, "nesting cut at the saved-data depth limit")
     equal(FD.Database:Initialize(fromHostile, a), fromHostile, "bounded quarantine reloads")
     local huge = { schemaVersion = 2, list = {} }
-    for index = 1, 100050 do huge.list[index] = index end
+    for index = 1, 1000050 do huge.list[index] = index end
     local fromHuge = FD.Database:Repair(huge, a)
-    local entries = count(fromHuge.quarantine.data.list)
+    local kept = count(fromHuge.quarantine.data.list)
     equal(fromHuge.quarantine.truncated, true, "oversized data reported as cut")
-    equal(entries <= 100000 and entries > 90000, true, "oversized data bounded")
+    equal(kept <= 1000000 and kept > 990000, true, "oversized data bounded")
+    huge = nil
+    local fromLong = FD.Database:Repair(long, a)
+    equal(fromLong.quarantine.quarantineReason, "inconsistent_history", "long damaged history needs repair")
+    equal(fromLong.quarantine.truncated, nil, "long damaged history quarantined completely")
+    equal(#fromLong.quarantine.data.matches, 3000, "every quarantined match kept")
 
     -- Repair keeps archives found in the damaged table, outside the quarantine.
     local archivesBroken = FD.Database:Copy(current)
@@ -222,6 +260,31 @@ return function(FD, equal)
     equal(count(fromArchives.archived), 3, "archives lifted out of the damaged table")
     equal(fromArchives.quarantine.data.archived, nil, "quarantine does not duplicate archives")
     reloads(fromArchives, unclocked, "repaired database with archives")
+
+    -- Repeated repairs keep earlier quarantines side by side, never nested,
+    -- and only the newest three.
+    local again = FD.Database:Copy(repaired)
+    for round = 1, 5 do
+        clock = 7000 + round
+        again.player.ratings.LEVELING.wins = 50 + round
+        again = FD.Database:Repair(again, a)
+        equal(again.quarantine.data.quarantine, nil, "previous quarantine lifted out of the new one")
+        equal(again.quarantine.truncated, nil, "repeated repair keeps the damaged data completely")
+        if round == 1 then
+            equal(again.quarantine.earlier[1].quarantinedAt, 5000, "first quarantine moved to the earlier list")
+            equal(again.quarantine.earlier[1].data.matches[1].matchId, "keep-1", "moved quarantine keeps its data")
+            equal(again.quarantine.earlier[1].truncated, nil, "moving a quarantine cuts nothing")
+        end
+    end
+    local earlier = again.quarantine.earlier
+    equal(#earlier, 2, "two earlier quarantines kept beside the newest")
+    equal(again.quarantine.quarantinedAt, 7005, "newest quarantine on top")
+    equal(earlier[1].quarantinedAt, 7003, "older quarantines dropped first")
+    equal(earlier[2].quarantinedAt, 7004, "earlier quarantines oldest first")
+    equal(earlier[1].data.player.ratings.LEVELING.wins, 53, "each earlier quarantine keeps its own data")
+    equal(earlier[1].earlier, nil, "earlier quarantines never nest")
+    equal(earlier[2].data.quarantine, nil, "earlier quarantine data holds no quarantine")
+    reloads(again, a, "database after repeated repairs")
 
     -- Reset clears this character's history only.
     clock = 6000

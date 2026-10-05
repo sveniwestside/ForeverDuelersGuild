@@ -16,6 +16,14 @@ local function format(key, ...)
     return FD.Locale:Format(key, ...)
 end
 
+-- Date patterns are locale keys as well, so a translation can reorder them;
+-- one that date() rejects falls back to the English pattern.
+local function stamp(pattern, time)
+    local ok, text = pcall(date, FD.L[pattern], time)
+    if ok and type(text) == "string" then return text end
+    return date(pattern, time)
+end
+
 local function bracketName(bracket)
     return FD.L[BRACKET_NAMES[bracket] or BRACKET_NAMES.LEGACY]
 end
@@ -265,7 +273,7 @@ function Profile:RenderDetails(detail)
     local outcome = match.resultSource == "KNOCKOUT" and FD.L["Knockout"]
         or (match.resultSource == "RETREAT" and FD.L["Retreat"] or FD.L["Rated duel"])
     self.details:SetText(format("%s  /  Duration: %d:%02d\n%s  /  %s", outcome,
-        math.floor(detail.duration / 60), detail.duration % 60, date("%d.%m.%Y %H:%M", match.endedAt),
+        math.floor(detail.duration / 60), detail.duration % 60, stamp("%d.%m.%Y %H:%M", match.endedAt),
         bracketName(match.bracket)))
     local function participant(card, identity, before, after, delta, winner)
         card.name:SetText(plain(identity.fullName or identity.name))
@@ -360,7 +368,7 @@ function Profile:Refresh()
         row.match = match
         if match then
             local won, chosen = match.result == "WIN", match.matchId == self.selectedId
-            row.cells[1]:SetText(date("%d.%m.%y\n%H:%M", match.endedAt))
+            row.cells[1]:SetText(stamp("%d.%m.%y\n%H:%M", match.endedAt))
             row.cells[2]:SetText(plain(match.opponent.fullName or match.opponent.name))
             color(row.cells[2], classColor(match.opponent))
             row.class:SetText(plain(match.opponent.className or match.opponent.classFile))

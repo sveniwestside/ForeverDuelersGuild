@@ -4,8 +4,10 @@ FD.Database = {}
 local Database = FD.Database
 local MAX_COUNTER = 9007199254740991
 local MAX_DEPTH = 16 -- Nesting limit for everything kept in the saved table.
-local SALVAGE_LIMIT = 100000 -- Entries kept from one archived or quarantined table.
-local MAX_ARCHIVES = 3
+-- Entries kept from one quarantined table: far above any real history (about
+-- 60 entries per match), so only pathological data is cut.
+local QUARANTINE_LIMIT = 1000000
+local MAX_ARCHIVES, MAX_QUARANTINES = 3, 3
 -- Chains saved before databases stored their initial ratings start here.
 local DEFAULT_INITIAL_RATING = 1500
 
@@ -71,15 +73,24 @@ function Database:Copy(value)
     return copy(value, {}, 0)
 end
 
--- Keeps whatever is readable of damaged or foreign data. `depth` is where the
--- copy will live in the saved table, so the result always reloads. `value`
--- may be a trimmed shallow copy of `original`; a reference back to that
--- original is a cycle as well.
-local function salvage(value, depth, original)
-    local budget, ancestors = { left = SALVAGE_LIMIT }, {}
+-- Keeps whatever is readable of damaged or foreign data; the second result
+-- tells whether anything was dropped. `depth` is where the copy will live in
+-- the saved table, so the result always reloads. `limit` caps the kept
+-- entries. `value` may be a trimmed shallow copy of `original`; a reference
+-- back to that original is a cycle as well.
+local function salvage(value, depth, original, limit)
+    local budget, ancestors = { left = limit or math.huge }, {}
     if type(original) == "table" then ancestors[original] = true end
     local result, err = copy(value, ancestors, depth, budget)
     return result, (err or budget.dropped) and true or nil
+end
+
+-- Copies a lifted archive or quarantine entry to its new depth; anything cut
+-- on the way is flagged on the entry.
+local function relocate(entry, depth, original)
+    local kept, cut = salvage(entry, depth, original)
+    if kept and cut then kept.truncated = true end
+    return kept
 end
 
 local function now()
@@ -277,17 +288,33 @@ local function restart(identity, saved)
     return fresh(identity, integer(counter, 0) and counter <= MAX_COUNTER and counter or 0, settings)
 end
 
--- Moves the archives of `saved` into `archived` and returns the rest of it,
--- so archives never nest inside each other.
-local function liftArchives(saved, archived)
+-- Moves the archives of `saved` into `archived` and, when `earlier` is given,
+-- its quarantines into that list (oldest first, newest MAX_QUARANTINES - 1
+-- kept). Returns the rest, so archives and quarantines never nest.
+local function lift(saved, archived, earlier)
     local rest = {}
     for key, value in pairs(saved) do rest[key] = value end
     rest.archivedNotice = nil
     if type(saved.archived) == "table" then
         rest.archived = nil
         for guid, entry in pairs(saved.archived) do
-            local kept = nonempty(guid) and type(entry) == "table" and salvage(entry, 2)
-            if kept then archived[guid] = kept end
+            if nonempty(guid) and type(entry) == "table" then archived[guid] = relocate(entry, 2) end
+        end
+    end
+    local previous = saved.quarantine
+    if earlier and type(previous) == "table" then
+        rest.quarantine = nil
+        local list, newest = {}, {}
+        if type(previous.earlier) == "table" then
+            for _, entry in ipairs(previous.earlier) do
+                if type(entry) == "table" then list[#list + 1] = entry end
+            end
+        end
+        for key, value in pairs(previous) do newest[key] = value end
+        newest.earlier = nil
+        list[#list + 1] = newest
+        for index = math.max(1, #list - MAX_QUARANTINES + 2), #list do
+            earlier[#earlier + 1] = relocate(list[index], 3, previous)
         end
     end
     return rest
@@ -312,7 +339,7 @@ end
 -- under archived[oldGUID] and start fresh instead of refusing to load.
 local function archive(saved, identity)
     local db, archived, guid = restart(identity, saved), {}, saved.player.guid
-    local data, dropped = salvage(liftArchives(saved, archived), 3, saved)
+    local data, dropped = salvage(lift(saved, archived), 3, saved)
     archived[guid] = nil
     trimArchives(archived, MAX_ARCHIVES - 1)
     local at = now()
@@ -376,16 +403,19 @@ function Database:Initialize(saved, localIdentity)
 end
 
 -- /duelrating repair after Initialize failed: a fresh database that keeps a
--- bounded copy of the unreadable data under `quarantine`.
+-- bounded copy of the unreadable data under `quarantine`. Quarantines of
+-- earlier repairs move to quarantine.earlier instead of nesting.
 function Database:Repair(saved, localIdentity)
     if not validIdentity(localIdentity) then return nil, "invalid_local_identity" end
     local _, reason = open(saved, localIdentity)
     if not reason then return nil, "nothing_to_repair" end
-    local db, archived = restart(localIdentity, saved), {}
-    local data, dropped = salvage(type(saved) == "table" and liftArchives(saved, archived) or saved, 2, saved)
+    local db, archived, earlier = restart(localIdentity, saved), {}, {}
+    local data, dropped = salvage(type(saved) == "table" and lift(saved, archived, earlier) or saved,
+        2, saved, QUARANTINE_LIMIT)
     trimArchives(archived, MAX_ARCHIVES)
     db.archived = next(archived) and archived or nil
-    db.quarantine = { data = data, quarantinedAt = now(), quarantineReason = reason, truncated = dropped }
+    db.quarantine = { data = data, quarantinedAt = now(), quarantineReason = reason, truncated = dropped,
+        earlier = next(earlier) and earlier or nil }
     return db
 end
 

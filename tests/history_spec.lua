@@ -332,7 +332,8 @@ return function(FD, equal)
     FD.C.INITIAL_RATING = 1600
     overview = FD.History:Overview()
     equal(overview.peakRating, 1500, "peak comes from the stored chain, not today's initial rating")
-    equal(overview.rating, 1484, "overview rating from the stored chain")
-    equal(FD.History:Series()[1].rating, 1500, "chart baseline from the stored chain")
+    -- Guards: these already read stored values and must keep doing so.
+    equal(overview.rating, 1484, "overview rating stays the stored pool rating")
+    equal(FD.History:Series()[1].rating, 1500, "chart baseline stays the first stored rating")
     FD.C.INITIAL_RATING = 1500
 end

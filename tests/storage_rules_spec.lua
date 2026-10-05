@@ -136,7 +136,8 @@ return function(FD, equal)
     restore()
     loads(newInitial, a, "chain from a stored 1000 start loads after INITIAL_RATING returns to 1500")
     FD.Database:Initialize(nil, a)
-    equal(FD.Database:Commit(record("wrong-start", true, 1500, a, b, nil, nil, 1000)), nil, "new chain cannot start below its stored initial rating")
+    equal(select(2, FD.Database:Commit(record("wrong-start", true, 1500, a, b, nil, nil, 1000))), "stale_rating_snapshot",
+        "result not chained onto the pool's stored initial rating is refused as stale")
 
     -- Databases from before 0.6 have no initial ratings and no rules.
     local old = FD.Database:Copy(saved)
