@@ -350,7 +350,9 @@ end
 
 -- System messages about our own invitation. The global format strings are
 -- client-supplied (not in the generated docs) and feature-detected.
-local NOTICES = { ERR_DECLINE_GROUP_S = "DECLINED", ERR_ALREADY_IN_GROUP_S = "INVITE_FAILED",
+-- An already grouped target is almost always a queued player who accepted
+-- another coordinator's invitation, so it is reported as BUSY.
+local NOTICES = { ERR_DECLINE_GROUP_S = "DECLINED", ERR_ALREADY_IN_GROUP_S = "BUSY",
     ERR_BAD_PLAYER_NAME_S = "INVITE_FAILED" }
 
 function Wow:InviteNotice(message, peer)
