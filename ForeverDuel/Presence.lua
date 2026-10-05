@@ -5,8 +5,10 @@ local _, FD = ...
 --
 -- Traffic policy: discovery is on demand. Whisper queries go only to the
 -- current target/mouseover (shown in a tooltip or while the zone window is
--- open, same faction) and to ForeverDuel channel members while the zone window
--- is open or the queue is searching. A query proves the sender runs the addon,
+-- open), to other visible players while the zone window is open (all same
+-- faction, paced), and to ForeverDuel channel members while the zone window
+-- is open or the queue is searching. The channel only reaches characters of
+-- the same home realm. A query proves the sender runs the addon,
 -- so every query is answered (rate limited); the own map is disclosed only to
 -- senders that reported the same map or are visible or queue partners. Our
 -- profile is posted to the channel after joining and every minute while
@@ -32,7 +34,7 @@ local _, FD = ...
 -- so a busy channel cannot evict duel and queue evidence.
 FD.Presence = { players = {}, suspended = false, queries = {}, asked = {}, replies = {}, whispered = {},
     forgotten = {}, failures = {}, work = {}, workCount = 0, seq = 0, pings = {}, pongs = {}, pingSeq = 0,
-    received = { profile = 0, query = 0, channel = 0 } }
+    received = { profile = 0, query = 0, channel = 0 }, ingress = {} }
 local Presence = FD.Presence
 local PREFIX = "ForeverDuelZone2"
 local TICK, PULSE = 2, 5            -- event-driven ticks are coalesced; housekeeping cadence
@@ -523,27 +525,57 @@ function Presence:Count(kind, distribution)
     end
 end
 
+-- Every native event for our prefix is counted per route and outcome before
+-- any gate, so a live status shows whether messages from other players
+-- arrive at all and, if so, which check drops them (live 0.6.0: own CHANNEL
+-- echo seen, nothing from the other client). The first drop of each kind is
+-- persisted. Keys are fixed words, never payloads or names.
+function Presence:Ingress(route, outcome)
+    local key = route .. " " .. outcome
+    local count = (self.ingress[key] or 0) + 1
+    self.ingress[key] = count
+    if count == 1 and outcome ~= "accepted" and outcome ~= "own echo" and outcome ~= "ping" then
+        FD.Debug:Log("zone receive", "dropped", route, outcome)
+    end
+end
+
+function Presence:IngressSummary()
+    local keys = {}
+    for key in pairs(self.ingress) do keys[#keys + 1] = key end
+    if #keys == 0 then return FD.L["none"] end
+    table.sort(keys)
+    for index, key in ipairs(keys) do keys[index] = key .. " " .. self.ingress[key] end
+    return table.concat(keys, ", ")
+end
+
 function Presence:Receive(prefix, payload, distribution, sender, _, _, localID, channelName)
-    if not self:Live() or not FD.Wow:Readable(prefix, payload, distribution, sender, localID)
-        or prefix ~= PREFIX or type(payload) ~= "string" or #payload > 255 then return end
+    if not FD.Wow:Readable(prefix) or prefix ~= PREFIX then return end
+    local route = FD.Wow:Readable(distribution) and type(distribution) == "string" and distribution or "restricted"
+    if not self:Live() then return self:Ingress(route, "paused") end
+    if not FD.Wow:Readable(payload, sender, localID) then return self:Ingress(route, "restricted") end
+    if type(payload) ~= "string" or #payload > 255 then return self:Ingress(route, "invalid") end
     local name = self:Canonical(sender)
-    if not name then return end
+    if not name then return self:Ingress(route, "sender") end
     local tag = payload:sub(1, 5)
-    if tag == "PING|" or tag == "PONG|" then return self:ReceivePing(payload, distribution, name) end
+    if tag == "PING|" or tag == "PONG|" then
+        self:Ingress(route, "ping")
+        return self:ReceivePing(payload, distribution, name)
+    end
     local channel = distribution == "CHANNEL"
     if channel then
         -- The local channel number identifies our channel; its name is a
         -- second proof in case the client fills another number field.
         local id = self:ChannelID()
-        if not id or localID ~= id and not ourChannel(channelName) then return end
-    elseif distribution ~= "WHISPER" then return end
+        if not id or localID ~= id and not ourChannel(channelName) then return self:Ingress(route, "other-channel") end
+    elseif distribution ~= "WHISPER" then return self:Ingress(route, "unsupported") end
     local query = tag == "FDQ2|"
-    if query and channel then return end
+    if query and channel then return self:Ingress(route, "channel-query") end
     local player = self:Decode(query and "FDP2" .. payload:sub(5) or payload)
     local ownGUID = UnitGUID("player")
-    if not player or not FD.Wow:Readable(ownGUID) then return end
+    if not player or not FD.Wow:Readable(ownGUID) then return self:Ingress(route, "undecodable") end
     local own = FD.Wow:Identity("player")
     if player.guid == ownGUID or own and own.fullName == name then
+        self:Ingress(route, "own echo")
         -- The own echo shows the server distributed our broadcast; it is no
         -- proof that anyone else receives CHANNEL messages.
         if channel and own and own.fullName == name then
@@ -552,6 +584,7 @@ function Presence:Receive(prefix, payload, distribution, sender, _, _, localID, 
         end
         return
     end
+    self:Ingress(route, "accepted")
     local at = GetTime()
     self:Count(channel and "channel" or query and "query" or "profile", distribution)
     if channel then
@@ -657,11 +690,30 @@ function Presence:Announce(own, at)
     end
 end
 
+-- Visible players for an open zone window. Live 0.6.0 showed that custom
+-- channels connect only characters of the same home realm, while Forever
+-- zones mix realms: two testers standing side by side could not see each
+-- other's ForeverDuel channel lines. Visible same-faction players are
+-- therefore asked as well, paced by ASK_GAP (one query per 3 s) and per
+-- name by HEARTBEAT/STRANGER, and only while the window is open.
+local NEARBY = { "focus", "party1", "party2", "party3", "party4" }
+for i = 1, 40 do NEARBY[#NEARBY + 1] = "nameplate" .. i end
+for i = 1, 40 do NEARBY[#NEARBY + 1] = "raid" .. i end
+
+function Presence:AskNearby()
+    for _, unit in ipairs(NEARBY) do
+        local exists = UnitExists and UnitExists(unit)
+        if FD.Wow:Readable(exists) and exists and self:Ask(unit, nil, true) then return true end
+    end
+    return false
+end
+
 function Presence:Discover(own, at)
     local active, zone, manual = self:Reason(at)
     if zone or manual then
         self:Ask("target")
         self:Ask("mouseover")
+        self:AskNearby()
     end
     -- A working CHANNEL route replaces per-member query whispers.
     if not active or self:ChannelMode() and not manual or not FD.Roster then return end
@@ -1011,6 +1063,9 @@ for _, event in ipairs({ "CHANNEL_UI_UPDATE", "CHANNEL_ROSTER_UPDATE", "CHANNEL_
     "CHAT_MSG_CHANNEL_JOIN", "CHAT_MSG_CHANNEL_NOTICE" }) do
     on(event, function(...) if FD.Roster then FD.Roster:OnEvent(event, ...) end; Presence:Wake(0) end)
 end
+-- Chat lines arrive from every channel (Trade, General); only ours records a
+-- member, and no discovery pass is scheduled for them.
+on("CHAT_MSG_CHANNEL", function(...) if FD.Roster then FD.Roster:OnEvent("CHAT_MSG_CHANNEL", ...) end end)
 for _, event in ipairs({ "CHAT_MSG_CHANNEL_LEAVE", "CHANNEL_PASSWORD_REQUEST" }) do
     on(event, function(...) if FD.Roster then FD.Roster:OnEvent(event, ...) end; Presence:Wake(0) end, true)
 end
@@ -1043,5 +1098,6 @@ FD:RegisterStatus(30, function()
     lines[#lines + 1] = Format("Zone received: %d profiles, %d queries, %d channel posts | own channel echo: %s | channel members known: %d",
         received.profile or 0, received.query or 0, received.channel or 0,
         Presence.ownEcho and L["seen"] or L["not seen"], FD.Roster and FD.Roster.memberCount or 0)
+    lines[#lines + 1] = Format("Zone ingress: %s", Presence:IngressSummary())
     return lines
 end)

@@ -57,11 +57,24 @@ return function(_, equal)
         maxWork = math.max(maxWork, a.P.workCount)
     end
 
-    -- Nameplates are never fanned out to.
-    local plateNames = {}
+    -- Visible strangers (nameplates) are asked only while the zone window is
+    -- open, each at most once per ten minutes and at most one every 3 s.
+    local plateNames, perName, plateTimes = {}, {}, {}
     for i = 1, 40 do plateNames[Harness.fullName(Harness.identity(1000 + i), true)] = true end
     for _, packet in ipairs(a.sent) do
-        equal(plateNames[packet.target], nil, "no whisper to a nameplate stranger")
+        if plateNames[packet.target] then
+            perName[packet.target] = (perName[packet.target] or 0) + 1
+            plateTimes[#plateTimes + 1] = packet.at
+        end
+    end
+    for name, n in pairs(perName) do equal(n, 1, "a silent nameplate stranger is asked once in ten minutes: " .. name) end
+    equal(#plateTimes <= 40, true, "no nameplate stranger is asked twice")
+    -- Pacing applies when a query is queued; the shared budget may then
+    -- submit queued work closer together, so check the rate per 30 s.
+    for i = 1, #plateTimes do
+        local n = 0
+        for j = i, #plateTimes do if plateTimes[j] - plateTimes[i] < 30 then n = n + 1 end end
+        equal(n <= 12, true, "at most about one nameplate query per 3 s")
     end
     -- The send rate stays within the Outbound whisper budget.
     local whispers = {}

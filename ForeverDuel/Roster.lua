@@ -188,13 +188,12 @@ function Roster:Request(force)
     local previous, unknown = self:Selection(), false
     if previous == nil then
         -- Live 0.6.0: a client whose Channels window was never opened reports
-        -- no selection, and refusing here left discovery without members.
-        -- With the window not loaded there is no visible selection to
-        -- disturb, so ours is selected and nothing is restored afterwards.
-        if self:Visible() or ChannelFrame then
-            self.problem = FD.L["Channel member list cannot be loaded safely; target discovery remains available."]
-            return false
-        end
+        -- no selection (the frame may be loaded but has no selected button),
+        -- and refusing here left discovery without members. A hidden
+        -- window re-selects its own button whenever it updates (pinned
+        -- ChannelListMixin:Update), so selecting ours is invisible to the
+        -- player; nothing is restored afterwards. Request already returned
+        -- above while the window is shown.
         previous, unknown = 0, true
     end
     local previousName, previousID
@@ -303,13 +302,15 @@ end
 function Roster:OnEvent(event, ...)
     if event == "CHANNEL_UI_UPDATE" then
         self.uiUpdateAt = self.uiUpdateAt or GetTime()
-    elseif event == "CHAT_MSG_CHANNEL_JOIN" or event == "CHAT_MSG_CHANNEL_LEAVE" then
+    elseif event == "CHAT_MSG_CHANNEL_JOIN" or event == "CHAT_MSG_CHANNEL_LEAVE" or event == "CHAT_MSG_CHANNEL" then
+        -- A chat line in our channel proves membership like a join event
+        -- (same payload positions); it needs no member list.
         local _, name, _, _, _, _, _, channelID, channelName, _, _, guid = ...
         local current = FD.Presence:ChannelID()
         if not current or not FD.Wow:Readable(channelID) or channelID ~= current or not ours(channelName) then return end
         name = FD.Presence:Canonical(name)
         if not name then return end
-        if event == "CHAT_MSG_CHANNEL_JOIN" then
+        if event == "CHAT_MSG_CHANNEL_JOIN" or event == "CHAT_MSG_CHANNEL" then
             if FD.Wow:Readable(guid) and guid ~= ownGUID() then self:AddMember(name, guid, true) end
         elseif event == "CHAT_MSG_CHANNEL_LEAVE" then self:RemoveMember(name) end
     elseif event == "CHANNEL_ROSTER_UPDATE" or event == "CHANNEL_COUNT_UPDATE" then

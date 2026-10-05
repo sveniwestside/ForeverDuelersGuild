@@ -54,18 +54,24 @@ return function(_, equal)
         t:advance(30)
         equal(#t:whispers(), 0, case[1] .. " target is never queried")
     end
+    -- Visible players (nameplates, raid, party, focus) are asked only while
+    -- the zone window is open, one per discovery pass; never with it closed.
     c = started({ channel = false })
-    c.FD.Zone.shown = true
     for i = 1, 40 do c:addUnit("nameplate" .. i, Harness.identity(i)) end
     for i = 1, 40 do c:addUnit("raid" .. i, Harness.identity(100 + i)) end
     for i = 1, 4 do c:addUnit("party" .. i, Harness.identity(200 + i)) end
     c:addUnit("focus", Harness.identity(300))
     c:advance(120)
-    equal(#c:whispers(), 0, "nameplate, raid, party and focus units are never fanned out to")
+    equal(#c:whispers(), 0, "with the zone window closed visible players are never asked")
+    c.FD.Zone.shown = true
+    c:advance(120)
+    local visible = #c:whispers("FDQ2")
+    equal(visible >= 20 and visible <= 41, true, "an open zone window asks visible players one at a time")
     c:addUnit("mouseover", Harness.identity(400))
     c:emit("UPDATE_MOUSEOVER_UNIT")
     c:advance(3)
-    equal(#c:whispers("FDQ2"), 1, "the mouseover player is queried while the zone window is open")
+    equal(#to(c, Harness.fullName(Harness.identity(400), true), "FDQ2"), 1,
+        "the mouseover player is queried while the zone window is open")
 
     -- Tooltip-driven queries are paced and only corroborated entries show.
     c = started({ channel = false })

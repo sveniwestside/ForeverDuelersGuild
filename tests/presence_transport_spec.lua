@@ -285,13 +285,13 @@ return function(_, equal)
     end
 
     -- Live 0.6.0 regression: both clients joined the channel, but neither
-    -- could load the member list (a loaded Channels frame without a readable
-    -- selection) and CHANNEL posts were not delivered. Queries were held for
-    -- membership proof that never came, so both zone windows stayed empty.
+    -- could load the member list and CHANNEL posts were not delivered.
+    -- Queries were held for membership proof that never came, so both zone
+    -- windows stayed empty. Even then, targeting must find each other.
     net = Harness.network({ channelDelivery = false })
     a = net:add(routed({ joined = true }))
     b = net:add(routed({ joined = true, guid = BETA.guid, name = "Beta", surname = "Two", classFile = "ROGUE" }))
-    a.selected, b.selected = nil, nil
+    a.neverLoads, b.neverLoads = true, true
     a.members = { { name = "Beta Two", guid = BETA.guid } }
     b.members = { { name = "Alpha One", guid = a.player.guid } }
     net:advance(30)
@@ -317,4 +317,41 @@ return function(_, equal)
     net:advance(70)
     equal(#b.P:GetPlayers(), 1, "the later joiner hears the periodic channel post")
     equal(#a.P:GetPlayers(), 1, "the earlier client learns the joiner")
+
+    -- Live 0.6.0 retest: the two testers' characters come from different
+    -- home realms, so the ForeverDuel channel never connected them (each saw
+    -- only its own chat line). Standing next to each other with the zone
+    -- window open, the visible player (here a friendly nameplate) is asked
+    -- without targeting, and both clients list each other.
+    net = Harness.network({ channelDelivery = false })
+    a = net:add(routed({ joined = true }))
+    b = net:add(routed({ joined = true, guid = BETA.guid, name = "Beta", surname = "Two", classFile = "ROGUE" }))
+    a.neverLoads, b.neverLoads = true, true
+    net:advance(30)
+    a:addUnit("nameplate3", BETA)
+    a.FD.Zone.shown = true
+    a:emit("PLAYER_TARGET_CHANGED")
+    net:advance(8)
+    equal(#a.P:GetPlayers(), 1, "a visible player is found without targeting")
+    equal(#b.P:GetPlayers(), 1, "and the other client lists the querier")
+    -- Pacing: many visible strangers are asked at most once per 3 s, and each
+    -- at most once per STRANGER interval.
+    c = started({ joined = true })
+    c.neverLoads = true
+    c:advance(10)
+    for i = 1, 20 do c:addUnit("nameplate" .. i, Harness.identity(100 + i, { name = "Near" .. i, surname = "Crowd" })) end
+    c.FD.Zone.shown = true
+    c:advance(30)
+    local asked = count(c, "WHISPER", "FDQ2")
+    -- One visible player per discovery pass (every 5 s while idle, at most
+    -- one per 3 s when events wake it).
+    equal(asked >= 5 and asked <= 11, true, "visible players are asked one at a time, every 3-5 s")
+    c:advance(120)
+    c.FD.Zone.shown = false
+    local afterClose = count(c, "WHISPER", "FDQ2")
+    c:advance(300)
+    equal(count(c, "WHISPER", "FDQ2"), afterClose, "closing the zone window stops asking visible players")
+    c.FD.Zone.shown = true
+    c:advance(30)
+    equal(count(c, "WHISPER", "FDQ2"), afterClose, "a name that never answered is not asked again within ten minutes")
 end

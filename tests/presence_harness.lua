@@ -90,6 +90,7 @@ function Harness.client(options)
         if v then return v.classFile, v.classFile end
     end
     env.UnitLevel = function(token) local v = unit(token); return v and v.level end
+    env.UnitExists = function(token) return unit(token) ~= nil end
     env.UnitIsPlayer = function(token)
         local v = unit(token)
         if v and v.isPlayer ~= nil then return v.isPlayer end

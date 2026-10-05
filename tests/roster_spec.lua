@@ -208,17 +208,28 @@ return function(_, equal)
     c:emit("PLAYER_LEAVING_WORLD")
     equal(c.selected, 1, "leaving the world restores the selection")
 
-    -- Missing or failing native APIs never change the selection.
-    for _, api in ipairs({ "GetSelectedDisplayChannel", "SetSelectedDisplayChannel" }) do
-        c = client()
-        c.env[api] = nil
-        c.members = { peer() }
-        c:start()
-        c.FD.Zone.shown = true
-        c:advance(30)
-        equal(ourSelections(c), 0, api .. " missing cannot request an unknown roster")
-        preserved(c, api .. " unavailable")
-    end
+    -- Without SetSelectedDisplayChannel the roster cannot be requested.
+    c = client()
+    c.env.SetSelectedDisplayChannel = nil
+    c.members = { peer() }
+    c:start()
+    c.FD.Zone.shown = true
+    c:advance(30)
+    equal(#c.selections, 0, "SetSelectedDisplayChannel missing cannot request the roster")
+    preserved(c, "SetSelectedDisplayChannel unavailable")
+    -- Without GetSelectedDisplayChannel (and no selected button in a hidden
+    -- Channels window) the selection is unknown: the roster is still loaded,
+    -- and nothing is restored.
+    c = client()
+    c.env.GetSelectedDisplayChannel = nil
+    c.members = { peer() }
+    c:start()
+    c.FD.Zone.shown = true
+    c:advance(30)
+    equal(ourSelections(c), 1, "an unknown selection still loads the roster once a minute at most")
+    equal(c.R:IsMember("Beta Two"), true, "and reads its members")
+    equal(#c.selections, 1, "nothing is restored when the previous selection was unknown")
+    preserved(c, "GetSelectedDisplayChannel unavailable")
     c = client()
     c.env.C_ChatInfo.GetChannelRosterInfo = nil
     c:start()
@@ -236,18 +247,16 @@ return function(_, equal)
     c:advance(10)
     equal(c.R:IsMember("Beta Two"), true, "the native channel list supplies a restorable selection")
     equal(c.selected, 1, "the channel-list selection is restored")
-    for _, selection in ipairs({ false, "1", -1, 0.5 }) do
+    -- An unreadable or restricted selection counts as unknown: with the
+    -- Channels window hidden the roster is loaded and nothing is restored.
+    for _, selection in ipairs({ false, "1", -1, 0.5, "secret" }) do
         c = started()
-        c.selected = selection
+        c.selected = selection == "secret" and c.secret or selection
         c.FD.Zone.shown = true
         c:advance(10)
-        equal(#c.selections, 0, "an unrestorable selection prevents a background request")
+        equal(ourSelections(c), 1, "an unknown selection still loads the roster once")
+        equal(#c.selections, 1, "and is never restored to an unknown value")
     end
-    c = started()
-    c.selected = c.secret
-    c.FD.Zone.shown = true
-    c:advance(10)
-    equal(#c.selections, 0, "a restricted selection is neither compared nor changed")
     c = started()
     c.selected = 2
     local display = c.env.GetChannelDisplayInfo
@@ -362,12 +371,35 @@ return function(_, equal)
     equal(c.R:IsMember("Beta Two"), true, "and its members are read")
     equal(#c.selections, 1, "no restore is attempted when no selection was known")
     equal(c.R.problem, nil, "no 'cannot be loaded safely' problem remains")
-    -- With the Channels frame loaded, an unknown selection is still refused.
+    -- Live 0.6.0 retest: the Channels frame was loaded but never shown, so
+    -- it had no selected button either. A hidden window re-selects its own
+    -- button when it updates; the list is loaded the same way.
     c = started()
     c.selected = nil
     c.members = { peer() }
     c:advance(30)
     c.FD.Zone.shown = true
     c:advance(8)
-    equal(#c.selections, 0, "a loaded Channels frame without a readable selection is left alone")
+    equal(ourSelections(c), 1, "a loaded but hidden Channels frame without a selection does not block the list")
+    equal(c.R:IsMember("Beta Two"), true, "its members are read")
+    equal(#c.selections, 1, "and no restore is attempted")
+    -- While the Channels window is shown, nothing is ever selected.
+    c = started()
+    c.selected = nil
+    c.shown = true
+    c.members = { peer() }
+    c:advance(30)
+    c.FD.Zone.shown = true
+    c:advance(8)
+    equal(#c.selections, 0, "an open Channels window keeps its own selection")
+
+    -- A chat line in our channel proves membership without a member list;
+    -- lines in other channels are ignored.
+    c = started()
+    c.neverLoads = true
+    c:advance(30)
+    c:emit("CHAT_MSG_CHANNEL", "hey", "Tester B", "", "6. ForeverDuel", "", "", 0, 6, "ForeverDuel", 0, 1, "Player-1-0000B0B0")
+    equal(c.R:IsMember("Tester B"), true, "a speaker in the ForeverDuel channel is a member")
+    c:emit("CHAT_MSG_CHANNEL", "wts", "Trader Joe", "", "2. Trade", "", "", 2, 2, "Trade", 0, 2, "Player-1-0000C0C0")
+    equal(c.R:IsMember("Trader Joe"), false, "speakers in other channels are not")
 end

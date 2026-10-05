@@ -187,6 +187,8 @@ FD.Locale:Register("deDE", {
     ["Zone receive: %s"] = "Zone empfangen: %s",
     ["Zone received: %d profiles, %d queries, %d channel posts | own channel echo: %s | channel members known: %d"] =
         "Zone empfangen: %d Profile, %d Anfragen, %d Kanalbeiträge | eigenes Kanalecho: %s | bekannte Kanalmitglieder: %d",
+    ["Zone ingress: %s"] = "Zone eingegangen: %s",
+    ["none"] = "keine",
     ["seen"] = "gesehen",
     ["not seen"] = "nicht gesehen",
     -- Presence.lua: broadcast reasons and FD.Outbound delivery states
