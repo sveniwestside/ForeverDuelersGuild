@@ -7,7 +7,7 @@ Source version **0.6.0** is unpublished. The public [CurseForge](https://www.cur
 ## Installation
 
 - Copy the `ForeverDuel` folder into `Interface/AddOns` (manifest at `Interface/AddOns/ForeverDuel/ForeverDuel.toc`). Keep the folder name: the per-character SavedVariable `ForeverDuelDB` belongs to it.
-- Testers install a committed build with `tools/install-addon.ps1 -AddOnsDirectory "<WoW>\_classic_beta_\Interface\AddOns"`; `/duelrating status` shows its commit, and SavedVariables stay untouched.
+- Testers install a committed build with `powershell -ExecutionPolicy Bypass -File tools\install-addon.ps1 -AddOnsDirectory "<WoW>\_classic_beta_\Interface\AddOns"`; `/duelrating status` shows its commit, and SavedVariables stay untouched.
 - 0.6 adds new files: restart the game client completely after installing.
 
 ## Rated duels

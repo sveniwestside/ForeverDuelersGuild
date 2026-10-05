@@ -9,7 +9,7 @@ the installed TOC as "## X-Build: <sha>", backs up the previous installation,
 verifies every copied file by SHA-256 and never touches SavedVariables.
 
 .EXAMPLE
-pwsh tools/install-addon.ps1 -AddOnsDirectory "C:\Program Files (x86)\World of Warcraft\_classic_beta_\Interface\AddOns"
+powershell -ExecutionPolicy Bypass -File tools\install-addon.ps1 -AddOnsDirectory "<WoW>\_classic_beta_\Interface\AddOns"
 #>
 param(
     [Parameter(Mandatory = $true)][string]$AddOnsDirectory,

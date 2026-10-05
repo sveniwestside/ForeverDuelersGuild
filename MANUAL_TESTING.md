@@ -6,7 +6,7 @@ Roles: **A** challenges, **B** receives, unless a step says otherwise. **C** is 
 
 ## 0. Preparation
 
-1. Commit the source. On each PC run `tools/install-addon.ps1 -AddOnsDirectory "<WoW>\_classic_beta_\Interface\AddOns"` from the same commit. Keep the JSON it prints (`version`, `build`, `savedVariablesModified: false`).
+1. Commit the source. On each PC run `powershell -ExecutionPolicy Bypass -File tools\install-addon.ps1 -AddOnsDirectory "<WoW>\_classic_beta_\Interface\AddOns"` (the bypass applies only to this call; Windows blocks unsigned scripts by default) from the same commit. Keep the JSON it prints (`version`, `build`, `savedVariablesModified: false`).
 2. Restart both game clients completely. 0.6 adds new files, and `/reload` does not load them.
 3. On both clients, `/duelrating status` must start with `Version: 0.6.0 (<build>) | Addon transport: registered`. `<build>` must be the same on both and equal `git rev-parse --short=12 HEAD`. There must be no `Saved data: unavailable` line, and the state must be `IDLE`.
 4. Back up `WTF/Account/<account>/<realm>/<character>/SavedVariables/ForeverDuel.lua` on both PCs.
