@@ -562,7 +562,7 @@ function Community:Status(brief)
         return lines
     end
     local zone = #self:Online({ sameFaction = true, zone = self:OwnZones() })
-    lines[1] = Format("Community: %s | %d members, %d online, %d in your zone", name, self.total, #self:Online(), zone)
+    lines[1] = Format("Community: %s | other members: %d, online: %d, in your zone: %d", name, self.total, #self:Online(), zone)
     if state == "locked" then lines[#lines + 1] = L["Community: the member list is protected right now (chat lockdown); using the last readable list."] end
     if self.ambiguous then lines[#lines + 1] = Format("Community: %d communities are named %s; the one with the lowest ID is used.", self.ambiguous, name) end
     if (self.unresolved or 0) + (self.hidden or 0) > 0 then

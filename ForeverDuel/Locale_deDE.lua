@@ -228,7 +228,7 @@ FD.Locale:Register("deDE", {
     ["Community: temporarily unavailable."] = "Community: vorübergehend nicht verfügbar.",
     ["Community: %s | loading the member list..."] = "Community: %s | Mitgliederliste wird geladen...",
     ["Community: the member list is protected right now (chat lockdown); retrying."] = "Community: Die Mitgliederliste ist gerade geschützt (Chatsperre); neuer Versuch folgt.",
-    ["Community: %s | %d members, %d online, %d in your zone"] = "Community: %s | %d Mitglieder, %d online, %d in deiner Zone",
+    ["Community: %s | other members: %d, online: %d, in your zone: %d"] = "Community: %s | weitere Mitglieder: %d, online: %d, in deiner Zone: %d",
     ["Community: the member list is protected right now (chat lockdown); using the last readable list."] = "Community: Die Mitgliederliste ist gerade geschützt (Chatsperre); die zuletzt lesbare Liste wird genutzt.",
     ["Community: %d communities are named %s; the one with the lowest ID is used."] = "Community: %d Communitys heißen %s; die mit der niedrigsten ID wird genutzt.",
     ["Community: %d member names could not be resolved and are skipped."] = "Community: %d Mitgliedsnamen konnten nicht aufgelöst werden und werden übersprungen.",

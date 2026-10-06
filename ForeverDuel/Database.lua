@@ -391,11 +391,13 @@ end
 -- Returns the database; db.archivedNotice is set when another character's
 -- data was just archived.
 function Database:Initialize(saved, localIdentity)
-    self.data, self.bracket = nil, nil
+    self.data, self.bracket, self.migratedNow = nil, nil, false
     if not validIdentity(localIdentity) then return nil, "invalid_local_identity" end
     local db, err = open(saved, localIdentity)
     if not db then return nil, err end
     self.data = db
+    -- Only a migration returns a new table that carries `legacy`.
+    self.migratedNow = db ~= saved and db.legacy ~= nil
     -- Level APIs may not be ready at login. Preserve/read saved history while
     -- rated eligibility separately requires a complete, current level profile.
     self:SetBracket(localIdentity)

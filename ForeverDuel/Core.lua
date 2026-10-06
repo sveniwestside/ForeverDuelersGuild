@@ -108,7 +108,7 @@ function FD:Initialize()
     ForeverDuelDB = db
     self.databaseError = nil
     self.initialized = true
-    if db.legacy then self.Debug:Print(self.L["Previous rating preserved in Legacy. Leveling and Max level have separate ratings."]) end
+    if self.Database.migratedNow then self.Debug:Print(self.L["Previous rating preserved in Legacy. Leveling and Max level have separate ratings."]) end
     if db.archivedNotice then
         self.Debug:Print(self.L["Saved data of another character with this name was archived. This character starts with a fresh rating."])
     end

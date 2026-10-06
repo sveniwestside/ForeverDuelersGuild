@@ -297,6 +297,11 @@ return function(FD, equal)
         record.opponent.level, record.opponent.maxLevel = nil, nil
     end
     equal(FD.Database:Initialize(legacy, player) ~= nil, true, "valid schema-one history migrates into an archive")
+    equal(FD.Database.migratedNow, true, "the migration is announced in its session")
+    local migrated = FD.Database.data
+    equal(FD.Database:Initialize(migrated, player) == migrated, true, "the migrated data opens again")
+    equal(FD.Database.migratedNow, false, "later sessions do not repeat the migration notice")
+    equal(FD.Database:Initialize(legacy, player) ~= nil, true, "the schema-one copy migrates again for the next checks")
     equal(FD.History:Overview().total, 0, "legacy records never inflate current pool totals")
     equal(FD.History:Overview("LEGACY").total, 2, "legacy overview retains all prior results")
     equal(FD.History:Overview("LEGACY").rating, 1500, "legacy overview retains prior rating")
