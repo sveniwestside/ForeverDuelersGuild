@@ -15,7 +15,9 @@ local _, FD = ...
 -- so every query is answered (rate limited); the own map is disclosed only to
 -- senders that reported the same map or are visible or queue partners. Our
 -- profile is posted to the channel after joining and every minute while
--- discovery is active.
+-- discovery is active. Without a working channel route a profile change is
+-- whispered to trusted cached peers; a peer known only through the
+-- community gets it only to end its listing of us on a map we left (Pushes).
 -- Nothing is queried while a duel or a queue ticket is active. Every send
 -- goes through FD.Outbound; discovery hands it one whisper at a time with
 -- BACKGROUND priority, so it can neither fill the shared lane nor delay duel
@@ -37,7 +39,7 @@ local _, FD = ...
 -- so a busy channel cannot evict duel and queue evidence.
 FD.Presence = { players = {}, suspended = false, queries = {}, asked = {}, replies = {}, whispered = {},
     forgotten = {}, failures = {}, work = {}, workCount = 0, seq = 0, pings = {}, pongs = {}, pingSeq = 0,
-    received = { profile = 0, query = 0, channel = 0 }, ingress = {} }
+    received = { profile = 0, query = 0, channel = 0 }, ingress = {}, disclosed = {} }
 local Presence = FD.Presence
 local PREFIX = "ForeverDuelZone2"
 local TICK, PULSE = 2, 5            -- event-driven ticks are coalesced; housekeeping cadence
@@ -359,6 +361,9 @@ function Presence:Enqueue(name, reply)
     if not self:Live() or self:Quiet() or not validName(name) then return false end
     local entry = self.work[name]
     if entry then
+        -- A reply asked for now (an answer to a query) is owed whatever a
+        -- waiting push decided; Announce marks only new entries as pushes.
+        if reply then entry.push = nil end
         if reply and not entry.reply then
             entry.reply = true
             if entry.item then self:Submit(name, entry) end
@@ -398,13 +403,25 @@ function Presence:Pump()
         elseif (entry.reply or not busy) and (not pick or entry.reply and not pick.reply
             or entry.reply == pick.reply and entry.seq < pick.seq) then pickName, pick = name, entry end
     end
-    if pick then self:Submit(pickName, pick) end
+    if pick and self:Submit(pickName, pick) == "stale" then return self:Pump() end
 end
 
 function Presence:Submit(name, entry)
     local own = self:GetOwnPlayer()
-    local payload = own and (entry.reply and self:Encode(own, self:MapFor(own, name), "FDP2")
-        or self:Encode(own, own.mapID or 0, "FDQ2"))
+    if own and entry.push then
+        -- A push decided before another map change may no longer be due.
+        local player = self.players[name]
+        local trust = player and self:Trust(name, player.guid)
+        if not trust or not self:Pushes(own, name, player, trust) then
+            if self.inflight == entry.item then self.inflight = nil end
+            entry.item = nil
+            self:Discard(name)
+            return "stale"
+        end
+    end
+    -- A query carries the real own map; a reply what MapFor allows.
+    entry.map = own and (entry.reply and self:MapFor(own, name) or own.mapID or 0)
+    local payload = own and self:Encode(own, entry.map, entry.reply and "FDP2" or "FDQ2")
     if not payload then
         if self.inflight == entry.item then self.inflight = nil end
         entry.item = nil
@@ -428,7 +445,7 @@ function Presence:Done(name, entry, item, status, code)
     if self.work[name] == entry then self.work[name], self.workCount = nil, self.workCount - 1 end
     local at, kind = GetTime(), entry.reply and "profile" or "query"
     if status == "sent" then
-        self.whispered[name], self.forgotten[name] = at, nil
+        self.whispered[name], self.forgotten[name], self.disclosed[name] = at, nil, entry.map
         if entry.reply then self.replies[name] = at else self.queries[name], self.asked[name] = at, at end
     elseif status == "failed" and code == FD.Outbound:Code("TargetOffline") then
         self:Forget(name) -- Offline recipients are never retried.
@@ -449,7 +466,7 @@ end
 
 -- Remove a name that is offline or unknown to the server.
 function Presence:Forget(name)
-    self.players[name] = nil
+    self.players[name], self.disclosed[name] = nil, nil
     self.queries[name] = GetTime()
     local entry = self.work[name]
     if entry and not entry.item then self.work[name], self.workCount = nil, self.workCount - 1 end
@@ -684,8 +701,24 @@ function Presence:Advertise(own, at)
     if self:Reason(at) and at - self.lastBroadcast >= BROADCAST then return self:Broadcast(own, "heartbeat") end
 end
 
+-- Whether a profile change is pushed to a trusted cached peer. A peer
+-- trusted only through the directory community gets it only when its zone
+-- browser would otherwise keep listing us on a map we left: our last whisper
+-- to it carried the map it reported. Never while the directory reports it
+-- offline. After a whole-ruleset search the cache holds members all over the
+-- realm, and pushing to each of them on every map change told them nothing
+-- new and took the background whisper budget from discovery queries.
+-- Arrival is left to discovery: queries carry the real map, and a member
+-- browsing that zone asks us once its directory shows our new zone.
+function Presence:Pushes(own, name, player, trust)
+    if trust ~= "member" or FD.Roster and FD.Roster:IsMember(name) then return true end
+    if type(player) ~= "table" or FD.Community and FD.Community:Offline(name) then return false end
+    local before = self.disclosed[name]
+    return before ~= nil and before ~= 0 and before == player.mapID and player.mapID ~= own.mapID
+end
+
 -- Profile changes (map, rating, level) are pushed at most every 30 s: over
--- CHANNEL while that route works, otherwise to trusted cached peers.
+-- CHANNEL while that route works, otherwise to trusted cached peers (Pushes).
 function Presence:Announce(own, at)
     local payload = self:Encode(own, own.mapID or 0, "FDP2")
     local channel = self:ChannelMode()
@@ -695,9 +728,13 @@ function Presence:Announce(own, at)
         if channel then return self:Broadcast(own, "update") end
         self.announced = payload
         for name, player in pairs(self.players) do
-            if fresh(player, at) and self:Trust(name, player.guid) then
+            local trust = fresh(player, at) and self:Trust(name, player.guid)
+            if trust and self:Pushes(own, name, player, trust) then
                 self.queries[name] = nil
+                local pending = self.work[name] ~= nil
                 if not self:Enqueue(name, true) then break end
+                -- Checked again when submitted: the map may change meanwhile.
+                if not pending and self.work[name] then self.work[name].push = true end
             end
         end
     elseif channel and at - (self.lastBroadcast or -math.huge) >= BROADCAST then
@@ -805,6 +842,10 @@ function Presence:Tick()
         if type(player) ~= "table" or type(player.lastSeen) ~= "number" or at - player.lastSeen >= FORGET then self.players[name] = nil end
     end
     for name, last in pairs(self.queries) do if at - last >= FORGET then self.queries[name] = nil end end
+    -- Kept while the name is cached or our query to it may still be answered.
+    for name in pairs(self.disclosed) do
+        if not self.players[name] and not self.asked[name] then self.disclosed[name] = nil end
+    end
     for name, last in pairs(self.asked) do if at - last >= EXPIRY then self.asked[name] = nil end end
     for name, last in pairs(self.replies) do if at - last >= MIN_REPLY then self.replies[name] = nil end end
     for name, last in pairs(self.whispered) do
@@ -849,13 +890,19 @@ function Presence:Changed()
     return self:Run(function() self:Wake(0) end)
 end
 
--- Explicit refresh from the zone window: ask members and the target again.
+-- Explicit refresh from the zone window: ask known addon users and channel
+-- members (and the target) again. Names that never answered keep their
+-- STRANGER interval and offline names their Forget suppression: a community,
+-- unlike the channel, holds players without the addon, and one click must
+-- not whisper all of them again.
 function Presence:RefreshNow()
     return self:Run(function()
         local at = GetTime()
         self.manualUntil = at + MANUAL
         for name, last in pairs(self.queries) do
-            if at - last >= MANUAL then self.queries[name] = nil end
+            if at - last >= MANUAL and (self.players[name] or FD.Roster and FD.Roster:IsMember(name)) then
+                self.queries[name] = nil
+            end
         end
         self:Wake(0)
     end)
@@ -888,7 +935,7 @@ function Presence:Leave(logout)
     self.suspended = true
     self.replies = {}
     self:DropWork()
-    if logout then self.stopped, self.players, self.queries, self.asked = true, {}, {}, {} end
+    if logout then self.stopped, self.players, self.queries, self.asked, self.disclosed = true, {}, {}, {}, {} end
     self:Refresh()
 end
 

@@ -9,30 +9,35 @@ local _, FD = ...
 -- therefore form a realm-wide directory of addon users.
 --
 -- This module only reads that community. It never posts to it, never creates,
--- joins, leaves or invites, and never changes the presence subscription
--- (SetClubPresenceSubscription has a single slot that Blizzard's Communities
--- and Channels windows own). Its one request is FocusMembers, the call the
--- Communities window makes to load a member list, and only while discovery
--- needs the list and the client reports it not ready. Presence trusts cached
--- members like ForeverDuel channel members and whispers the online ones on
--- demand; quiet mode stops those whispers and the FocusMembers request.
+-- joins, leaves or invites. Its requests are client-side: FocusMembers (the
+-- call the Communities window makes to load a member list) when discovery
+-- needs a list the client reports not ready, and while discovery is active
+-- the single presence subscription, paired with FocusMembers like the
+-- Channels window does (see Hold). Presence trusts cached members like
+-- ForeverDuel channel members and whispers the online ones on demand; quiet
+-- mode stops those whispers and both requests.
 --
 -- Pinned ClubDocumentation.lua: every C_Club function used here has
--- RequiresClubsInitialized (FailureMode ReturnNothing: nothing is returned
--- until the initial club load), GetSubscribedClubs, GetClubMembers and
+-- RequiresClubsInitialized, GetSubscribedClubs, GetClubMembers and
 -- GetMemberInfo are SecretInChatMessagingLockdown, and none HasRestrictions.
+-- The docs do not say what a RequiresClubsInitialized function does before
+-- the initial club load (no FailureMode is given). Assumed, to be confirmed
+-- live: it returns nothing; a false or an error from IsEnabled before
+-- INITIAL_CLUBS_LOADED is only believed when the next read repeats it.
 -- Every call is feature-detected and pcall'd, every value checked for secrets.
 FD.Community = { DEFAULT = "ForeverDuelersGuild", members = {}, byGuid = {}, total = 0, mismatches = 0,
     state = "loading", dirty = true }
 local Community = FD.Community
 local Native = FD.Native
 local readable, text, integer = Native.Readable, Native.Text, Native.Integer
--- Events only mark the cache dirty: a rebuild runs at most every REBUILD
--- seconds, every REFRESH seconds regardless (presence can change without an
--- event while nothing subscribes to it), and when discovery starts (zone
--- window opened, queue search began) unless the last one is younger than
--- DEMAND_GAP. FocusMembers at most every FOCUS_GAP seconds; at most LIMIT
--- members are read.
+-- Events only mark the cache dirty. While discovery is active a rebuild runs
+-- at most every REBUILD seconds after any event; while it is idle only
+-- joins, leaves and list changes (structural events) do, because presence
+-- and zone matter only for queries and a busy community would otherwise
+-- re-read up to LIMIT members every 10 s all session. Every REFRESH seconds
+-- regardless, and when discovery starts (zone window opened, queue search
+-- began) unless the last one is younger than DEMAND_GAP. FocusMembers at most
+-- every FOCUS_GAP seconds; at most LIMIT members are read.
 local REBUILD, REFRESH, DEMAND_GAP, FOCUS_GAP, LIMIT = 10, 60, 2, 60, 1000
 -- Documented enum values, used when the client does not expose Enum.
 local DEFAULTS = {
@@ -97,18 +102,20 @@ function Community:Name()
 end
 
 -- The Communities window whispers a member by the member name unchanged:
--- its menu passes memberInfo.name, and UnitPopupSharedUtil.GetFullPlayerName
--- returns it as is when no unit or surname is given. Presence keys its cache
--- by the sender name the server reports; Presence:Canonical adds the own
--- realm on clients with realm suffixes. On Forever (RegionalUniqueNamesEnabled)
--- whisper names are "Name Surname" and the first name never contains "-"
--- (NameUtil.SplitPlayerNameIntoParts); a "-" may be a server suffix whose
--- whisper form is unknown, so such a name is skipped and counted instead of
--- guessed. A Kstring-encoded name contains "|" escapes and is skipped too.
+-- its menu passes memberInfo.name (UnitPopupManager splits name parts only
+-- when RegionalUniqueNamesEnabled() is false), and
+-- UnitPopupSharedUtil.GetFullPlayerName returns it as is when no unit or
+-- surname is given. Presence keys its cache by the sender name the server
+-- reports; Presence:Canonical adds the own realm on clients with realm
+-- suffixes and keeps every name unchanged on surname clients (Forever).
+-- So the member name is used as Blizzard uses it, a "-" included: if it is
+-- an internal-server suffix of a cross-server member, skipping it would lose
+-- exactly the players the directory exists for. A wrong address shows up
+-- live as a mismatch (Observe) or as the server's "No player named" line,
+-- which forgets the name like any offline recipient. A Kstring-encoded name
+-- contains "|" escapes and is skipped (Canonical refuses it).
 function Community:Resolve(raw)
     if not text(raw) or not FD.Presence then return nil end
-    local regional = type(RegionalUniqueNamesEnabled) == "function" and RegionalUniqueNamesEnabled()
-    if not readable(regional) or regional and raw:find("-", 1, true) then return nil end
     return FD.Presence:Canonical(raw)
 end
 
@@ -180,18 +187,35 @@ function Community:Find(name)
     return nil, hidden and "locked" or otherType and "type" or "missing"
 end
 
+-- FocusMembers at most every FOCUS_GAP seconds unless forced.
+function Community:Focus(at, clubId, force)
+    if not force and at - (self.focusAt or -math.huge) < FOCUS_GAP then return end
+    self.focusAt = at
+    call("FocusMembers", clubId)
+end
+
 function Community:Rebuild(at, active)
-    self.builtAt, self.dirty = at, false
+    self.builtAt, self.dirty, self.structural, self.retry = at, false, false, false
     local name = self:Name()
     if not name then return self:Set("off", true) end
-    if type(C_Club) ~= "table" or type(C_Club.GetClubMembers) ~= "function"
+    if type(C_Club) ~= "table" or type(C_Club.IsEnabled) ~= "function" or type(C_Club.GetClubMembers) ~= "function"
         or type(C_Club.GetMemberInfo) ~= "function" then return self:Set("unsupported", true) end
     local ok, secret, enabled = call("IsEnabled")
     if secret then return self:Set("locked") end
-    if not ok then return self:Set("unsupported", true) end
-    if enabled == nil then return self:Set("loading") end -- Not initialized yet (ReturnNothing).
-    local _, _, allowed = call("ShouldAllowClubType", enum("ClubType", "Character"))
-    if enabled ~= true or allowed == false then return self:Set("disabled", true) end
+    local allowed
+    if ok and enabled == true then allowed = select(3, call("ShouldAllowClubType", enum("ClubType", "Character"))) end
+    local refused = not ok and "unsupported" or (enabled == false or allowed == false) and "disabled" or nil
+    -- Before INITIAL_CLUBS_LOADED a refusal may only mean "not initialized
+    -- yet": it is reported as loading, retried after REBUILD and believed
+    -- when the next read repeats it (after a /reload no load event comes).
+    local doubted = refused and not self.initialLoaded and self.refused ~= refused
+    self.refused = refused
+    if doubted then
+        self.retry = true
+        return self:Set("loading")
+    end
+    if refused then return self:Set(refused, true) end
+    if enabled == nil then return self:Set("loading") end -- Assumed: not initialized yet.
     local _, _, restriction = call("IsRestricted")
     if integer(restriction, 0, 1000) and restriction ~= enum("ClubRestrictionReason", "None") then
         return self:Set("restricted", true)
@@ -205,10 +229,7 @@ function Community:Rebuild(at, active)
     local listed, hiddenList, ids = call("GetClubMembers", clubId)
     if hiddenList then return self:Set("locked") end -- The last readable list stays in use.
     local _, _, ready = call("AreMembersReady", clubId)
-    if ready == false and active and at - (self.focusAt or -math.huge) >= FOCUS_GAP then
-        self.focusAt = at
-        call("FocusMembers", clubId)
-    end
+    if ready == false and active then self:Focus(at, clubId) end
     if not listed or type(ids) ~= "table" or #ids == 0 and ready == false then return self:Set("members") end
     local members, byGuid, total, unresolved, hidden = {}, {}, 0, 0, 0
     for index = 1, math.min(#ids, LIMIT) do
@@ -228,14 +249,67 @@ function Community:Rebuild(at, active)
     self:Set("ok")
 end
 
+-- Presence of club members is pushed only for the one club subscribed for
+-- presence (pinned SetClubPresenceSubscription: "You can only be subscribed
+-- to 0 or 1 clubs for presence. Subscribing to a new club automatically
+-- unsuscribes you to existing subscription."). In the pinned FrameXML the
+-- Channels window (ChannelFrame:SetFocusedClub) calls FocusMembers and
+-- SetClubPresenceSubscription while it shows a community channel and
+-- UnfocusMembers and ClearClubPresenceSubscription when it hides; the
+-- Communities window calls FocusMembers when a club is selected and
+-- ClearClubPresenceSubscription in OnHide; each window hides the other
+-- because they "share one presence subscription". Without the subscription,
+-- presence and zone from GetMemberInfo may stay as first read once those
+-- windows are closed (to be confirmed live), and a member who logs in or
+-- moves later would never be asked. The directory therefore holds the slot
+-- for its club, paired with FocusMembers like the Channels window, while
+-- discovery is active and neither window is shown. It never touches the slot
+-- while one of them is shown, takes it back after they closed (their OnHide
+-- cleared it, the Channels window also unfocused), and clears it when
+-- discovery stops. It never calls UnfocusMembers: the Communities window
+-- focuses on every club selection and never unfocuses.
+local function blizzardShown()
+    for _, frame in ipairs({ CommunitiesFrame or false, ChannelFrame or false }) do
+        if type(frame) == "table" and Native.Call(frame.IsShown, frame) == true then return true end
+    end
+    return false
+end
+
+function Community:Hold(at, active)
+    if type(C_Club) ~= "table" or type(C_Club.SetClubPresenceSubscription) ~= "function" then return end
+    local want = active and self.clubId or nil
+    if blizzardShown() then
+        -- Their OnHide clears the slot; take it back afterwards.
+        if self.held ~= nil then self.lent = true end
+        return
+    end
+    if want == self.held and not self.lent then return end
+    local lent = self.lent
+    self.lent = nil
+    if want ~= nil then
+        -- A failed call is not repeated every tick; it is retried when the
+        -- slot is needed again.
+        self.held = want
+        -- Presence may have changed while nobody held the slot: read again
+        -- within REBUILD seconds even if no event follows.
+        self.retry = call("SetClubPresenceSubscription", want)
+        self:Focus(at, want, lent)
+    else
+        call("ClearClubPresenceSubscription")
+        self.held = nil
+    end
+end
+
 -- Called from every Presence tick. active: discovery needs the directory now
 -- (never in quiet mode); demand: discovery just started.
 function Community:Update(at, active, demand)
     return self:Run(function()
         local age = at - (self.builtAt or -math.huge)
-        if age >= REFRESH or self.dirty and age >= REBUILD or demand and age >= DEMAND_GAP then
+        if age >= REFRESH or demand and age >= DEMAND_GAP
+            or age >= REBUILD and (self.retry or self.structural or self.dirty and active) then
             self:Rebuild(at, active)
         end
+        self:Hold(at, active)
     end)
 end
 
@@ -245,6 +319,12 @@ end
 
 function Community:IsMember(name)
     return type(name) == "string" and self.members[name] ~= nil
+end
+
+-- A cached member the directory reports as not reachable (offline, mobile app).
+function Community:Offline(name)
+    local member = type(name) == "string" and self.members[name]
+    return type(member) == "table" and not member.online
 end
 
 -- A profile whose GUID claim belongs to a cached member while the server
@@ -313,9 +393,10 @@ function Community:Online(filter)
     return sorted(online)
 end
 
+local function Format(...) return FD.Locale:Format(...) end
+
 function Community:Status()
     local L, name = FD.L, self:Name()
-    local function Format(...) return FD.Locale:Format(...) end
     local state = self.state
     if state == "off" then return { L["Community: off. Type /duelrating community on to use it again."] } end
     if state == "unsupported" then return { L["Community: not available on this client."] } end
@@ -349,6 +430,9 @@ function Community:Command(raw)
     local L, s = FD.L, settings()
     if not s then return end
     local word = raw:lower()
+    -- The command is a demand: read the directory now and, unless quiet,
+    -- request a member list that is not loaded yet (FOCUS_GAP still applies).
+    local active = not (FD.Presence and FD.Presence:Quiet())
     if word == "off" then
         s.communityOff = true
         self:Rebuild(GetTime())
@@ -359,23 +443,34 @@ function Community:Command(raw)
         if not self:Valid(raw) then return say(L["A community name has 1 to 48 characters and no | sign."]) end
         s.communityName, s.communityOff = raw, nil
     end
-    if raw ~= "" then self:Rebuild(GetTime()) end
+    self:Rebuild(GetTime(), active)
     for _, line in ipairs(self:Status()) do say(line) end
-    if not self:Ready() then
-        say(FD.Locale:Format("Join the in-game community %s to find addon players on the whole realm: open the Communities window and accept an invitation or an invite link from a member. The addon cannot join for you and only reads the member list.", self:Name() or self.DEFAULT))
+    -- Joining is the remedy only when no character community has the name.
+    if self.state == "missing" or self.state == "type" then
+        say(Format("Join the in-game community %s to find addon players on the whole realm: open the Communities window and accept an invitation or an invite link from a member. The addon cannot join for you and only reads the member list.", self:Name() or self.DEFAULT))
+    elseif self.state == "members" then
+        say(L["The game is loading the member list; type /duelrating community again in a few seconds."])
     end
 end
 
--- Events only mark the cache dirty; the next Presence tick rebuilds it.
-local function dirty(clubId)
-    if clubId == nil or not readable(clubId) or clubId == Community.clubId then Community.dirty = true end
-end
+-- Events only mark the cache dirty; a Presence tick rebuilds it (see Update).
+-- Club events and joins, leaves and list loads of the directory club are
+-- structural; presence and member info changes matter only while discovery
+-- is active.
 for _, event in ipairs({ "INITIAL_CLUBS_LOADED", "CLUB_ADDED", "CLUB_REMOVED", "CLUB_UPDATED" }) do
-    FD:OnEvent(event, function() Community.dirty = true end, true, true)
+    FD:OnEvent(event, function()
+        if event == "INITIAL_CLUBS_LOADED" then Community.initialLoaded = true end
+        Community.dirty, Community.structural = true, true
+    end, true, true)
 end
+local STRUCTURAL = { CLUB_MEMBER_ADDED = true, CLUB_MEMBER_REMOVED = true, CLUB_MEMBERS_UPDATED = true }
 for _, event in ipairs({ "CLUB_MEMBER_ADDED", "CLUB_MEMBER_REMOVED", "CLUB_MEMBER_UPDATED",
     "CLUB_MEMBERS_UPDATED", "CLUB_MEMBER_PRESENCE_UPDATED" }) do
-    FD:OnEvent(event, function(clubId) Community:Run(function() dirty(clubId) end) end, true, true)
+    FD:OnEvent(event, function(clubId) Community:Run(function()
+        if readable(clubId) and clubId ~= nil and clubId ~= Community.clubId then return end
+        Community.dirty = true
+        if STRUCTURAL[event] then Community.structural = true end
+    end) end, true, true)
 end
 
 FD:RegisterCommand("community", function(_, rawRest)

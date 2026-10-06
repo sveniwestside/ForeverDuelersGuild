@@ -238,6 +238,7 @@ FD.Locale:Register("deDE", {
     ["A community name has 1 to 48 characters and no | sign."] = "Ein Community-Name hat 1 bis 48 Zeichen und kein |-Zeichen.",
     ["Join the in-game community %s to find addon players on the whole realm: open the Communities window and accept an invitation or an invite link from a member. The addon cannot join for you and only reads the member list."] =
         "Tritt im Spiel der Community %s bei, um Addon-Spieler auf dem ganzen Realm zu finden: Öffne das Communityfenster und nimm eine Einladung oder einen Einladungslink eines Mitglieds an. Das Addon kann nicht für dich beitreten und liest nur die Mitgliederliste.",
+    ["The game is loading the member list; type /duelrating community again in a few seconds."] = "Das Spiel lädt die Mitgliederliste; gib in ein paar Sekunden erneut /duelrating community ein.",
     ["Show the community used to find players realm-wide (community <name> | on | off)."] = "Zeigt die Community, über die Spieler realmweit gefunden werden (community <Name> | on | off).",
 
     -- Tooltip.lua

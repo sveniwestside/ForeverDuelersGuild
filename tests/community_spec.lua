@@ -121,13 +121,48 @@ return function(FD, equal)
         c = Harness.client({ clubs = { directory({ member(1) }) } })
         c[state[1]] = state[2]
         c:start(); c:advance(2)
+        if state[3] == "disabled" then
+            -- Without INITIAL_CLUBS_LOADED (a /reload) one refusal could be
+            -- the uninitialized answer: believed when the next read repeats it.
+            equal(c.FD.Community.state, "loading", "a first refusal before the load event is not believed")
+            c:advance(10)
+        end
         equal(c.FD.Community.state, state[3], "status " .. state[3])
         equal(c.FD.Community:IsMember(member(1).name), false, state[3] .. " communities are not read")
     end
+    c:advance(120)
+    equal(c.FD.Community.state, "restricted", "a confirmed state stays")
+
+    -- Before the initial load the client may answer IsEnabled with false or
+    -- an error instead of nothing (the docs give no FailureMode): that is
+    -- loading, never a persisted "disabled" or "unsupported".
+    for _, answer in ipairs({ "false", "error" }) do
+        c = Harness.client({ clubs = { directory({ member(1) }) }, clubsReady = false })
+        c.preInit = answer
+        c:start(); c:advance(3)
+        equal(c.FD.Community.state, "loading", "pre-init " .. answer .. " is reported as loading")
+        equal(has(status(c), "waiting for the game to load your communities"), true, "pre-init " .. answer .. " status")
+        c.clubsReady = true
+        c:emit("INITIAL_CLUBS_LOADED")
+        c:advance(12)
+        equal(c.FD.Community.state, "ok", "pre-init " .. answer .. " recovers after the load event")
+        for _, entry in ipairs(c:trace("transport")) do
+            equal(entry.detail:find("disabled", 1, true) or entry.detail:find("unsupported", 1, true), nil,
+                "pre-init " .. answer .. " persists no refusal")
+        end
+    end
+    -- After the load event a refusal is believed at once.
+    c = Harness.client({ clubs = { directory({ member(1) }) }, clubsReady = false })
+    c:start(); c:advance(3)
+    c.clubsReady, c.clubsEnabled = true, false
+    c:emit("INITIAL_CLUBS_LOADED")
+    c:advance(10)
+    equal(c.FD.Community.state, "disabled", "a refusal after the load event is believed")
 
     -- Presence: Online, Away and Busy are reachable; mobile, offline and
-    -- unknown are not. Events only mark the cache dirty; one rebuild runs at
-    -- most every 10 seconds.
+    -- unknown are not. Events only mark the cache dirty. While discovery is
+    -- idle, presence and member updates wait for the minute refresh; while it
+    -- is active one rebuild runs at most every 10 seconds.
     club = directory({ member(1), member(2, { presence = AWAY }), member(3, { presence = BUSY }),
         member(4, { presence = MOBILE }), member(5, { presence = OFFLINE }), member(6, { presence = UNKNOWN }) })
     c = started({ clubs = { club } })
@@ -137,10 +172,22 @@ return function(FD, equal)
     club.members[1].presence = OFFLINE
     club.members[5].presence = ONLINE
     for _ = 1, 50 do c:emit("CLUB_MEMBER_PRESENCE_UPDATED", 900, 1, OFFLINE); c:advance(0.2) end
+    c:advance(30)
+    equal(c.calls.GetSubscribedClubs, reads, "an idle client does not rebuild for presence events")
+    c:advance(25)
+    equal(names(c.FD.Community:Online()), table.concat({ member(2).name, member(3).name, member(5).name }, ","),
+        "the minute refresh applies presence changes while idle")
+    c.FD.Zone.shown = true
+    c.P:Changed()
+    c:advance(1)
+    reads = c.calls.GetSubscribedClubs
+    club.members[1].presence = ONLINE
+    for _ = 1, 50 do c:emit("CLUB_MEMBER_PRESENCE_UPDATED", 900, 1, ONLINE); c:advance(0.2) end
     equal(c.calls.GetSubscribedClubs - reads <= 2, true, "a burst of presence events causes at most one rebuild per 10 s")
     c:advance(10)
-    equal(names(c.FD.Community:Online()), table.concat({ member(2).name, member(3).name, member(5).name }, ","),
-        "presence changes are applied after the rebuild")
+    equal(names(c.FD.Community:Online()), table.concat({ member(1).name, member(2).name, member(3).name, member(5).name }, ","),
+        "presence changes are applied after the rebuild while discovery is active")
+    c.FD.Zone.shown = false
     c:advance(20)
     reads = c.calls.GetSubscribedClubs
     c:emit("CLUB_MEMBER_PRESENCE_UPDATED", 777, 1, OFFLINE)
@@ -158,16 +205,18 @@ return function(FD, equal)
     equal(c.FD.Community:IsMember(member(7).name), true, "an added member is cached")
     equal(c.FD.Community:IsMember(member(2).name), false, "a removed member is dropped")
 
-    -- Names: the whisper address is the member name; Kstrings, names with a
-    -- possible server suffix, invalid GUIDs and the own entry are skipped.
+    -- Names: the whisper address is the member name unchanged, as the
+    -- Communities window whispers it, a possible server suffix included;
+    -- Kstrings, invalid GUIDs, duplicates and the own entry are skipped.
     c = Harness.client({ clubs = { directory() } })
-    c.clubs[1].members = { own(c), member(1), member(2, { name = "|Kq123|k" }), member(3, { name = "Peer3 Crowd-Forever" }),
+    c.clubs[1].members = { own(c), member(1), member(2, { name = "|Kq123|k" }), member(3, { name = "Peer3 Crowd-4619" }),
         member(4, { guid = "Creature-0-1" }), member(5, { name = "" }), member(6, { name = member(1).name, guid = Harness.identity(99).guid }) }
     c:start(); c:advance(2)
-    equal(names(c.FD.Community:Members()), member(1).name, "only the resolvable member is cached")
+    equal(names(c.FD.Community:Members()), member(1).name .. ",Peer3 Crowd-4619", "resolvable members are cached")
+    equal(c.FD.Community:IsMember("Peer3 Crowd-4619"), true, "a name with '-' is kept unchanged on a surname client")
     equal(c.FD.Community:IsMember(c.fullName), false, "the own character is skipped")
     equal(c.FD.Community.total, 6, "the member count excludes the own character")
-    equal(has(status(c), "5 member names could not be resolved and are skipped"), true, "skipped names are counted")
+    equal(has(status(c), "4 member names could not be resolved and are skipped"), true, "skipped names are counted")
     local cached = c.FD.Community:Members()[1]
     equal(cached.guid .. "|" .. cached.zone .. "|" .. cached.faction .. "|" .. cached.level .. "|" .. cached.classID,
         member(1).guid .. "|Elwynn Forest|Alliance|30|4", "the member record keeps GUID, zone, faction, level and class")
@@ -244,7 +293,7 @@ return function(FD, equal)
     equal(#c.FD.Community:Online({ zone = c.FD.Community:OwnZones() }), 0, "neither zone text matches")
     club.members[1].zone = "Elwynn"
     c:emit("CLUB_MEMBER_UPDATED", 900, 1)
-    c:advance(10)
+    c:advance(60) -- Idle: member info changes wait for the minute refresh.
     equal(names(c.FD.Community:Online({ zone = c.FD.Community:OwnZones() })), member(1).name, "the map name matches too")
 
     -- Command: status and how to join; name validation; on/off; persisted.
@@ -303,6 +352,116 @@ return function(FD, equal)
     c:advance(10)
     equal(c.FD.Community:IsMember(member(1).name), true, "the loaded list is read")
 
+    -- The command is a demand: a joined player whose list is not loaded on
+    -- an idle client gets one FocusMembers and is told to try again, not to
+    -- join. The join hint is only for a missing community.
+    club = directory({})
+    c = Harness.client({ clubs = { club } })
+    c.membersReady = false
+    c:start(); c:advance(120)
+    equal(c.calls.FocusMembers, nil, "idle: no member list request")
+    c:command("community")
+    equal(c.calls.FocusMembers, 1, "the command requests the member list")
+    equal(printed(c, "type /duelrating community again in a few seconds"), true, "the command says to try again")
+    equal(printed(c, "Join the in-game community"), false, "a joined player is not told to join")
+    club.members = { member(1) }
+    c:emit("CLUB_MEMBERS_UPDATED", 900)
+    c:advance(1)
+    c:command("community")
+    equal(printed(c, "Community: ForeverDuelersGuild | 1 members, 1 online, 1 in your zone"), true, "the loaded list is shown")
+    equal(c.calls.FocusMembers, 1, "a loaded list is not requested again")
+    c = Harness.client({ clubs = { directory({}) } })
+    c.membersReady = false
+    c.FD.Database.data.settings.quiet = true
+    c:start(); c:advance(2)
+    c:command("community")
+    equal(c.calls.FocusMembers, nil, "quiet mode: the command requests no member list")
+    c = Harness.client({ clubs = { directory({ member(1) }) } })
+    c.clubLockdown = true
+    c:start(); c:advance(2)
+    c:command("community")
+    equal(printed(c, "chat lockdown); retrying"), true, "the command shows the lockdown")
+    equal(printed(c, "Join the in-game community"), false, "a lockdown is not answered with the join hint")
+    for _, case in ipairs({ { "clubsEnabled", false }, { "clubRestriction", 1 } }) do
+        c = Harness.client({ clubs = { directory({ member(1) }) } })
+        c[case[1]] = case[2]
+        c:start(); c:advance(15)
+        c:command("community")
+        equal(printed(c, "Join the in-game community"), false, "no join hint for " .. case[1])
+    end
+
+    -- Presence subscription: the client may push presence and zone only for
+    -- the one club subscribed for presence. The directory holds that slot
+    -- while discovery is active and neither the Communities nor the Channels
+    -- window (which own it while shown) is shown, and clears it when
+    -- discovery stops. A member who logs in or moves after the first read is
+    -- then still found.
+    club = directory({ member(1, { presence = OFFLINE }), member(2, { zone = "Westfall" }) })
+    c = started({ clubs = { club } })
+    c.presenceFrozen = true
+    c:advance(60)
+    club.members[1].presence = ONLINE
+    club.members[2].zone = "Elwynn Forest"
+    c:advance(130)
+    equal(c.calls.SetClubPresenceSubscription, nil, "an idle client does not subscribe")
+    equal(#c.FD.Community:Online(), 1, "without the subscription presence stays as first read")
+    c.FD.Zone.shown = true
+    c.P:Changed()
+    c:advance(3)
+    equal(c.subscription, 900, "an open zone window subscribes the directory club")
+    c:advance(12) -- Read again after subscribing, even without an event.
+    equal(#c.FD.Community:Online({ sameFaction = true, zone = c.FD.Community:OwnZones() }), 2,
+        "with it, the member who logged in and the one who arrived count in your zone")
+    c.FD.Zone.shown = false
+    c:advance(6)
+    equal(c.subscription, nil, "closing the zone window clears the subscription")
+    local subscriptions = c.calls.SetClubPresenceSubscription
+    c.env.CommunitiesFrame = { IsShown = function() return c.communitiesShown end }
+    c.communitiesShown = true
+    c.FD.Zone.shown = true
+    c.P:Changed()
+    c:advance(10)
+    equal(c.calls.SetClubPresenceSubscription, subscriptions, "the slot is left alone while the Communities window is shown")
+    c.subscription = 77 -- The window subscribed its own club.
+    c.communitiesShown = false
+    c.subscription = nil -- Its OnHide cleared the slot.
+    c:advance(6)
+    equal(c.subscription, 900, "the slot is taken back after the Communities window closed")
+    c.shown = true -- The Channels window opens.
+    c.FD.Zone.shown = false
+    c:advance(6)
+    equal(c.subscription, 900, "nothing is cleared while the Channels window is shown")
+    c.shown = false
+    c:advance(6)
+    equal(c.subscription, nil, "after it closed, an idle directory releases the slot")
+    c.FD.Database.data.settings.quiet = true
+    c.FD.Zone.shown = true
+    subscriptions = c.calls.SetClubPresenceSubscription
+    c:advance(30)
+    equal(c.calls.SetClubPresenceSubscription, subscriptions, "quiet mode does not subscribe")
+    c.FD.Database.data.settings.quiet = nil
+    c:advance(6)
+    equal(c.subscription, 900, "leaving quiet mode with the zone window open subscribes")
+    c:command("community off")
+    c:advance(6)
+    equal(c.subscription, nil, "community off releases the slot")
+    -- The slot is taken together with FocusMembers, like the Channels
+    -- window does; after that window (which unfocuses and clears on hide)
+    -- both are taken back at once.
+    c = started({ clubs = { directory({ member(1) }) } })
+    c.FD.Zone.shown = true
+    c.P:Changed()
+    c:advance(3)
+    equal(tostring(c.subscription) .. "|" .. tostring(c.calls.FocusMembers), "900|1", "the slot is taken with FocusMembers")
+    c.shown = true
+    c:advance(6)
+    c.shown, c.subscription = false, nil -- Its OnHide unfocused and cleared the slot.
+    c:advance(6)
+    equal(tostring(c.subscription) .. "|" .. tostring(c.calls.FocusMembers), "900|2",
+        "after the Channels window closed, slot and focus are taken back at once")
+    c:advance(120)
+    equal(c.calls.FocusMembers, 2, "a held slot is not focused again")
+
     -- Two clients on different internal servers: the channel never
     -- connects them and neither sees the other, but both are in the
     -- community. With the zone window open in the same zone they find each
@@ -317,7 +476,7 @@ return function(FD, equal)
         a:start(); b:start()
         return net, a, b, shared
     end
-    local net, a, b = pair()
+    local net, a, b, shared = pair()
     net:advance(5)
     equal(#a.sent + #b.sent > 0, true, "the channel experiment runs")
     a.FD.Zone.shown = true
@@ -384,6 +543,22 @@ return function(FD, equal)
     equal(toBeta >= 2, true, "the queue queries the community-discovered candidate")
     equal(b.P:FindByName("Alpha One") ~= nil, true, "B learns A from the query")
 
+    -- B logs in after A read the member list, on a client that pushes
+    -- presence only for the subscribed club: A's open zone window takes the
+    -- subscription and finds B.
+    net, a, b, shared = pair()
+    a.presenceFrozen = true
+    shared.members[2].presence = OFFLINE
+    net:advance(70)
+    shared.members[2].presence = ONLINE
+    net:advance(70)
+    equal(a.FD.Community:Online()[1], nil, "A's unsubscribed copy still shows B offline")
+    equal(whispersTo(a, "Beta Two"), 0, "and A asks nobody")
+    a.FD.Zone.shown = true
+    a.P:Changed()
+    net:advance(20)
+    equal(#a.P:GetPlayers(), 1, "with the subscription A lists B within 20 s")
+
     -- Offline (and mobile or unknown) members are never whispered, not by
     -- the zone browser nor by a whole-ruleset search.
     net = Harness.network({ channelDelivery = false, seed = 5 })
@@ -428,11 +603,188 @@ return function(FD, equal)
         equal(whispersTo(a, member(1).name), 0, "no community query while busy: " .. busy)
     end
 
+    -- An idle client in a busy community: presence events alone never make
+    -- it re-read the list more than once a minute; a join is still read
+    -- within 10 s.
+    many = {}
+    for i = 1, 1000 do many[i] = member(i) end
+    club = directory(many)
+    c = started({ clubs = { club } })
+    reads = c.calls.GetSubscribedClubs
+    local infos = c.calls.GetMemberInfo
+    for t = 1, 600 do
+        c:emit("CLUB_MEMBER_PRESENCE_UPDATED", 900, t % 1000 + 1, ONLINE)
+        c:advance(1)
+    end
+    equal(c.calls.GetSubscribedClubs - reads <= 11, true, "idle: one rebuild a minute despite presence events")
+    equal(c.calls.GetMemberInfo - infos <= 11000, true, "idle: member reads stay bounded")
+    equal(#c:whispers(), 0, "idle: nobody is whispered")
+    club.members[1001] = member(1001)
+    table.remove(club.members, 1)
+    c:emit("CLUB_MEMBER_ADDED", 900, 1001)
+    c:advance(10)
+    equal(c.FD.Community:IsMember(member(1001).name), true, "idle: a join is read within 10 s")
+
+    -- Profile pushes after a map change reach a peer known only through the
+    -- community only when its zone browser listing of us changes, and never
+    -- one the directory reports offline. A whole-ruleset search caches
+    -- members all over the realm; map-0 pushes to them told them nothing and
+    -- crowded out queries.
+    local function pushes(c, from)
+        local list = {}
+        for index = from + 1, #c.sent do
+            local packet = c.sent[index]
+            if packet.channel == "WHISPER" and packet.result == 0 and packet.payload:sub(1, 5) == "FDP2|" then
+                list[#list + 1] = { target = packet.target, map = tonumber(packet.payload:match("^FDP2|[^|]+|[^|]+|([^|]+)|")) }
+            end
+        end
+        return list
+    end
+    local function queriesSince(c, from)
+        local n = 0
+        for index = from + 1, #c.sent do
+            local packet = c.sent[index]
+            if packet.channel == "WHISPER" and packet.result == 0 and packet.payload:sub(1, 5) == "FDQ2|" then n = n + 1 end
+        end
+        return n
+    end
+    net = Harness.network({ latency = 0.3, jitter = 0.6, seed = 99, channelDelivery = false })
+    local crowd = {}
+    local mapOf = {}
+    for i = 1, 300 do
+        local west = i % 2 == 0
+        crowd[i] = member(i, { zone = west and "Westfall" or "Duskwood" })
+        mapOf[crowd[i].name] = west and 40 or 47
+        net:bot(Harness.identity(i), { silent = i > 200, mapID = mapOf[crowd[i].name] })
+    end
+    local queue = { state = "SEARCHING", Settings = function() return { scope = "RULESET" } end }
+    a = net:add(Harness.client({ joined = true, clubs = { directory(crowd) }, queue = queue }))
+    a:start()
+    net:advance(300, 0.1)
+    queue.state = "IDLE"
+    net:advance(5, 0.1)
+    local mark = #a.sent
+    a.mapID = 12
+    a.P:Changed()
+    net:advance(60, 0.1)
+    equal(#pushes(a, mark), 0, "idle: a map change pushes nothing to members on other maps")
+    queue.state = "SEARCHING"
+    net:advance(120, 0.1)
+    mark = #a.sent
+    for _, map in ipairs({ 40, 47, 12, 40, 47, 12 }) do
+        a.mapID = map
+        a.P:Changed()
+        net:advance(30, 0.1)
+    end
+    -- Replay what each member was told: every push must end a listing (the
+    -- map we last disclosed equals the member's own) on a map we left.
+    local told = {}
+    for index, packet in ipairs(a.sent) do
+        local tag, map = packet.payload:match("^(FD[PQ]2)|[^|]+|[^|]+|([^|]+)|")
+        if packet.channel == "WHISPER" and packet.result == 0 and tag then
+            map = tonumber(map)
+            local theirs = mapOf[packet.target]
+            if index > mark and tag == "FDP2" then
+                local before = told[packet.target]
+                equal(before ~= nil and before ~= 0 and before == theirs, true, "a push goes only to a member that lists us")
+                equal(map, 0, "and unlists us")
+            end
+            told[packet.target] = map
+        end
+    end
+    local sent, asked = #pushes(a, mark), queriesSince(a, mark)
+    equal(sent <= 6 * 30, true, "pushes stay bounded: " .. sent)
+    equal(asked >= 2 * sent, true, "queries are not crowded out: " .. asked .. " queries, " .. sent .. " pushes")
+    -- Arrival is left to discovery, and a member the directory reports
+    -- offline gets no push even when it listed us.
+    net = Harness.network({ latency = 0.3, jitter = 0.2, seed = 7, channelDelivery = false })
+    crowd = {}
+    for i = 1, 5 do crowd[i] = member(i, { zone = "Westfall" }); net:bot(Harness.identity(i), { mapID = 40 }) end
+    club = directory(crowd)
+    queue = { state = "SEARCHING", Settings = function() return { scope = "RULESET" } end }
+    a = net:add(Harness.client({ joined = true, clubs = { club }, queue = queue }))
+    a:start()
+    net:advance(30, 0.1)
+    equal(a.P:FindByName(crowd[1].name) ~= nil, true, "member 1 is discovered")
+    mark = #a.sent
+    a.mapID = 40
+    a.P:Changed()
+    net:advance(20, 0.1)
+    local targets = {}
+    for _, push in ipairs(pushes(a, mark)) do targets[push.target] = true end
+    equal(next(targets), nil, "arrival is left to discovery: no push to members on the entered map")
+    net:advance(50, 0.1) -- The search asks again; the queries carry map 40.
+    equal(a.P.disclosed[crowd[1].name], 40, "member 1 was told our map 40 and lists us")
+    crowd[1].presence = OFFLINE
+    a:emit("CLUB_MEMBER_PRESENCE_UPDATED", 900, 1, OFFLINE)
+    net:advance(12, 0.1)
+    mark = #a.sent
+    a.mapID = 37
+    a.P:Changed()
+    net:advance(40, 0.1)
+    targets = {}
+    for _, push in ipairs(pushes(a, mark)) do targets[push.target] = true end
+    equal(targets[crowd[1].name], nil, "the member the directory reports offline gets no push")
+    equal(targets[crowd[2].name], true, "an online member that listed us learns that we left")
+    -- A query that arrives while a push to the same member waits is still
+    -- answered, even when the push itself is no longer due.
+    c = started({ clubs = { directory({ member(1) }) } })
+    local peer = member(1).name
+    c:receive(c:profile(Harness.identity(1), 37), peer)
+    c.P.disclosed[peer] = 37
+    c.P.inflight = {} -- Holds the lane, so the push waits.
+    c.mapID = 40
+    c.P:Changed()
+    c:advance(3)
+    equal(c.P.work[peer] ~= nil and c.P.work[peer].push, true, "the map change queued a push to the member that listed us")
+    c:inject(c:profile(Harness.identity(1), 40, "FDQ2"), peer)
+    c.P.inflight = nil
+    c.P:Pump()
+    c:advance(1)
+    equal(whispersTo(c, peer, "FDP2|"), 1, "the query is answered although the waiting push became stale")
+    -- The map a query disclosed is remembered until its answer can arrive,
+    -- so a member that lists us after answering learns when we leave.
+    c = started({ clubs = { directory({ member(1) }) } })
+    c.P.asked[peer], c.P.disclosed[peer] = c.now, 37
+    c:advance(20)
+    equal(c.P.disclosed[peer], 37, "a query's disclosed map outlives the ticks before the answer")
+    c:advance(200)
+    equal(c.P.disclosed[peer], nil, "and is dropped once the query expired unanswered")
+
+    -- Refresh asks known addon users again, but not members who never
+    -- answered (STRANGER) or were found offline.
+    net = Harness.network({ latency = 0.3, jitter = 0.2, seed = 3, channelDelivery = false })
+    crowd = {}
+    for i = 1, 40 do crowd[i] = member(i); net:bot(Harness.identity(i), { silent = i > 10 }) end
+    a = net:add(Harness.client({ joined = true, clubs = { directory(crowd) } }))
+    a:start()
+    a.FD.Zone.shown = true
+    a.P:Changed()
+    net:advance(240, 0.1)
+    local function asks(c, silentOnly)
+        local n = 0
+        for _, packet in ipairs(c:whispers("FDQ2")) do
+            local index = tonumber(packet.target:match("^Peer(%d+) "))
+            if not silentOnly or index and index > 10 then n = n + 1 end
+        end
+        return n
+    end
+    equal(asks(a, true), 30, "every silent member is asked once")
+    local gone = crowd[1].name
+    a.P:Forget(gone) -- Found offline ("No player named ...").
+    local silentAsks, allAsks, goneAsks = asks(a, true), asks(a), whispersTo(a, gone, "FDQ2")
+    a.P:RefreshNow()
+    net:advance(60, 0.1)
+    equal(asks(a, true), silentAsks, "Refresh does not whisper members who never answered again")
+    equal(whispersTo(a, gone, "FDQ2"), goneAsks, "nor a name found offline")
+    equal(asks(a) > allAsks, true, "Refresh asks the known addon users again")
+
     -- A 300-member community: zone window open and a whole-ruleset search
     -- for ten minutes. 100 members never answer, half are in another zone.
     -- Traffic stays within the Outbound budget and the per-name intervals.
     net = Harness.network({ latency = 0.3, jitter = 0.6, loss = 0.02, seed = 4242, channelDelivery = false })
-    local crowd, silent = {}, {}
+    local silent = {}
+    crowd = {}
     for i = 1, 300 do
         local zone = i % 2 == 0 and "Westfall" or "Elwynn Forest"
         crowd[i] = member(i, { zone = zone })

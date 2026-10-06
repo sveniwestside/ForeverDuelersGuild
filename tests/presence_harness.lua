@@ -135,18 +135,27 @@ function Harness.client(options)
         PvPFaction = { Horde = 0, Alliance = 1 },
     }
     -- Read-only C_Club after the pinned ClubDocumentation.lua: every function
-    -- returns nothing until the clubs are initialized (ReturnNothing), lists
-    -- and member info are secret during chat lockdown, and every write call
-    -- fails the spec. options.clubs may be shared by several clients; a
-    -- member is the client itself when its GUID matches (isSelf).
+    -- returns nothing until the clubs are initialized (assumed; the docs give
+    -- no FailureMode, state.preInit = "false" or "error" models the other
+    -- answers of IsEnabled), lists and member info are secret during chat
+    -- lockdown, and every write call fails the spec. options.clubs may be
+    -- shared by several clients; a member is the client itself when its GUID
+    -- matches (isSelf). state.presenceFrozen models a client that pushes
+    -- presence and zone only for the club subscribed for presence: any other
+    -- club's member info keeps what this client read first.
     if options.clubs then
         state.clubs, state.clubsReady, state.membersReady = options.clubs, options.clubsReady ~= false, true
+        state.frozen = setmetatable({}, { __mode = "k" })
         local function ready(name) count(name); return state.clubsReady end
         local function club(id)
             for _, entry in ipairs(state.clubs) do if entry.clubId == id then return entry end end
         end
         env.C_Club = {
-            IsEnabled = function() if ready("IsEnabled") then return state.clubsEnabled ~= false end end,
+            IsEnabled = function()
+                if ready("IsEnabled") then return state.clubsEnabled ~= false end
+                if state.preInit == "error" then error("clubs not initialized") end
+                if state.preInit == "false" then return false end
+            end,
             ShouldAllowClubType = function() if ready("ShouldAllowClubType") then return true end end,
             IsRestricted = function() if ready("IsRestricted") then return state.clubRestriction or 0 end end,
             GetSubscribedClubs = function()
@@ -173,8 +182,15 @@ function Harness.client(options)
                 for index, member in ipairs(club(id) and club(id).members or {}) do
                     if (member.memberId or index) == memberId then
                         if member.hidden then return state.secret end
+                        local seen = { presence = member.presence or 1, zone = member.zone }
+                        if state.presenceFrozen and state.subscription ~= id then
+                            seen = state.frozen[member] or seen
+                            state.frozen[member] = seen
+                        else
+                            state.frozen[member] = nil
+                        end
                         local info = { memberId = memberId, isSelf = member.guid == state.player.guid, name = member.name,
-                            guid = member.guid, presence = member.presence or 1, zone = member.zone, faction = member.faction,
+                            guid = member.guid, presence = seen.presence, zone = seen.zone, faction = member.faction,
                             level = member.level, classID = member.classID, clubType = 1 }
                         for _, field in ipairs(member.secret or {}) do info[field] = state.secret end
                         return info
@@ -183,6 +199,9 @@ function Harness.client(options)
             end,
             AreMembersReady = function() if ready("AreMembersReady") then return state.membersReady end end,
             FocusMembers = function() count("FocusMembers"); state.membersReady = true end,
+            -- Client-side presence slot (one club at a time).
+            SetClubPresenceSubscription = function(id) count("SetClubPresenceSubscription"); state.subscription = id end,
+            ClearClubPresenceSubscription = function() count("ClearClubPresenceSubscription"); state.subscription = nil end,
             DoesCommunityHaveMembersOfTheOppositeFaction = function(id)
                 if ready("DoesCommunityHaveMembersOfTheOppositeFaction") then return club(id) and club(id).crossFaction == true or false end
             end,
@@ -190,7 +209,7 @@ function Harness.client(options)
         for _, name in ipairs({ "SendMessage", "EditMessage", "DestroyMessage", "CreateClub", "EditClub", "DestroyClub",
             "SendInvitation", "SendCharacterInvitation", "AcceptInvitation", "DeclineInvitation", "RevokeInvitation",
             "LeaveClub", "KickMember", "RedeemTicket", "CreateTicket", "SetClubMemberNote", "AssignMemberRole",
-            "SetClubPresenceSubscription", "ClearClubPresenceSubscription", "UnfocusMembers", "SetFavorite",
+            "UnfocusMembers", "SetFavorite",
             "SetSocialQueueingEnabled", "AddClubStreamChatChannel", "CreateStream", "SetAvatarTexture" }) do
             env.C_Club[name] = function()
                 state.clubWrites = (state.clubWrites or 0) + 1
