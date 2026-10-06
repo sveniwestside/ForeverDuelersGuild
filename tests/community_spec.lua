@@ -331,8 +331,8 @@ return function(FD, equal)
     c = started({ clubs = { directory({ member(1) }, { name = "Duelists" }) } })
     c:command("community")
     equal(printed(c, "you are not a member of a community named ForeverDuelersGuild"), true, "the command shows the status")
-    equal(printed(c, "There is no ForeverDuelersGuild community for the Alliance yet"), true,
-        "and that the addon has no join link for the Alliance")
+    equal(printed(c, "Click the link to join ForeverDuelersGuild") and printed(c, "clubTicket:E3AWKZirJn"), true,
+        "and the Alliance join link")
     c:command("community Duelists")
     equal(c.FD.Database.data.settings.communityName, "Duelists", "the name is saved")
     equal(c.FD.Community:IsMember(member(1).name), true, "the new name applies at once")
@@ -586,9 +586,16 @@ return function(FD, equal)
     equal(printed(c, "Community: you are not a member of a community named ForeverDuelersGuild."), true, "community shows the status")
     equal(linkLines(c), 2, "and the link once more")
     equal(leaked(c), false, "the link is only printed: never sent, clicked or handed to SetItemRef; no restricted call")
+    -- The Alliance has its own community and ticket.
+    c = started(outsider({ faction = "Alliance" }))
+    equal(c.FD.Community:JoinLink(), "|cffffd100" .. FormatLink("clubTicket", "[Join ForeverDuelersGuild]", "E3AWKZirJn") .. "|r",
+        "the Alliance link carries the Alliance community's ticket")
     -- A faction without a community, a member, another community, disabled
     -- communities and an unknown faction get no link.
-    c = started(outsider({ faction = "Alliance" }))
+    c = Harness.client(outsider({ faction = "Alliance" }))
+    c.FD.Community.TICKETS.Alliance = nil
+    equal(c:start(), true, "discovery initializes")
+    c:advance(2)
     c:command("community join")
     equal(printed(c, "There is no ForeverDuelersGuild community for the Alliance yet, so the addon has no join link for you."),
         true, "no community exists for the Alliance yet")

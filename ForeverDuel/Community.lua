@@ -56,8 +56,7 @@ local HINT_DELAY = 15
 -- faction needs its own community.
 Community.TICKETS = {
     Horde = "lvEaz0fYwL",
-    -- Add the Alliance community's invite code here once that community exists.
-    Alliance = nil,
+    Alliance = "E3AWKZirJn",
 }
 -- Documented enum values, used when the client does not expose Enum.
 local DEFAULTS = {
