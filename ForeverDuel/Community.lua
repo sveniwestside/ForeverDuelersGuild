@@ -17,6 +17,13 @@ local _, FD = ...
 -- ForeverDuel channel members and whispers the online ones on demand; quiet
 -- mode stops those whispers and both requests.
 --
+-- Joining is the player's own act. Every C_Club call that joins or invites
+-- (RedeemTicket, SendCharacterInvitation, AcceptInvitation, the ClubFinder
+-- requests) HasRestrictions, so the addon only prints Blizzard's own invite
+-- link into the player's chat frame (see Link). The player's click runs
+-- Blizzard's clubTicket handler, which opens the Communities window with
+-- the invitation and its Join button.
+--
 -- Pinned ClubDocumentation.lua: every C_Club function used here has
 -- RequiresClubsInitialized, GetSubscribedClubs, GetClubMembers and
 -- GetMemberInfo are SecretInChatMessagingLockdown, and none HasRestrictions.
@@ -39,6 +46,18 @@ local readable, text, integer = Native.Readable, Native.Text, Native.Integer
 -- began) unless the last one is younger than DEMAND_GAP. FocusMembers at most
 -- every FOCUS_GAP seconds; at most LIMIT members are read.
 local REBUILD, REFRESH, DEMAND_GAP, FOCUS_GAP, LIMIT = 10, 60, 2, 60, 1000
+-- The join hint waits HINT_DELAY seconds after the first tick, so it is not
+-- lost among the login messages.
+local HINT_DELAY = 15
+-- Invite tickets of the shipped directory community, per faction: the code
+-- of a permanent, unlimited invite link (worldofwarcraft.com/invite/<code>).
+-- Communities on Forever are probably limited to one faction, so each
+-- faction needs its own community.
+Community.TICKETS = {
+    Horde = "lvEaz0fYwL",
+    -- Add the Alliance community's invite code here once that community exists.
+    Alliance = nil,
+}
 -- Documented enum values, used when the client does not expose Enum.
 local DEFAULTS = {
     ClubType = { Character = 1 },
@@ -94,11 +113,22 @@ function Community:Valid(name)
     return characters >= 1 and characters <= 48
 end
 
+-- The configured community name, also while the directory is off.
+function Community:Configured()
+    local s = settings()
+    local name = s and s.communityName
+    return self:Valid(name) and name or self.DEFAULT
+end
+
 function Community:Name()
     local s = settings()
     if s and s.communityOff == true then return nil end
-    local name = s and s.communityName
-    return self:Valid(name) and name or self.DEFAULT
+    return self:Configured()
+end
+
+-- The shipped invite links join the default community only.
+function Community:Shipped()
+    return self:Configured():lower() == self.DEFAULT:lower()
 end
 
 -- The Communities window whispers a member by the member name unchanged:
@@ -153,6 +183,9 @@ local PERSISTED = { ok = true, missing = true, type = true, disabled = true, res
 -- clear: the directory no longer applies (off, not joined, disabled).
 function Community:Set(state, clear)
     if clear then self.members, self.byGuid, self.total, self.clubId, self.unresolved, self.hidden = {}, {}, 0, nil, 0, 0 end
+    -- Consecutive reads without the community (the join hint trusts one
+    -- only after the initial club load or a second read).
+    self.absentReads = (state == "missing" or state == "type") and (self.absentReads or 0) + 1 or 0
     if state ~= self.state then
         -- The transport ring keeps the state word only, never names.
         FD.Debug:Log(PERSISTED[state] and "zone receive" or "community", "community", state)
@@ -304,12 +337,14 @@ end
 -- (never in quiet mode); demand: discovery just started.
 function Community:Update(at, active, demand)
     return self:Run(function()
+        self.startedAt = self.startedAt or at
         local age = at - (self.builtAt or -math.huge)
         if age >= REFRESH or demand and age >= DEMAND_GAP
             or age >= REBUILD and (self.retry or self.structural or self.dirty and active) then
             self:Rebuild(at, active)
         end
         self:Hold(at, active)
+        self:Hint(at)
     end)
 end
 
@@ -395,7 +430,80 @@ end
 
 local function Format(...) return FD.Locale:Format(...) end
 
-function Community:Status()
+local function factionLabel(faction)
+    return faction == "Horde" and FD.L["Horde"] or FD.L["Alliance"]
+end
+
+-- The chat link for an invite ticket, built like Blizzard's GetClubTicketLink
+-- (pinned Blizzard_UIPanels_Game/Mainline/ItemRef.lua): NORMAL_FONT_COLOR
+-- (ffffd100) around LinkUtil.FormatLink(LinkTypes.ClubTicket, text, ticketId),
+-- that is "|HclubTicket:<ticketId>|h<text>|h". Only the display text is the
+-- addon's own (GetClubTicketLink uses CLUB_INVITE_HYPERLINK_TEXT). Clicking
+-- it runs the clubTicket handler of the pinned ItemRefHandlersShared.lua,
+-- which reads the ticket as the first ":"-field of the link options and,
+-- when C_Club.IsEnabled(), calls CommunitiesHyperlink.OnClickLink: the game
+-- requests the ticket and opens the Communities window with the invitation.
+-- The link is only ever printed into the player's own chat frame; the addon
+-- never sends it, clicks it or passes it to SetItemRef.
+function Community:Link(ticket)
+    if type(ticket) ~= "string" or not ticket:find("^%w+$") then return nil end
+    return "|cffffd100|HclubTicket:" .. ticket .. "|h[" .. Format("Join %s", self.DEFAULT) .. "]|h|r"
+end
+
+-- The join link for the own faction, or nil, the faction and why not:
+-- "faction" (not known yet), "custom" (another community is configured, the
+-- shipped links join the default one) or "none" (no community for the
+-- faction yet).
+function Community:JoinLink()
+    local faction = self:OwnFaction()
+    if not faction then return nil, nil, "faction" end
+    if not self:Shipped() then return nil, faction, "custom" end
+    local link = self:Link(self.TICKETS[faction])
+    if not link then return nil, faction, "none" end
+    return link, faction
+end
+
+-- How to join, for a player who is not a member.
+function Community:Advise()
+    local link, faction, reason = self:JoinLink()
+    if link then
+        return say(Format("Click the link to join %s; the game's Communities window opens and asks you to confirm. The addon cannot join for you: %s", self.DEFAULT, link))
+    end
+    if reason == "faction" then
+        return say(FD.L["Your faction is not known yet; type /duelrating community join again in a few seconds."])
+    end
+    if reason == "custom" then
+        say(Format("The addon ships a join link only for %s.", self.DEFAULT))
+        return say(Format("Join the in-game community %s to find addon players on the whole realm: open the Communities window and accept an invitation or an invite link from a member. The addon cannot join for you and only reads the member list.", self:Configured()))
+    end
+    say(Format("There is no %s community for the %s yet, so the addon has no join link for you.", self.DEFAULT, factionLabel(faction)))
+end
+
+-- One gentle line per login session for a player who is not in the shipped
+-- community while a link exists for the own faction: once clubs are loaded
+-- and enabled (the community was missing after the initial club load or on
+-- two reads), not in quiet mode, not with the directory or the hint turned
+-- off, and never again once the player was seen in the community. The
+-- marker is saved, so a /reload does not repeat it; only a login (the
+-- isInitialLogin of PLAYER_ENTERING_WORLD) starts a new session.
+function Community:Hint(at)
+    local s = settings()
+    if not s then return end
+    if self.login then self.login, s.communityHintShown = nil, nil end
+    if self.clubId ~= nil and self:Shipped() then s.communityJoined = true end
+    if s.communityJoined or s.communityHintShown or s.communityHintOff or s.communityOff then return end
+    if self.state ~= "missing" and self.state ~= "type" then return end
+    if not self.initialLoaded and (self.absentReads or 0) < 2 then return end
+    if at - (self.startedAt or at) < HINT_DELAY or FD.Presence and FD.Presence:Quiet() then return end
+    local link = self:JoinLink()
+    if not link then return end
+    s.communityHintShown = true
+    FD.Debug:Log("community", "join hint")
+    say(Format("Join the %s community to find duel partners across the whole realm: %s (hide this hint: /duelrating community hint off)", self.DEFAULT, link))
+end
+
+-- brief: the caller prints the join advice itself.
+function Community:Status(brief)
     local L, name = FD.L, self:Name()
     local state = self.state
     if state == "off" then return { L["Community: off. Type /duelrating community on to use it again."] } end
@@ -403,8 +511,18 @@ function Community:Status()
     if state == "loading" then return { L["Community: waiting for the game to load your communities."] } end
     if state == "disabled" then return { L["Community: communities are disabled on this client."] } end
     if state == "restricted" then return { L["Community: communities are restricted for this account."] } end
-    if state == "missing" then return { Format("Community: you are not a member of a community named %s.", name) } end
-    if state == "type" then return { Format("Community: %s is not a character community; only character communities are used.", name) } end
+    if state == "missing" or state == "type" then
+        local lines = { state == "missing" and Format("Community: you are not a member of a community named %s.", name)
+            or Format("Community: %s is not a character community; only character communities are used.", name) }
+        if brief then return lines end
+        local link, faction, reason = self:JoinLink()
+        if link then
+            lines[2] = Format("Community join link for the %s: available (/duelrating community join).", factionLabel(faction))
+        elseif reason == "none" then
+            lines[2] = Format("Community join link: none for the %s yet.", factionLabel(faction))
+        end
+        return lines
+    end
     if state == "error" then return { L["Community: temporarily unavailable."] } end
     if state == "members" then return { Format("Community: %s | loading the member list...", name) } end
     local lines = {}
@@ -426,10 +544,39 @@ function Community:Status()
     return lines
 end
 
+function Community:HintCommand(s, word)
+    local L = FD.L
+    if word == "off" then
+        s.communityHintOff = true
+        return say(L["Community join hint off."])
+    end
+    if word == "on" then
+        s.communityHintOff = nil
+        return say(L["Community join hint on."])
+    end
+    say(Format("Community join hint: %s. Type /duelrating community hint off or on.", s.communityHintOff and L["off"] or L["on"]))
+end
+
+-- /duelrating community join: the clickable link for the own faction. The
+-- command is a demand like the status form, so membership is read first.
+function Community:Join(active)
+    self:Rebuild(GetTime(), active)
+    if self.clubId ~= nil then return say(Format("You are already a member of %s.", self:Name())) end
+    local state = self.state
+    if state == "unsupported" or state == "disabled" or state == "restricted" then
+        -- The game would not open the invitation (the handler checks IsEnabled).
+        for _, line in ipairs(self:Status(true)) do say(line) end
+        return
+    end
+    self:Advise()
+end
+
+-- "join", "hint", "on" and "off" are keywords: a community with one of
+-- these names cannot be configured.
 function Community:Command(raw)
     local L, s = FD.L, settings()
     if not s then return end
-    local word = raw:lower()
+    local word = raw:lower():gsub("%s+", " ")
     -- The command is a demand: read the directory now and, unless quiet,
     -- request a member list that is not loaded yet (FOCUS_GAP still applies).
     local active = not (FD.Presence and FD.Presence:Quiet())
@@ -438,20 +585,27 @@ function Community:Command(raw)
         self:Rebuild(GetTime())
         return say(L["Community directory off. Discovery no longer reads a community."])
     end
+    if word == "hint" or word == "hint on" or word == "hint off" then return self:HintCommand(s, word:match("^hint ?(.*)$")) end
+    if word == "join" then return self:Join(active) end
     if word == "on" then s.communityOff = nil
     elseif raw ~= "" then
         if not self:Valid(raw) then return say(L["A community name has 1 to 48 characters and no | sign."]) end
         s.communityName, s.communityOff = raw, nil
     end
     self:Rebuild(GetTime(), active)
-    for _, line in ipairs(self:Status()) do say(line) end
+    for _, line in ipairs(self:Status(true)) do say(line) end
     -- Joining is the remedy only when no character community has the name.
     if self.state == "missing" or self.state == "type" then
-        say(Format("Join the in-game community %s to find addon players on the whole realm: open the Communities window and accept an invitation or an invite link from a member. The addon cannot join for you and only reads the member list.", self:Name() or self.DEFAULT))
+        self:Advise()
     elseif self.state == "members" then
         say(L["The game is loading the member list; type /duelrating community again in a few seconds."])
     end
 end
+
+-- A login (not a /reload) starts a new session for the join hint.
+FD:OnEvent("PLAYER_ENTERING_WORLD", function(isInitialLogin)
+    if isInitialLogin == true then Community.login = true end
+end, true)
 
 -- Events only mark the cache dirty; a Presence tick rebuilds it (see Update).
 -- Club events and joins, leaves and list loads of the directory club are
@@ -475,4 +629,4 @@ end
 
 FD:RegisterCommand("community", function(_, rawRest)
     Community:Run(function() Community:Command(rawRest or "") end)
-end, "Show the community used to find players realm-wide (community <name> | on | off).", 86)
+end, "Show the community used to find players realm-wide (community join | <name> | on | off | hint on|off).", 86)

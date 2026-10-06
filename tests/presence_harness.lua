@@ -2,7 +2,8 @@
 -- Each client loads the real Constants, Locale, Debug, Commands, Outbound,
 -- Protocol, Rating, Database, Wow, Roster, Presence and Community modules
 -- into a private environment with fake native APIs (options.clubs adds a
--- read-only C_Club). A network object moves addon
+-- read-only C_Club; its restricted functions, those of C_ClubFinder and
+-- SetItemRef fail when called). A network object moves addon
 -- messages between clients with per-message latency, loss and throttling.
 local Harness = {}
 
@@ -206,16 +207,33 @@ function Harness.client(options)
                 if ready("DoesCommunityHaveMembersOfTheOppositeFaction") then return club(id) and club(id).crossFaction == true or false end
             end,
         }
-        for _, name in ipairs({ "SendMessage", "EditMessage", "DestroyMessage", "CreateClub", "EditClub", "DestroyClub",
-            "SendInvitation", "SendCharacterInvitation", "AcceptInvitation", "DeclineInvitation", "RevokeInvitation",
-            "LeaveClub", "KickMember", "RedeemTicket", "CreateTicket", "SetClubMemberNote", "AssignMemberRole",
-            "UnfocusMembers", "SetFavorite",
-            "SetSocialQueueingEnabled", "AddClubStreamChatChannel", "CreateStream", "SetAvatarTexture" }) do
-            env.C_Club[name] = function()
-                state.clubWrites = (state.clubWrites or 0) + 1
-                error("C_Club." .. name .. " must never be called")
+        -- Every function the pinned ClubDocumentation.lua marks
+        -- HasRestrictions, plus the other writes and the ticket request a
+        -- clicked invite link makes (Blizzard's handler, never the addon).
+        local function forbid(api, prefix, names)
+            for _, name in ipairs(names) do
+                api[name] = function()
+                    state.clubWrites = (state.clubWrites or 0) + 1
+                    error(prefix .. name .. " must never be called")
+                end
             end
         end
+        forbid(env.C_Club, "C_Club.", { "AcceptInvitation", "AssignMemberRole", "CreateClub", "CreateStream", "CreateTicket",
+            "DeclineInvitation", "DestroyClub", "DestroyMessage", "DestroyStream", "DestroyTicket", "EditClub", "EditMessage",
+            "EditStream", "GetLastTicketResponse", "KickMember", "LeaveClub", "RedeemTicket", "RevokeInvitation",
+            "SendCharacterInvitation", "SendInvitation", "SendMessage", "SendTitleFriendRequest", "SetAvatarTexture",
+            "SetClubMemberNote", "RequestTicket", "RequestTickets", "RequestInvitationsForClub", "UnfocusMembers",
+            "SetFavorite", "SetSocialQueueingEnabled", "AddClubStreamChatChannel" })
+        -- ClubFinderDocumentation.lua: its HasRestrictions functions.
+        env.C_ClubFinder = {}
+        forbid(env.C_ClubFinder, "C_ClubFinder.", { "ApplicantAcceptClubInvite", "ApplicantDeclineClubInvite",
+            "CancelMembershipRequest", "PostClub", "RequestClubsList", "RequestMembershipToClub", "RespondToApplicant" })
+    end
+    -- A link printed by the addon is clicked by the player only: addon code
+    -- never routes it through SetItemRef.
+    env.SetItemRef = function()
+        state.itemRefs = (state.itemRefs or 0) + 1
+        error("SetItemRef must never be called by the addon")
     end
     env.C_ChatInfo = {
         RegisterAddonMessagePrefix = function(prefix)

@@ -40,7 +40,7 @@ local function emptyText()
     if name and community:Ready() then
         return Format("No ForeverDuelersGuild players discovered in this zone yet.\n\nWhile this window is open, your target, nearby players, ForeverDuel channel members and members of the %s community in this zone are asked for their profiles. Click Refresh to ask again.", name)
     end
-    return Format("No ForeverDuelersGuild players discovered in this zone yet.\n\nWhile this window is open, your target, nearby players and ForeverDuel channel members are asked for their profiles. To find addon players on the whole realm, join the in-game community %s (/duelrating community).", name or (community and community.DEFAULT) or "ForeverDuelersGuild")
+    return Format("No ForeverDuelersGuild players discovered in this zone yet.\n\nWhile this window is open, your target, nearby players and ForeverDuel channel members are asked for their profiles. To find addon players on the whole realm, join the in-game community %s (/duelrating community join).", name or (community and community.DEFAULT) or "ForeverDuelersGuild")
 end
 
 -- A failed browser or challenge must never enter Core's duel-aborting recovery.

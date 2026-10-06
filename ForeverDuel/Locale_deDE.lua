@@ -239,7 +239,26 @@ FD.Locale:Register("deDE", {
     ["Join the in-game community %s to find addon players on the whole realm: open the Communities window and accept an invitation or an invite link from a member. The addon cannot join for you and only reads the member list."] =
         "Tritt im Spiel der Community %s bei, um Addon-Spieler auf dem ganzen Realm zu finden: Öffne das Communityfenster und nimm eine Einladung oder einen Einladungslink eines Mitglieds an. Das Addon kann nicht für dich beitreten und liest nur die Mitgliederliste.",
     ["The game is loading the member list; type /duelrating community again in a few seconds."] = "Das Spiel lädt die Mitgliederliste; gib in ein paar Sekunden erneut /duelrating community ein.",
-    ["Show the community used to find players realm-wide (community <name> | on | off)."] = "Zeigt die Community, über die Spieler realmweit gefunden werden (community <Name> | on | off).",
+    ["Join %s"] = "%s beitreten",
+    ["Horde"] = "Horde",
+    ["Alliance"] = "Allianz",
+    ["Click the link to join %s; the game's Communities window opens and asks you to confirm. The addon cannot join for you: %s"] =
+        "Klicke auf den Link, um %s beizutreten; das Communityfenster des Spiels öffnet sich und fragt nach deiner Bestätigung. Das Addon kann nicht für dich beitreten: %s",
+    ["Your faction is not known yet; type /duelrating community join again in a few seconds."] =
+        "Deine Fraktion ist noch nicht bekannt; gib in ein paar Sekunden erneut /duelrating community join ein.",
+    ["The addon ships a join link only for %s."] = "Das Addon bringt nur für %s einen Beitrittslink mit.",
+    ["There is no %s community for the %s yet, so the addon has no join link for you."] =
+        "Es gibt noch keine Community %s für die %s, daher hat das Addon keinen Beitrittslink für dich.",
+    ["Join the %s community to find duel partners across the whole realm: %s (hide this hint: /duelrating community hint off)"] =
+        "Tritt der Community %s bei, um auf dem ganzen Realm Duellpartner zu finden: %s (Hinweis ausblenden: /duelrating community hint off)",
+    ["Community join link for the %s: available (/duelrating community join)."] = "Community-Beitrittslink für die %s: verfügbar (/duelrating community join).",
+    ["Community join link: none for the %s yet."] = "Community-Beitrittslink: für die %s noch keiner.",
+    ["Community join hint off."] = "Community-Beitrittshinweis aus.",
+    ["Community join hint on."] = "Community-Beitrittshinweis an.",
+    ["Community join hint: %s. Type /duelrating community hint off or on."] = "Community-Beitrittshinweis: %s. Gib /duelrating community hint off oder on ein.",
+    ["You are already a member of %s."] = "Du bist bereits Mitglied der Community %s.",
+    ["Show the community used to find players realm-wide (community join | <name> | on | off | hint on|off)."] =
+        "Zeigt die Community, über die Spieler realmweit gefunden werden (community join | <Name> | on | off | hint on|off).",
 
     -- Tooltip.lua
     ["Duel Rating (%s, Lv %d)"] = "Duellwertung (%s, St. %d)",
@@ -623,8 +642,8 @@ FD.Locale:Register("deDE", {
     ["Closest to your rating"] = "Nah an deiner Wertung",
     ["No ForeverDuelersGuild players discovered in this zone yet.\n\nWhile this window is open, your target, nearby players, ForeverDuel channel members and members of the %s community in this zone are asked for their profiles. Click Refresh to ask again."] =
         "Noch keine ForeverDuelersGuild-Spieler in dieser Zone gefunden.\n\nSolange dieses Fenster offen ist, werden dein Ziel, Spieler in der Nähe, ForeverDuel-Kanalmitglieder und Mitglieder der Community %s in dieser Zone nach ihren Profilen gefragt. Klicke auf 'Neu laden', um erneut zu fragen.",
-    ["No ForeverDuelersGuild players discovered in this zone yet.\n\nWhile this window is open, your target, nearby players and ForeverDuel channel members are asked for their profiles. To find addon players on the whole realm, join the in-game community %s (/duelrating community)."] =
-        "Noch keine ForeverDuelersGuild-Spieler in dieser Zone gefunden.\n\nSolange dieses Fenster offen ist, werden dein Ziel, Spieler in der Nähe und ForeverDuel-Kanalmitglieder nach ihren Profilen gefragt. Um Addon-Spieler auf dem ganzen Realm zu finden, tritt im Spiel der Community %s bei (/duelrating community).",
+    ["No ForeverDuelersGuild players discovered in this zone yet.\n\nWhile this window is open, your target, nearby players and ForeverDuel channel members are asked for their profiles. To find addon players on the whole realm, join the in-game community %s (/duelrating community join)."] =
+        "Noch keine ForeverDuelersGuild-Spieler in dieser Zone gefunden.\n\nSolange dieses Fenster offen ist, werden dein Ziel, Spieler in der Nähe und ForeverDuel-Kanalmitglieder nach ihren Profilen gefragt. Um Addon-Spieler auf dem ganzen Realm zu finden, tritt im Spiel der Community %s bei (/duelrating community join).",
     ["Could not display players in your zone. Try /duelrating zone again."] = "Spieler in deiner Zone konnten nicht angezeigt werden. Versuche /duelrating zone erneut.",
     ["PLAYERS IN ZONE  /  ForeverDuelersGuild discovery"] = "SPIELER IN DER ZONE  /  ForeverDuelersGuild-Suche",
     ["Refresh"] = "Neu laden",

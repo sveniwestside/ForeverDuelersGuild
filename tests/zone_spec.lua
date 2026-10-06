@@ -158,8 +158,8 @@ return function(FD, equal)
     -- The empty state names what discovery asks and suggests the directory
     -- community until one is joined.
     local empty = FD.Zone.empty.text
-    equal(empty:find("join the in-game community ForeverDuelersGuild (/duelrating community)", 1, true) ~= nil, true,
-        "without the community module the default community is suggested")
+    equal(empty:find("join the in-game community ForeverDuelersGuild (/duelrating community join)", 1, true) ~= nil, true,
+        "without the community module the default community is suggested with the join command")
     local community = { DEFAULT = "ForeverDuelersGuild", name = "Duelists", ready = false }
     function community:Name() return self.name end
     function community:Ready() return self.ready end
@@ -172,6 +172,7 @@ return function(FD, equal)
     equal(FD.Zone.empty.text:find("members of the Duelists community in this zone are asked", 1, true) ~= nil, true,
         "a joined community is named as a discovery source")
     equal(FD.Zone.empty.text:find("join the in-game", 1, true), nil, "and no longer suggested")
+    equal(FD.Zone.empty.text:find("/duelrating community join", 1, true), nil, "nor the join command")
     community.name = nil
     FD.Zone:RefreshIfShown()
     equal(FD.Zone.empty.text:find("join the in-game community ForeverDuelersGuild", 1, true) ~= nil, true,

@@ -300,7 +300,8 @@ return function(FD, equal)
     c = started({ clubs = { directory({ member(1) }, { name = "Duelists" }) } })
     c:command("community")
     equal(printed(c, "you are not a member of a community named ForeverDuelersGuild"), true, "the command shows the status")
-    equal(printed(c, "Join the in-game community ForeverDuelersGuild"), true, "and how to join")
+    equal(printed(c, "There is no ForeverDuelersGuild community for the Alliance yet"), true,
+        "and that the addon has no join link for the Alliance")
     c:command("community Duelists")
     equal(c.FD.Database.data.settings.communityName, "Duelists", "the name is saved")
     equal(c.FD.Community:IsMember(member(1).name), true, "the new name applies at once")
@@ -461,6 +462,178 @@ return function(FD, equal)
         "after the Channels window closed, slot and focus are taken back at once")
     c:advance(120)
     equal(c.calls.FocusMembers, 2, "a held slot is not focused again")
+
+    -- Join link. The addon cannot join for the player: every C_Club join or
+    -- invite function HasRestrictions. It prints Blizzard's own clubTicket
+    -- link into the player's chat frame only; the player's click runs
+    -- Blizzard's handler, which opens the Communities window's invitation.
+    local function FormatLink(linkType, text, ...) -- The pinned LinkUtil.FormatLink.
+        local returnLink = table.concat({ ("|H%s"):format(linkType), ... }, ":")
+        if text then return returnLink .. ("|h%s|h"):format(text) end
+        return returnLink .. "|h"
+    end
+    local function linkLines(c)
+        local n = 0
+        for _, line in ipairs(c.prints) do if line:find("|HclubTicket:", 1, true) then n = n + 1 end end
+        return n
+    end
+    -- Sent, clicked, passed to SetItemRef or a restricted club call.
+    local function leaked(c)
+        for _, packet in ipairs(c.sent) do if packet.payload:find("clubTicket", 1, true) then return true end end
+        return c.clubWrites ~= nil or c.itemRefs ~= nil
+    end
+    local function outsider(fields)
+        local options = { faction = "Horde", clubs = { directory({ member(1) }, { name = "Other Club" }) } }
+        for key, value in pairs(fields or {}) do options[key] = value end
+        return options
+    end
+    c = started(outsider())
+    local link = c.FD.Community:JoinLink()
+    equal(link, "|cffffd100" .. FormatLink("clubTicket", "[Join ForeverDuelersGuild]", "lvEaz0fYwL") .. "|r",
+        "the link has GetClubTicketLink's form: NORMAL_FONT_COLOR around a clubTicket link with the Horde ticket")
+    -- Parsed back like the chat frame and the pinned clubTicket handler:
+    -- LinkUtil.ExtractLink and SplitLink, then the handler's
+    -- string.split(":", linkData.options) for the ticket id.
+    local linkType, options, display = link:match("|H([^:]*):([^|]*)|h(.*)|h")
+    equal(linkType, "clubTicket", "the link type is LinkTypes.ClubTicket")
+    equal(options:match("^[^:]*"), "lvEaz0fYwL", "the handler's first option field is the ticket id")
+    equal(display, "[Join ForeverDuelersGuild]", "the display text names the community")
+    local linkText, displayText = link:match("^|cffffd100(.*)|r$"):match("^|H(.+)|h(.*)|h$")
+    equal(linkText .. " " .. displayText, "clubTicket:lvEaz0fYwL [Join ForeverDuelersGuild]", "SplitLink yields both parts")
+    equal(c.FD.Community:Link("bad:code"), nil, "a ticket with link syntax is refused")
+    equal(c.FD.Community:Link("bad|code"), nil, "a ticket with a UI escape is refused")
+    assert(loadfile("ForeverDuel/Locale_deDE.lua"))("ForeverDuel", c.FD)
+    c.FD.Locale.current = "deDE"
+    equal(c.FD.Community:JoinLink():match("|h(.-)|h"), "[ForeverDuelersGuild beitreten]", "the link text is localized")
+    c.FD.Locale.current = "enUS"
+    -- /duelrating community join prints it; status says it exists.
+    c:command("community join")
+    equal(printed(c, "Click the link to join ForeverDuelersGuild; the game's Communities window opens and asks you to confirm. The addon cannot join for you: " .. link),
+        true, "community join prints the clickable link for the own faction")
+    equal(has(table.concat(c.FD:StatusLines(), "\n"), "Community join link for the Horde: available (/duelrating community join)."),
+        true, "status shows that a join link exists for the faction")
+    c:command("community")
+    equal(printed(c, "Community: you are not a member of a community named ForeverDuelersGuild."), true, "community shows the status")
+    equal(linkLines(c), 2, "and the link once more")
+    equal(leaked(c), false, "the link is only printed: never sent, clicked or handed to SetItemRef; no restricted call")
+    -- A faction without a community, a member, another community, disabled
+    -- communities and an unknown faction get no link.
+    c = started(outsider({ faction = "Alliance" }))
+    c:command("community join")
+    equal(printed(c, "There is no ForeverDuelersGuild community for the Alliance yet, so the addon has no join link for you."),
+        true, "no community exists for the Alliance yet")
+    equal(has(status(c), "Community join link: none for the Alliance yet."), true, "status says the faction has no link")
+    c:advance(300)
+    equal(linkLines(c), 0, "a faction without a ticket never gets a link, not even as a hint")
+    c = started({ faction = "Horde", clubs = { directory({ member(1) }) } })
+    c:command("community join")
+    equal(printed(c, "You are already a member of ForeverDuelersGuild."), true, "a member is told so")
+    equal(has(status(c), "join link"), false, "a member's status has no join link line")
+    c = started(outsider())
+    c.FD.Database.data.settings.communityName = "Duelists"
+    c:command("community join")
+    equal(printed(c, "The addon ships a join link only for ForeverDuelersGuild."), true, "the links join the default community only")
+    equal(printed(c, "Join the in-game community Duelists"), true, "another community is joined by invitation")
+    c = Harness.client(outsider())
+    c.clubsEnabled = false
+    c:start(); c:advance(15)
+    c:command("community join")
+    equal(printed(c, "Community: communities are disabled on this client."), true, "disabled communities are explained")
+    c = started(outsider())
+    c.player.faction = nil
+    c:command("community join")
+    equal(printed(c, "Your faction is not known yet"), true, "an unknown faction is explained")
+    equal(linkLines(c), 0, "no link without a known faction")
+
+    -- One join hint per login session, after the initial club load (or a
+    -- second read) found no directory community and a link exists for the
+    -- own faction.
+    local HINT = "Join the ForeverDuelersGuild community to find duel partners across the whole realm: "
+    local function hints(c)
+        local n = 0
+        for _, line in ipairs(c.prints) do if line:find(HINT, 1, true) then n = n + 1 end end
+        return n
+    end
+    c = Harness.client(outsider({ clubsReady = false }))
+    c:start(); c:advance(5)
+    equal(hints(c), 0, "no hint while the clubs load")
+    c.clubsReady = true
+    c:emit("INITIAL_CLUBS_LOADED")
+    c:advance(30)
+    equal(hints(c), 1, "one hint once the loaded clubs show no directory community")
+    equal(printed(c, HINT .. c.FD.Community:JoinLink() .. " (hide this hint: /duelrating community hint off)"), true,
+        "the hint is one line with the link")
+    c:advance(600)
+    equal(hints(c), 1, "the hint is shown once per session")
+    c:emit("PLAYER_ENTERING_WORLD", false, true)
+    c:advance(120)
+    equal(hints(c), 1, "a /reload does not repeat it (the marker is saved)")
+    c:emit("PLAYER_ENTERING_WORLD", true, false)
+    c:advance(10)
+    equal(hints(c), 2, "a new login session shows it again")
+    equal(leaked(c), false, "the hint is only printed")
+    -- Without the load event (a /reload) one read is not trusted.
+    c = started(outsider())
+    c:advance(40)
+    equal(hints(c), 0, "a single read without the load event is not trusted")
+    c:advance(30)
+    equal(hints(c), 1, "the second read is")
+    -- Never for a member, and never again once the player was seen in it.
+    c = Harness.client({ faction = "Horde", clubs = { directory({ member(1) }) }, clubsReady = false })
+    c:start(); c:advance(3)
+    c.clubsReady = true
+    c:emit("INITIAL_CLUBS_LOADED")
+    c:advance(30)
+    equal(hints(c), 0, "a member gets no hint")
+    table.remove(c.clubs, 1)
+    c:emit("CLUB_REMOVED", 900)
+    c:advance(15)
+    equal(c.FD.Community.state, "missing", "the player left the community")
+    c:emit("PLAYER_ENTERING_WORLD", true, false)
+    c:advance(120)
+    equal(hints(c), 0, "a player once seen in the community never gets the hint again")
+    -- Not with the directory off, in quiet mode or with the hint off.
+    for _, case in ipairs({ "off", "quiet", "hint off" }) do
+        c = Harness.client(outsider({ clubsReady = false }))
+        local s = c.FD.Database.data.settings
+        if case == "off" then s.communityOff = true elseif case == "quiet" then s.quiet = true end
+        if case == "hint off" then c:command("community hint off") end
+        c:start(); c:advance(3)
+        c.clubsReady = true
+        c:emit("INITIAL_CLUBS_LOADED")
+        c:advance(120)
+        equal(hints(c), 0, "no hint: " .. case)
+        if case == "quiet" then
+            c:command("quiet")
+            c:advance(10)
+            equal(hints(c), 1, "leaving quiet mode allows the hint")
+        elseif case == "hint off" then
+            equal(s.communityHintOff, true, "hint off is saved")
+            c:command("community hint")
+            equal(printed(c, "Community join hint: off. Type /duelrating community hint off or on."), true, "community hint shows the setting")
+            c:command("community hint on")
+            c:advance(10)
+            equal(hints(c), 1, "hint on allows it again")
+        end
+        equal(leaked(c), false, "no restricted call: " .. case)
+    end
+    -- A community name with a keyword prefix stays a name.
+    c = started(outsider())
+    c:command("community Hint Masters")
+    equal(c.FD.Database.data.settings.communityName, "Hint Masters", "only the exact hint forms are keywords")
+
+    -- No addon file calls a restricted club function, the ticket request a
+    -- clicked link makes, or SetItemRef (comments may name them).
+    local toc = assert(io.open("ForeverDuel/ForeverDuel.toc", "r")):read("*a")
+    local forbidden = { "RedeemTicket", "SendCharacterInvitation", "AcceptInvitation", "SendInvitation", "RequestTicket",
+        "GetLastTicketResponse", "C_ClubFinder", "SetItemRef", "UnfocusMembers", "LeaveClub" }
+    local files = 0
+    for file in toc:gmatch("([%w_]+)%.lua") do
+        files = files + 1
+        local code = assert(io.open("ForeverDuel/" .. file .. ".lua", "r")):read("*a"):gsub("%-%-[^\n]*", "")
+        for _, name in ipairs(forbidden) do equal(code:find(name, 1, true), nil, file .. ".lua never calls " .. name) end
+    end
+    equal(files > 20, true, "every TOC file is checked")
 
     -- Two clients on different internal servers: the channel never
     -- connects them and neither sees the other, but both are in the
