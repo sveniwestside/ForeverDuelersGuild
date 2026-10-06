@@ -3,7 +3,7 @@
 ## Notes: Explicitly agreed local rated duels for WoW: Forever.
 ## Notes-deDE: Lokale gewertete Duelle in WoW: Forever, nur wenn beide Spieler zustimmen.
 ## Author: ForeverDuelersGuild contributors
-## Version: 0.6.0
+## Version: 0.6.1
 ## IconTexture: Interface\AddOns\ForeverDuel\Media\Icon.tga
 ## SavedVariablesPerCharacter: ForeverDuelDB
 

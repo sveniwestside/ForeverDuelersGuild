@@ -1,7 +1,7 @@
 {
   "format": "foreverduel-curseforge-preparation-v1",
   "preparedOn": "2026-10-06",
-  "status": "new version prepared; tests, upload and moderation pending",
+  "status": "submitted; CurseForge moderation pending",
   "project": {
     "name": "ForeverDuelersGuild",
     "suggestedSlug": "foreverduelersguild",
@@ -29,36 +29,46 @@
     "websiteUrl": null
   },
   "file": {
-    "version": "0.6.1",
-    "displayName": "ForeverDuelersGuild 0.6.1",
-    "uploadFile": "ForeverDuelersGuild-0.6.1.zip",
+    "version": "0.6.0",
+    "displayName": "ForeverDuelersGuild 0.6.0",
+    "uploadFile": "ForeverDuelersGuild-0.6.0.zip",
     "releaseType": "Beta",
     "gameFlavor": "Forever",
     "gameVersion": "1.60.1",
     "interface": 16001,
     "referenceClientBuild": "1.60.1.70205",
-    "changelogFile": "changelog-0.6.1.txt",
+    "changelogFile": "changelog-0.6.0.txt",
     "requiredDependencies": [],
     "publishAutomaticallyAfterApproval": true
   },
   "publication": {
-    "submitted": false,
-    "fileId": null,
-    "fileStatus": "Not uploaded",
+    "submitted": true,
+    "fileId": 9079353,
+    "fileStatus": "Submitted; moderation pending",
+    "submittedAt": "2026-10-06T11:04:40Z",
+    "archiveSha256": "3312ba1c21fd2ee8bd76bfebee85e09566b12acf76f8f967cda1f75e3d27dad8",
     "approved": false,
     "published": false,
     "downloadVerified": false,
     "installationVerified": false,
-    "recordSource": "local release preparation"
+    "recordSource": "upload receipt of GitHub Actions run 37453917731 (tag v0.6.0)"
   },
   "validation": {
     "userReportedTesting": {
-      "status": "not supplied for this version",
-      "version": "0.6.1"
+      "status": "passed",
+      "version": "0.6.0",
+      "reference": "2026-10-06, project owner, two Horde characters on Forever 1.60.1.70205: zone discovery both ways, community directory and join link, queue match across zones and rated duel worked. Tested build 12d3946 (installed as 6aad51b before the history rewrite); later commits change only the community status wording, the one-time legacy notice and release documents. Not separately confirmed: Alliance, German client, saving a tested place, the trip to a meeting place, queue auto-accept."
     },
     "automated": {
-      "status": "not run for this version",
-      "version": "0.6.1"
+      "status": "passed",
+      "version": "0.6.0",
+      "executedOn": "2026-10-06",
+      "command": "python tests/run.py",
+      "runtime": "Lua 5.1",
+      "compiledLuaFiles": 72,
+      "suites": 35,
+      "assertions": 13061,
+      "pythonTests": "passed in the same pipeline run"
     }
   },
   "notes": [

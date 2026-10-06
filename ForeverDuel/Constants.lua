@@ -1,7 +1,7 @@
 local _, FD = ...
 
 FD.C = {
-    VERSION = "0.6.0", PROTOCOL_VERSION = 3, SCHEMA_VERSION = 2,
+    VERSION = "0.6.1", PROTOCOL_VERSION = 3, SCHEMA_VERSION = 2,
     PREFIX = "ForeverDuel2", INITIAL_RATING = 1500, K_FACTOR = 32,
     MAX_LEVEL_DIFFERENCE = 5, LEVEL_RATING_WEIGHT = 20,
     -- The native request window bounds the human decision; no separate

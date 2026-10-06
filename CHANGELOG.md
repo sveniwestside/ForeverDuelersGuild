@@ -2,7 +2,15 @@
 
 Notable changes to ForeverDuelersGuild (addon folder `ForeverDuel`), newest first.
 
-**0.4.5** was the first CurseForge release (Beta) and **0.6.0** is the next one. Every version in between was a local test build installed on the developer's own test clients and never uploaded. Detailed, dated investigation notes for these versions are archived in [docs/investigations/](docs/investigations/).
+**0.4.5** was the first CurseForge release (Beta), followed by **0.6.0** and **0.6.1**. Every version in between was a local test build installed on the developer's own test clients and never uploaded. Detailed, dated investigation notes for these versions are archived in [docs/investigations/](docs/investigations/).
+
+## [0.6.1] - 2026-10-06
+
+_Small update to 0.6.0; rated duels between 0.6.0 and 0.6.1 work._
+
+### Added
+
+- **Alliance community:** the Alliance has its own `ForeverDuelersGuild` community now. `/duelrating community join` and the once-per-login hint print its invitation for Alliance characters; 0.6.0 told them that no Alliance community exists.
 
 ## [0.6.0] - 2026-10-06
 

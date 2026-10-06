@@ -2,9 +2,9 @@
 
 A local 1v1 duel rating addon for **WoW: Forever** (client 1.60.1, interface 16001). When both players run the addon and both explicitly choose **Rated** for an ordinary WoW duel, it counts for a per-character Elo rating with a match history. The addon also has a same-zone player browser and an opt-in matchmaking queue.
 
-**Finding other players:** join the in-game community **ForeverDuelersGuild**. Type `/duelrating community join` (a character that is not a member also sees the link once per login) and click the link the addon prints in your chat; the game's Communities window then asks you to confirm. The addon cannot join for you and never sends the link to anyone. For now only the Horde has a community; Alliance characters get a link once one exists. The community is the only route that connects addon users across the whole Forever mega-realm; the addon only reads its member list and never posts in it.
+**Finding other players:** join the in-game community **ForeverDuelersGuild**. Type `/duelrating community join` (a character that is not a member also sees the link once per login) and click the link the addon prints in your chat; the game's Communities window then asks you to confirm. The addon cannot join for you and never sends the link to anyone. The Horde and the Alliance each have their own community, and the addon prints the link for your faction (0.6.0 knew only the Horde link; Alliance characters on 0.6.0 can use [this invitation](https://www.worldofwarcraft.com/invite/E3AWKZirJn?region=&faction=Alliance)). The community is the only route that connects addon users across the whole Forever mega-realm; the addon only reads its member list and never posts in it.
 
-Version **0.6.0** is the next [CurseForge](https://www.curseforge.com/wow/addons/foreverduelersguild) Beta after 0.4.5. It cannot rate duels against 0.4.5, so both players need 0.6.0.
+Version **0.6.1** is the next [CurseForge](https://www.curseforge.com/wow/addons/foreverduelersguild) Beta after 0.6.0 and adds the Alliance community's join link. 0.6.0 and 0.6.1 rate duels with each other; neither can rate duels against 0.4.5.
 
 ## Installation
 

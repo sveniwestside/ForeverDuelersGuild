@@ -1,0 +1,7 @@
+ForeverDuelersGuild 0.6.1 - Beta
+Target client: WoW: Forever 1.60.1 (interface 16001)
+
+A small update to 0.6.0. Rated duels between 0.6.0 and 0.6.1 work. Coming from 0.4.5: read the 0.6.0 notes first (restart the game completely, back up SavedVariables).
+
+New
+- Alliance characters can join the ForeverDuelersGuild community too: /duelrating community join prints the Alliance invitation, and characters that are not members see it once per login.
