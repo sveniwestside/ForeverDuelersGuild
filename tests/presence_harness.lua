@@ -53,6 +53,14 @@ function Harness.client(options)
     state.units.player = state.player
     state.fullName = Harness.fullName(state.player, regional)
     local function count(name) state.calls[name] = (state.calls[name] or 0) + 1 end
+    -- Frame:HookScript chains like the game's: every hook runs, in order,
+    -- after the script itself.
+    local function hookScript(hooks)
+        return function(_, script, callback)
+            local previous = hooks[script]
+            hooks[script] = previous and function(...) previous(...); callback(...) end or callback
+        end
+    end
     local function unit(token)
         if token == nil then return nil end
         return state.units[token]
@@ -296,9 +304,8 @@ function Harness.client(options)
                 end)
             end
         end
-        env.ChannelFrame = { IsShown = function() return state.shown end,
-            HookScript = function(_, script, callback) state.channelHooks = state.channelHooks or {}
-                state.channelHooks[script] = callback end }
+        state.channelHooks = {}
+        env.ChannelFrame = { IsShown = function() return state.shown end, HookScript = hookScript(state.channelHooks) }
     end
     env.StartDuel = function(token)
         state.duels = state.duels or {}
@@ -330,6 +337,40 @@ function Harness.client(options)
         for _, handler in ipairs(FD.eventHandlers[event] or {}) do handler.run(...) end
     end
     function state:command(text) FD:Command(text) end
+    -- Blizzard_Communities loads on demand: its window exists from then on
+    -- and ADDON_LOADED follows at once.
+    function state:loadCommunities()
+        self.communityHooks = {}
+        env.CommunitiesFrame = { IsShown = function() return self.communitiesShown == true end,
+            HookScript = hookScript(self.communityHooks) }
+        self:emit("ADDON_LOADED", "Blizzard_Communities")
+    end
+    -- The Communities ("communities") or Channels ("channels") window shown
+    -- or hidden, as the pinned FrameXML does it: each hides the other on
+    -- show ("they share one presence subscription"); shown with clubId, the
+    -- window took the slot for that club (the Channels window for a
+    -- community channel); OnHide of the Communities window always clears
+    -- the slot, that of the Channels window only after it took it (it also
+    -- unfocuses); then the hooks run.
+    function state:window(which, shown, clubId)
+        local communities = which == "communities"
+        if communities and not env.CommunitiesFrame then
+            if not shown then return end
+            self:loadCommunities()
+        end
+        local hooks = (communities and self.communityHooks or self.channelHooks) or {}
+        if shown then
+            self:window(communities and "channels" or "communities", false)
+            if communities then self.communitiesShown = true else self.shown, self.channelClub = true, clubId end
+            if clubId ~= nil then self.subscription = clubId end
+            if hooks.OnShow then hooks.OnShow() end
+            return
+        end
+        if communities and not self.communitiesShown or not communities and not self.shown then return end
+        if communities then self.communitiesShown = false else self.shown = false end
+        if communities or self.channelClub ~= nil then self.subscription, self.channelClub = nil, nil end
+        if hooks.OnHide then hooks.OnHide() end
+    end
     function state:start()
         local ok = FD.Presence:Initialize()
         return ok

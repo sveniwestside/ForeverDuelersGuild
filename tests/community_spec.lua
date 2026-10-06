@@ -151,6 +151,37 @@ return function(FD, equal)
                 "pre-init " .. answer .. " persists no refusal")
         end
     end
+    -- Without the load event (a /reload, or one that never comes) the
+    -- refusal is believed only when a read at least 10 s after the first
+    -- repeats it: the community command, community join or the zone window
+    -- opening read sooner and still report loading.
+    for _, answer in ipairs({ "false", "error" }) do
+        local refusal = answer == "false" and "disabled" or "unsupported"
+        c = Harness.client({ faction = "Horde", clubs = { directory({ member(1) }) }, clubsReady = false })
+        c.preInit = answer
+        c:start(); c:advance(2)
+        c:command("community")
+        c:command("community join")
+        c.FD.Zone.shown = true
+        c.P:Changed()
+        c:advance(3)
+        equal(c.FD.Community.state, "loading", "pre-init " .. answer .. ": reads within 10 s report loading")
+        equal(printed(c, "communities are disabled") or printed(c, "not available on this client"), false,
+            "pre-init " .. answer .. ": the commands do not call communities unusable")
+        equal(printed(c, "Community: waiting for the game to load your communities."), true,
+            "pre-init " .. answer .. ": the commands say the game is loading")
+        for _, entry in ipairs(c:trace("transport")) do
+            equal(entry.detail:find(refusal, 1, true), nil, "pre-init " .. answer .. ": nothing persisted within 10 s")
+        end
+        c:advance(12)
+        equal(c.FD.Community.state, refusal, "pre-init " .. answer .. ": a repeat 10 s later is believed")
+        local persisted = false
+        for _, entry in ipairs(c:trace("transport")) do
+            if entry.event == "zone receive" and entry.detail:find("community " .. refusal, 1, true) then persisted = true end
+        end
+        equal(persisted, true, "pre-init " .. answer .. ": the believed refusal is persisted")
+        equal(c.clubWrites, nil, "pre-init " .. answer .. ": no restricted call")
+    end
     -- After the load event a refusal is believed at once.
     c = Harness.client({ clubs = { directory({ member(1) }) }, clubsReady = false })
     c:start(); c:advance(3)
@@ -462,6 +493,45 @@ return function(FD, equal)
         "after the Channels window closed, slot and focus are taken back at once")
     c:advance(120)
     equal(c.calls.FocusMembers, 2, "a held slot is not focused again")
+    -- A window opened and closed between two ticks is never seen shown:
+    -- the hooked OnHide hands the slot back. The Communities window loads
+    -- on demand (hooked on its ADDON_LOADED) or was loaded before the addon
+    -- (hooked when first seen); the Channels window exists from the start.
+    for _, case in ipairs({ "communities", "communities loaded early", "channels" }) do
+        local which = case == "channels" and "channels" or "communities"
+        club = directory({ member(1), member(2, { presence = OFFLINE }) })
+        c = Harness.client({ clubs = { club } })
+        local hookCalls = 0
+        if case == "communities loaded early" then
+            c.communityHooks = {}
+            c.env.CommunitiesFrame = { IsShown = function() return c.communitiesShown == true end,
+                HookScript = function(_, script, callback) hookCalls = hookCalls + 1; c.communityHooks[script] = callback end }
+        end
+        c:start(); c:advance(2)
+        c.presenceFrozen = true
+        c.FD.Zone.shown = true
+        c.P:Changed()
+        c:advance(3)
+        equal(c.subscription, 900, case .. ": the zone window holds the slot")
+        local previous = c.P.lastTick
+        while c.P.lastTick == previous do c:advance(0.25) end -- Right after a tick.
+        local tick, focus = c.P.lastTick, c.calls.FocusMembers
+        c:runUntil(tick + 0.5)
+        c:window(which, true, which == "channels" and 900 or 77)
+        c:runUntil(tick + 2.5)
+        c:window(which, false)
+        equal(c.P.lastTick, tick, case .. ": the window was opened and closed between two ticks")
+        equal(c.subscription, nil, case .. ": its OnHide cleared the slot")
+        c:advance(6)
+        equal(c.subscription, 900, case .. ": the slot is taken back at the next tick")
+        equal(c.calls.FocusMembers, focus + 1, case .. ": together with FocusMembers")
+        club.members[2].presence = ONLINE
+        c:advance(15)
+        equal(#c.FD.Community:Online(), 2, case .. ": a member who logs in afterwards is seen online")
+        c:advance(300)
+        if case == "communities loaded early" then equal(hookCalls, 1, "the window is hooked once") end
+        equal(c.subscription, 900, case .. ": the slot stays held")
+    end
 
     -- Join link. The addon cannot join for the player: every C_Club join or
     -- invite function HasRestrictions. It prints Blizzard's own clubTicket
@@ -592,6 +662,37 @@ return function(FD, equal)
     c:emit("PLAYER_ENTERING_WORLD", true, false)
     c:advance(120)
     equal(hints(c), 0, "a player once seen in the community never gets the hint again")
+    -- A join (CLUB_ADDED) the cache has not read yet holds the hint back,
+    -- also when the last read is too recent for the rebuild to run at once.
+    c = Harness.client(outsider({ clubsReady = false }))
+    c:start(); c:advance(1)
+    c.clubsReady = true
+    c:emit("INITIAL_CLUBS_LOADED")
+    c:advance(11.5)
+    equal(c.FD.Community.state .. "|" .. hints(c), "missing|0", "the loaded clubs show no community; the hint waits 15 s")
+    local builtAt = c.FD.Community.builtAt
+    c.clubs[#c.clubs + 1] = directory({ member(2, { faction = HORDE }) })
+    c:emit("CLUB_ADDED", 900)
+    c:advance(5)
+    equal(c.now - c.FD.Community.startedAt >= 15 and c.FD.Community.builtAt == builtAt, true,
+        "the hint is due while the rebuild after the join still waits")
+    c:advance(25)
+    equal(hints(c), 0, "no hint right after the player joined")
+    equal(c.FD.Community.state .. "|" .. tostring(c.FD.Database.data.settings.communityJoined), "ok|true",
+        "the join is read and remembered")
+    -- A player who asked for the link with community join gets no hint
+    -- repeating it in this session; a new login session may show it.
+    c = Harness.client(outsider({ clubsReady = false }))
+    c:start(); c:advance(1)
+    c.clubsReady = true
+    c:emit("INITIAL_CLUBS_LOADED")
+    c:command("community join")
+    equal(linkLines(c), 1, "community join prints the link")
+    c:advance(120)
+    equal(hints(c), 0, "no hint after community join printed the link")
+    c:emit("PLAYER_ENTERING_WORLD", true, false)
+    c:advance(10)
+    equal(hints(c), 1, "the next login session shows the hint")
     -- Not with the directory off, in quiet mode or with the hint off.
     for _, case in ipairs({ "off", "quiet", "hint off" }) do
         c = Harness.client(outsider({ clubsReady = false }))
