@@ -58,6 +58,22 @@ class ReleasePipelineTests(unittest.TestCase):
             prepare_release(self.root, "0.4.6", self.notes)
         self.assertFalse((self.docs / "changelog-0.4.6.txt").exists())
 
+    def test_prepare_accepts_an_addon_already_at_the_new_version(self):
+        (self.root / "ForeverDuel/ForeverDuel.toc").write_text('## Version: 0.4.6\n', encoding="utf-8")
+        (self.root / "ForeverDuel/Constants.lua").write_text('VERSION = "0.4.6", PROTOCOL_VERSION = 2\n', encoding="utf-8")
+        prepare_release(self.root, "0.4.6", self.notes)
+        new = json.loads((self.docs / "project.json").read_text(encoding="utf-8"))
+        self.assertEqual(new["file"]["version"], "0.4.6")
+        self.assertEqual((self.root / "ForeverDuel/ForeverDuel.toc").read_text(), '## Version: 0.4.6\n')
+        self.assertEqual((self.docs / "releases/0.4.5.json").read_text(encoding="utf-8"), self.previous)
+
+    def test_half_bumped_addon_stops_before_changes(self):
+        (self.root / "ForeverDuel/ForeverDuel.toc").write_text('## Version: 0.4.6\n', encoding="utf-8")
+        with self.assertRaises(ValueError):
+            prepare_release(self.root, "0.4.6", self.notes)
+        self.assertEqual((self.docs / "project.json").read_text(), self.previous)
+        self.assertFalse((self.docs / "changelog-0.4.6.txt").exists())
+
     def test_wrong_tag_stops_before_tests_or_network(self):
         with patch("release.subprocess.run") as run, self.assertRaises(ValueError):
             run_pipeline(self.root, "v0.4.6")

@@ -2,11 +2,11 @@
 
 Notable changes to ForeverDuelersGuild (addon folder `ForeverDuel`), newest first.
 
-Only **0.4.5** has been published on CurseForge (the public Beta). Every other version was a local test build installed on the developer's own test clients and never uploaded. Detailed, dated investigation notes for these versions are archived in [docs/investigations/](docs/investigations/).
+**0.4.5** was the first CurseForge release (Beta) and **0.6.0** is the next one. Every version in between was a local test build installed on the developer's own test clients and never uploaded. Detailed, dated investigation notes for these versions are archived in [docs/investigations/](docs/investigations/).
 
-## [0.6.0] - unreleased
+## [0.6.0] - 2026-10-06
 
-_Review-driven rework. Simulated in the test suites; the live two-client run ([MANUAL_TESTING.md](MANUAL_TESTING.md)) is still outstanding._
+_Review-driven rework. Live-tested on 2026-10-06 by the project owner with two Horde characters: zone discovery both ways, the community directory and join link, a queue match across zones and the rated duel worked. Not separately confirmed live: Alliance play, the German client, saving a tested place, the trip to a queue meeting place and queue auto-accept._
 
 ### Breaking
 

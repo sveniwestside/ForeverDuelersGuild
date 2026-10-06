@@ -1,7 +1,7 @@
 {
   "format": "foreverduel-curseforge-preparation-v1",
-  "preparedOn": "2026-10-06",
-  "status": "new version prepared; tests, upload and moderation pending",
+  "preparedOn": "2026-10-05",
+  "status": "automated tests passed; upload and moderation pending",
   "project": {
     "name": "ForeverDuelersGuild",
     "suggestedSlug": "foreverduelersguild",
@@ -29,15 +29,15 @@
     "websiteUrl": null
   },
   "file": {
-    "version": "0.6.0",
-    "displayName": "ForeverDuelersGuild 0.6.0",
-    "uploadFile": "ForeverDuelersGuild-0.6.0.zip",
-    "releaseType": "Beta",
+    "version": "0.5.7",
+    "displayName": "ForeverDuelersGuild 0.5.7",
+    "uploadFile": "ForeverDuelersGuild-0.5.7.zip",
+    "releaseType": "Alpha",
     "gameFlavor": "Forever",
     "gameVersion": "1.60.1",
     "interface": 16001,
     "referenceClientBuild": "1.60.1.70205",
-    "changelogFile": "changelog-0.6.0.txt",
+    "changelogFile": "changelog-0.5.7.txt",
     "requiredDependencies": [],
     "publishAutomaticallyAfterApproval": true
   },
@@ -53,13 +53,19 @@
   },
   "validation": {
     "userReportedTesting": {
-      "status": "passed",
-      "version": "0.6.0",
-      "reference": "2026-10-06, project owner, two Horde characters on Forever 1.60.1.70205: zone discovery both ways, community directory and join link, queue match across zones and rated duel worked. Tested build 12d3946 (installed as 6aad51b before the history rewrite); later commits change only the community status wording, the one-time legacy notice and release documents. Not separately confirmed: Alliance, German client, saving a tested place, the trip to a meeting place, queue auto-accept."
+      "status": "not supplied for this version",
+      "version": "0.5.7"
     },
     "automated": {
-      "status": "not run for this version",
-      "version": "0.6.0"
+      "status": "passed",
+      "version": "0.5.7",
+      "executedOn": "2026-10-04",
+      "command": "python tests/run.py",
+      "runtime": "Lua 5.1",
+      "compiledLuaFiles": 48,
+      "suites": 23,
+      "assertions": 8108,
+      "pythonTests": "passed in the same pipeline run"
     }
   },
   "notes": [

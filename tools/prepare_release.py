@@ -30,10 +30,15 @@ def prepare_release(root: Path, version: str, changelog: Path, release_type: str
     constants_path = root / "ForeverDuel/Constants.lua"
     toc = toc_path.read_text(encoding="utf-8")
     constants = constants_path.read_text(encoding="utf-8")
-    toc, toc_count = re.subn(rf"(?m)^## Version: {re.escape(old)}$", f"## Version: {version}", toc)
-    constants, constant_count = re.subn(rf'\bVERSION = "{re.escape(old)}"', f'VERSION = "{version}"', constants)
-    if toc_count != 1 or constant_count != 1:
-        raise ValueError("Existing TOC, Constants and worksheet versions must match.")
+    # The addon may already carry the new version (bumped during development);
+    # then TOC and Constants must both name it and stay as they are.
+    bumped = (len(re.findall(rf"(?m)^## Version: {re.escape(version)}$", toc)) == 1
+              and len(re.findall(rf'\bVERSION = "{re.escape(version)}"', constants)) == 1)
+    if not bumped:
+        toc, toc_count = re.subn(rf"(?m)^## Version: {re.escape(old)}$", f"## Version: {version}", toc)
+        constants, constant_count = re.subn(rf'\bVERSION = "{re.escape(old)}"', f'VERSION = "{version}"', constants)
+        if toc_count != 1 or constant_count != 1:
+            raise ValueError("TOC and Constants must both carry the worksheet version or both the new version.")
     target = docs / f"changelog-{version}.txt"
     if target.exists():
         raise ValueError(f"Changelog already exists: {target.name}")

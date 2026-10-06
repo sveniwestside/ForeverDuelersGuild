@@ -4,7 +4,7 @@ A local 1v1 duel rating addon for **WoW: Forever** (client 1.60.1, interface 160
 
 **Finding other players:** join the in-game community **ForeverDuelersGuild**. Type `/duelrating community join` (a character that is not a member also sees the link once per login) and click the link the addon prints in your chat; the game's Communities window then asks you to confirm. The addon cannot join for you and never sends the link to anyone. For now only the Horde has a community; Alliance characters get a link once one exists. The community is the only route that connects addon users across the whole Forever mega-realm; the addon only reads its member list and never posts in it.
 
-Source version **0.6.0** is unpublished. The public [CurseForge](https://www.curseforge.com/wow/addons/foreverduelersguild) Beta is 0.4.5, which 0.6 cannot rate against.
+Version **0.6.0** is the next [CurseForge](https://www.curseforge.com/wow/addons/foreverduelersguild) Beta after 0.4.5. It cannot rate duels against 0.4.5, so both players need 0.6.0.
 
 ## Installation
 
@@ -51,7 +51,7 @@ No server, account or upload: everything is stored per character in SavedVariabl
 ## Known limitations
 
 - Both players need 0.6 (rated protocol 3, queue protocol 2); older versions get ordinary duels.
-- The 0.6 rated flow, CHANNEL route, community directory and queue await the live two-client run in [MANUAL_TESTING.md](MANUAL_TESTING.md), which also covers the 30–45 s whisper delays seen earlier.
+- The live two-client test on 2026-10-06 (two Horde characters) confirmed discovery, the community directory and join link, a queue match across zones and the rated duel. Alliance play, the German client, saving a tested place, the trip to a queue meeting place and queue auto-accept were not separately confirmed. Addon whispers can still arrive 30–45 s late ([MANUAL_TESTING.md](MANUAL_TESTING.md) section 7).
 - Results are read from localized system messages; locales with grammar codes in them (Korean, Russian) may stay unrated.
 - No atomic two-client commit: if the last result message is lost, one client can record a duel the other does not.
 - Ordinary 1v1 duels only; a Hardcore duel to the death is never rated.
