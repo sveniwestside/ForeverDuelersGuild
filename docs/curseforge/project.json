@@ -1,7 +1,7 @@
 {
   "format": "foreverduel-curseforge-preparation-v1",
   "preparedOn": "2026-10-06",
-  "status": "automated tests passed; upload and moderation pending",
+  "status": "submitted; CurseForge moderation pending",
   "project": {
     "name": "ForeverDuelersGuild",
     "suggestedSlug": "foreverduelersguild",
@@ -42,14 +42,16 @@
     "publishAutomaticallyAfterApproval": true
   },
   "publication": {
-    "submitted": false,
-    "fileId": null,
-    "fileStatus": "Not uploaded",
+    "submitted": true,
+    "fileId": 9079353,
+    "fileStatus": "Submitted; moderation pending",
+    "submittedAt": "2026-10-06T11:04:40Z",
+    "archiveSha256": "3312ba1c21fd2ee8bd76bfebee85e09566b12acf76f8f967cda1f75e3d27dad8",
     "approved": false,
     "published": false,
     "downloadVerified": false,
     "installationVerified": false,
-    "recordSource": "local release preparation"
+    "recordSource": "upload receipt of GitHub Actions run 37453917731 (tag v0.6.0)"
   },
   "validation": {
     "userReportedTesting": {
