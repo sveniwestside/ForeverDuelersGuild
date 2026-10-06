@@ -1,7 +1,7 @@
 {
   "format": "foreverduel-curseforge-preparation-v1",
   "preparedOn": "2026-10-06",
-  "status": "new version prepared; tests, upload and moderation pending",
+  "status": "automated tests passed; upload and moderation pending",
   "project": {
     "name": "ForeverDuelersGuild",
     "suggestedSlug": "foreverduelersguild",
@@ -58,8 +58,15 @@
       "reference": "2026-10-06, project owner, Forever 1.60.1, build f6796b4 installed with tools/install-addon.ps1 and a full client restart: an Alliance character that was not a member got the join hint, /duelrating community join printed the Alliance link, clicking it opened the Alliance community's invitation, /duelrating status reported the Alliance join link as available and version 0.6.1; a Horde character still got the Horde link. Everything else is unchanged from the live-tested 0.6.0."
     },
     "automated": {
-      "status": "not run for this version",
-      "version": "0.6.1"
+      "status": "passed",
+      "version": "0.6.1",
+      "executedOn": "2026-10-06",
+      "command": "python tests/run.py",
+      "runtime": "Lua 5.1",
+      "compiledLuaFiles": 72,
+      "suites": 35,
+      "assertions": 13063,
+      "pythonTests": "passed in the same pipeline run"
     }
   },
   "notes": [
