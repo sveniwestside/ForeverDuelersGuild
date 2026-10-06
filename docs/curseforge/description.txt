@@ -10,11 +10,11 @@ FIND OTHER PLAYERS
 
 Horde: join the in-game community ForeverDuelersGuild. Type /duelrating community join and click the link the addon prints in your chat; the game's Communities window opens and asks you to confirm. The addon cannot join for you and never posts, invites or joins in the community; it only reads the member list to find addon users across the whole realm. Without the community it finds only players near you and those who share the ForeverDuel chat channel with you, which does not connect the whole realm.
 
-For now only the Horde has a community. Horde characters that are not members also see the link once per login (/duelrating community hint off hides it). Alliance has no community yet, so Alliance characters get no join link for now.
+For now only the Horde has a community. Horde characters that are not members also see the link once per login (/duelrating community hint off hides it). Alliance has no community yet, so Alliance characters get no join link for now. Any character can use another character community instead with /duelrating community <name>.
 
 FEATURES
 
-- Rated duels through the normal Duel action. Once the opponent's addon answers, a panel offers the rated choice. Blizzard's duel popup stays as it is, and its Accept starts an ordinary duel. When both players have chosen Rated, the receiver's addon accepts the duel. At the countdown, chat says whether the duel is rated and how many points a win or a loss moves.
+- Rated duels through the normal Duel action or /duel (with a name or on your target). Once the opponent's addon answers, a panel offers the rated choice. Blizzard's duel popup stays as it is, and its Accept starts an ordinary duel. When both players have chosen Rated, the receiver's addon accepts the duel. At the countdown, chat says whether the duel is rated and how many points a win or a loss moves, or why it stays unrated.
 - Players in zone (/duelrating zone): addon users discovered on your current map, with name search, class filter, rating window (All, +/-100, +/-200, +/-400), a rated-eligible filter, sorting by name, highest or closest rating, and a Duel button.
 - Rated duel queue (/duelrating queue): choose the search reach (Zone, Continent or Whole ruleset) and a maximum level difference (0-5). Matches need the same faction, ruleset (detected automatically), level cap and rating mode. The accepted rating gap starts at +/-100 and widens to +/-200 after 2 minutes and +/-400 after 5 minutes of waiting. Matches use only meeting places both players have saved (see below).
 - Separate Leveling and Max level ratings, each with wins, losses, win rate, best rating and current streak; a progression chart of the latest 40 duels per mode; paged match history with opponent, levels, class, result, duration and rating change.
@@ -27,13 +27,15 @@ Both players need the same level cap and rating mode and at most 5 levels differ
 
 Each mode starts at 1500; reaching max level does not carry your leveling rating over. Elo uses K=32 and adds 20 points of effective strength per level when calculating the expected outcome. With equal ratings and levels, a win moves 16 points. With equal ratings and a five-level gap, a lower-level winner gains 20 and a higher-level winner gains 12. The loser loses the same amount.
 
-Both players must choose Rated within the game's 50-second duel request. Entering combat during the request makes the duel unrated. A result counts only when both clients see the same winner. Ordinary 1v1 duels only: a Hardcore duel to the death is never rated.
+Both players must choose Rated, in either order, within the game's 50-second duel request. Rated cannot be chosen while you are in combat, and entering combat during the request makes the duel unrated. Closing the rated panel keeps the duel ordinary. A result counts only when both clients see the same winner. Ordinary 1v1 duels only: a Hardcore duel to the death is never rated.
 
 QUEUE AND MEETING PLACES
 
 The queue only sends you to tested meeting places that both players have saved. So it can only pair you with players who have saved the same place, usually someone you have already dueled at that spot; players without a shared place are not matched. To save a place, finish an ordinary duel by knockout at a safe outdoor spot that is not hostile territory for your faction. Then both of you leave any group and stay out of combat within 40 yards of the spot, and one of you clicks Save tested place in the queue window within five minutes. The partner's client then confirms the place and saves it too.
 
 When two players match, one of them sends a group invitation (the queue window's auto-accept option or /duelrating queue autoaccept on is meant to accept it for you), both travel to a shared place within a 5-15 minute limit, and the inviter clicks Request duel. Both players still choose Rated. A cancelled queue match never changes ratings; a player who misses the arrival time cannot queue for two minutes.
+
+You can join the queue only alone (not in a group), alive and outdoors in the open world. Every cancellation tells you why. After a technical problem you are put back in the queue with your waiting time kept. If you decline the group invitation, you keep searching but are not paired with that player for two minutes; if you let it expire, you leave the queue. After the match the queue leaves the group it created, never a group you formed yourself, and offers a Leave group button for a leftover queue group.
 
 GETTING STARTED
 
@@ -46,7 +48,7 @@ Commands (/duelrating help lists all):
 - /duelrating: open or close the overview (also the minimap button).
 - /duelrating zone: players in your zone.
 - /duelrating queue: the queue window; queue join, leave, status, autoaccept on|off, help.
-- /duelrating community: community status; community join prints the join link; community hint off|on; community off|on turns the community directory off or on.
+- /duelrating community: community status; community join prints the join link; community <name> uses another character community; community hint off|on; community off|on turns the community directory off or on.
 - /duelrating summary: your ratings and five recent results of your current mode. /duelrating history: up to 20 recent rated duels of your current mode.
 - /duelrating quiet: turn quiet mode on or off (no discovery traffic).
 - /duelrating ping [name]: addon message round trip to your target or a named player.
@@ -55,12 +57,12 @@ Commands (/duelrating help lists all):
 
 UPGRADING AND TEST STATUS
 
-Back up your character's SavedVariables/ForeverDuel.lua before upgrading. Ratings and history from 0.4.x load unchanged; data from before 0.4.0 stays in a read-only Legacy archive, and both new ratings start at 1500. If the saved data belongs to an earlier character with the same name (for example after a Hardcore death), it is archived and the new character starts fresh. Your duel partners need 0.6.0 as well.
+Back up WTF/Account/<account>/<realm>/<character>/SavedVariables/ForeverDuel.lua before upgrading: once 0.6.0 has recorded a rated duel, 0.4.5 can no longer load that file, so the backup is your way back. Ratings and history from 0.4.x load unchanged; data from before 0.4.0 stays in a read-only Legacy archive, and both new ratings start at 1500. If the saved data belongs to an earlier character with the same name (for example after a Hardcore death), it is archived and the new character starts fresh. Your duel partners need 0.6.0 as well. Players still on 0.4.5 can appear in your zone list, but you cannot rate against them and the queue does not find them.
 
 On October 6, 2026, the project owner reported that 0.6.0 works with two Horde characters on Forever: zone discovery in both directions, the community directory and its join link, finding each other through the queue across zones, and a rated duel (challenge, accept and the result on both clients). This is a general report, not a full test protocol; anything not named here, for example Alliance play, queue auto-accept or the trip to a queue meeting place, was not separately confirmed.
 
 Known limits:
-- The game sometimes delivers addon whispers late (delays of more than 30 seconds have been seen), which can leave a request unrated.
+- The game sometimes delivers addon whispers late (delays of more than 30 seconds have been seen), which can leave a request unrated; the chat then says the messages are delayed.
 - If the last result message is lost, one client can record a duel the other does not.
 - Results are read from the game's localized duel messages; clients whose messages contain grammar codes (for example Korean or Russian) may stay unrated.
 
@@ -69,7 +71,7 @@ LOCAL DATA AND DISCOVERY
 Ratings and history are stored per character in your SavedVariables. There is no server, account or upload, and players can edit their local data, so ratings are self-reported and not authoritative competition results.
 
 Unless quiet mode is on, the addon joins the ForeverDuel chat channel and exchanges profiles (character GUID, rating, class, level, level cap and map ID) through hidden addon whispers and channel posts. It asks for profiles only on demand:
-- Zone window open: your target or mouseover, visible players of your faction, all ForeverDuel channel members, and online community members of your faction in your zone.
+- Zone window open: your target or mouseover, visible players of your faction (show friendly nameplates so the addon can see them), all ForeverDuel channel members, and online community members of your faction in your zone.
 - Queue searching: all channel members, plus online community members of your faction (only those in your zone with Zone reach, all of them with Continent or Whole ruleset reach).
 - Hovering over a player of your faction asks that player.
 Queries carry your map; replies to players who are not near you, not your queue partner and not on your map leave your map out.

@@ -1,45 +1,15 @@
 ForeverDuelersGuild 0.6.0 - Beta
 Target client: WoW: Forever 1.60.1 (interface 16001)
 
-0.6.0 is the first update since 0.4.5, and a big one. Rated duels now run alongside Blizzard's normal duel popup, an in-game community (Horde for now) lets you find addon users across the whole Forever mega-realm, and a new opt-in queue can pair you with another player who has saved the same meeting place. German clients are fully translated. In the developer's live test with two Horde characters on the mega-realm, zone discovery, the community and its join link, finding each other through the queue across zones, and a rated duel (challenge, accept, result on both clients) all worked.
+The first update since 0.4.5, and a big one. All details are on the project page.
 
 Before you update
-- Both players need 0.6.0 for rated duels. 0.6.0 cannot rate a duel against 0.4.5 or older: it tells you in chat that your opponent uses an older version, and the duel stays ordinary. Players on 0.4.5 can still show up in your Players in zone list, but the queue only finds 0.6.0 players.
-- Exit and restart the game completely after installing. /reload does not load the new addon files.
-- Your ratings and match history from 0.4.5 carry over unchanged. Back up WTF/Account/<account>/<realm>/<character>/SavedVariables/ForeverDuel.lua (in your game client folder) first: once 0.6.0 has recorded a rated duel, 0.4.5 can no longer load that file, so the backup is your way back.
+- Both players need 0.6.0 for rated duels. Against 0.4.5 the duel stays ordinary.
+- Restart the game completely after installing. /reload is not enough.
+- Your ratings and history carry over. Back up SavedVariables/ForeverDuel.lua first: once 0.6.0 has recorded a rated duel, 0.4.5 can no longer load it.
 
-Finding players
-- Join the in-game community ForeverDuelersGuild: type /duelrating community join and click the link in your chat; Blizzard's Communities window asks you to confirm. The addon only reads the member list and never posts, invites or joins. Horde characters that are not members see the link once per login (/duelrating community hint off hides it). /duelrating community shows the status; community off turns the directory off.
-- The community is the only way to reach addon users on the whole mega-realm. Its online members of your faction are asked while your zone window is open (those in your zone) or the queue searches (all of them with Continent or Whole ruleset reach).
-- The Players in zone window (/duelrating zone) also asks your target, other players of your faction near you (show friendly nameplates so the addon can see them) and members of the ForeverDuel chat channel. Refresh asks again, and entries without an update for 90 seconds show "last seen".
-- Discovery now asks other players only when needed (zone window open, queue searching, Refresh, a player's tooltip), not constantly in the background.
-- Discovery whispers your rating, class, level and zone to other addon users. While you search, the queue also sends your position, and with Continent or Whole ruleset reach that includes every community member of your faction who answers.
-- /duelrating quiet stops discovery completely: other players stop finding you, and the queue reaches only players discovery already knows. Rated duels and /duelrating ping keep working.
-
-Rated duels and queue
-- Blizzard's duel popup is no longer hidden or replaced. Once your opponent's addon answers, a panel shows their rating, what you would win or lose, and the seconds left: below the popup for the receiver, in its own window for the challenger.
-- Both players still choose Rated, in either order, but the 12-second limit after the first click is gone: the whole 50-second request counts. When both have chosen Rated, the receiver's addon accepts the duel by itself.
-- Blizzard's Accept starts an unrated duel, Decline or Esc on the popup refuses it, and closing the panel keeps the duel unrated. If you are in combat when the request starts, Rated is disabled until you leave combat; entering combat during the request makes the duel unrated.
-- At the countdown the chat says whether the duel is RATED (with the win/loss change) or UNRATED and why, also when the reason came from your opponent's side.
-- More reliable results: duel messages are repeated and never held up by discovery. A portal or hearthstone right after the duel no longer loses the result, and a new challenge waits for the previous result so it uses your updated rating.
-- /duel with a typed name (Forever surnames included) or on your target is tracked, challenging the same player again replaces the pending request, an out-of-range error can be retried at once, and Hardcore duels to the death are never rated.
-- New opt-in queue (/duelrating queue): pick a search reach (Zone, Continent, Whole ruleset) and up to 5 levels difference; faction, ruleset (detected automatically), level cap and rating mode must match. You can join only alone (not in a group), alive and outdoors in the open world. The allowed rating gap grows from +/-100 to +/-200 after 2 minutes and +/-400 after 5, and the window explains why no match is possible yet.
-- Matches use only meeting places that both players have saved. After an ordinary duel that ends in a knockout outdoors in friendly or contested territory, both of you stay out of combat within 40 yards of the spot, leave the group if you are in one, and one of you clicks Save tested place within five minutes. Your partner's client then confirms the place and saves it too.
-- On a match, one of you sends a group invitation at once (optional auto-accept: /duelrating queue autoaccept on). Both travel to the place with a waypoint and a shared 5 to 15 minute timer, the inviter clicks Request duel, and both still choose Rated.
-- Every cancellation says why. Technical problems requeue you with your waiting time kept. If you decline the group invitation, you keep searching but are not paired with that player for two minutes; if you let it expire, you leave the queue. If you leave the queue during a match, your opponent keeps searching without you for two minutes. Missing the arrival time pauses your queue for two minutes. Leaving the queue, /reload or logout tells your opponent at once.
-- Queue cancellations never change ratings. The queue leaves its own group after the match, never leaves a group you formed yourself, and offers a Leave group button for a leftover queue group.
-
-Other changes
-- Complete German translation; other client languages show English. Some diagnostic lines stay English on purpose.
-- During a duel request, /duelrating status now also shows your opponent's addon version and how long their addon took to answer. New commands: /duelrating diagnose (recent duel and message logs), /duelrating errors (saved addon errors), /duelrating ping (addon message round trip to a player).
-- Sturdier saved data: data of an earlier character with the same name (for example after a Hardcore death) is archived instead of blocking the addon, /duelrating repair starts fresh after unreadable data and keeps a copy, and old matches stay valid if rating rules change later.
-- The challenger's duel panel now closes with Esc like the other addon windows. Closing it, even with the Esc that closes your bags, keeps that duel unrated.
-
-Known limits
-- Only the Horde has a community so far. Alliance characters are told that none exists yet; until there is one, they find players nearby, through the ForeverDuel channel, or through their own community chosen with /duelrating community <name>.
-- The ForeverDuel chat channel only connects characters on the same internal server of the mega-realm, so it does not reach everyone; the community does.
-- The addon ships without meeting places, so for now the queue usually only matches players who have dueled each other at a saved spot.
-- Ratings are stored locally per character. Nothing is uploaded, and no one can verify another player's rating. A duel counts only when both clients see the same winner; if the last result message is lost, one side may record a duel the other does not.
-- The game sometimes delivers addon messages late (delays of 30 to 45 seconds have been seen), which can leave a request unrated; the chat then says they are delayed. In one case, restarting both game clients helped.
-- On clients whose duel messages use grammar codes (for example Korean or Russian), results may not be recognized; the addon warns once at login.
-- The live test covered two Horde characters and the main paths. Not confirmed live yet: Alliance characters, the German client, saving a tested place, the trip to a queue meeting place and the queue duel, queue auto-accept, and rarer queue cases such as no-shows.
+New
+- Find addon players on the whole realm: Horde characters join the in-game community ForeverDuelersGuild with /duelrating community join (no Alliance community yet).
+- Opt-in queue (/duelrating queue) that pairs you with players at meeting places you have both saved.
+- Rated duels work alongside Blizzard's normal duel popup, without the old 12-second limit, and results are more reliable.
+- German translation, and /duelrating status, diagnose, errors and ping for bug reports.
